@@ -9,8 +9,8 @@ import (
 	mcp "github.com/kimitsu-ai/ktsu/pkg/mcp"
 )
 
-// ServeHTTP starts an HTTP server for the given BuiltinServer on the given address.
-func ServeHTTP(addr string, b BuiltinServer) error {
+// NewBuiltinHandler returns an http.Handler for the given BuiltinServer.
+func NewBuiltinHandler(b BuiltinServer) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -52,8 +52,13 @@ func ServeHTTP(addr string, b BuiltinServer) error {
 		json.NewEncoder(w).Encode(result)
 	})
 
+	return mux
+}
+
+// ServeHTTP starts an HTTP server for the given BuiltinServer on the given address.
+func ServeHTTP(addr string, b BuiltinServer) error {
 	log.Printf("builtin server %s listening on %s", b.Name(), addr)
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, NewBuiltinHandler(b))
 }
 
 // StartBuiltin is a helper to start a builtin server and format the address
