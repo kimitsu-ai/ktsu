@@ -1,0 +1,54 @@
+package runtime
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+)
+
+type server struct {
+	r   *Runtime
+	mux *http.ServeMux
+}
+
+func newServer(r *Runtime) *server {
+	s := &server{r: r, mux: http.NewServeMux()}
+	s.routes()
+	return s
+}
+
+func (s *server) routes() {
+	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("POST /invoke", s.handleInvoke)
+}
+
+func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "not implemented", http.StatusNotImplemented)
+}
+
+func (s *server) serve(ctx context.Context) error {
+	port := s.r.cfg.Port
+	if port == 0 {
+		port = 8082
+	}
+	addr := fmt.Sprintf(":%d", port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	log.Printf("runtime listening on %s", addr)
+	srv := &http.Server{Handler: s.mux}
+	go func() {
+		<-ctx.Done()
+		srv.Shutdown(context.Background())
+	}()
+	return srv.Serve(ln)
+}
