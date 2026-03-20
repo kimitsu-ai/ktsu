@@ -3,7 +3,7 @@ package state
 import (
 	"context"
 
-	"github.com/your-org/sdd-services/pkg/types"
+	"github.com/kimitsu-ai/ktsu/pkg/types"
 )
 
 // Store is the persistence interface for run and step state.

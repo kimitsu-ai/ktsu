@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	mcp "github.com/your-org/sdd-services/pkg/mcp"
+	mcp "github.com/kimitsu-ai/ktsu/pkg/mcp"
 )
 
 // ServeHTTP starts an HTTP server for the given BuiltinServer on the given address.

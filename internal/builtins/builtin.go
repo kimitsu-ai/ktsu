@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	mcp "github.com/your-org/sdd-services/pkg/mcp"
+	mcp "github.com/kimitsu-ai/ktsu/pkg/mcp"
 )
 
 // ErrNotImplemented is returned by builtin stubs

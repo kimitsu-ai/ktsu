@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/your-org/sdd-services/internal/config"
+	"github.com/kimitsu-ai/ktsu/internal/config"
 )
 
 type Config struct {

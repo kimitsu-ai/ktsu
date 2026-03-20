@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	builtins "github.com/your-org/sdd-services/internal/builtins"
-	mcp "github.com/your-org/sdd-services/pkg/mcp"
+	builtins "github.com/kimitsu-ai/ktsu/internal/builtins"
+	mcp "github.com/kimitsu-ai/ktsu/pkg/mcp"
 )
 
 type FormatServer struct{}

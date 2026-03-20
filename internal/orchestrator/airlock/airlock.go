@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/your-org/sdd-services/pkg/types"
+	"github.com/kimitsu-ai/ktsu/pkg/types"
 )
 
 // Validate checks that output conforms to the declared schema and

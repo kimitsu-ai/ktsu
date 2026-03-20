@@ -1,4 +1,4 @@
-module github.com/your-org/sdd-services
+module github.com/kimitsu-ai/ktsu
 
 go 1.24
 
