@@ -1,0 +1,712 @@
+package runner
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	jmespath "github.com/jmespath/go-jmespath"
+	"github.com/kimitsu-ai/ktsu/internal/config"
+	"github.com/kimitsu-ai/ktsu/internal/orchestrator/airlock"
+	"github.com/kimitsu-ai/ktsu/internal/orchestrator/dag"
+	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
+	"github.com/kimitsu-ai/ktsu/pkg/types"
+)
+
+// TriggerContext holds the incoming trigger data for a run.
+type TriggerContext struct {
+	Type      string
+	Body      map[string]interface{}
+	Headers   map[string]string
+	RemoteIP  string
+	RequestID string
+}
+
+// Runner executes workflow pipelines.
+type Runner struct {
+	store      state.Store
+	projectDir string
+}
+
+// New creates a new Runner.
+func New(store state.Store, projectDir string) *Runner {
+	return &Runner{
+		store:      store,
+		projectDir: projectDir,
+	}
+}
+
+// Execute runs a workflow pipeline given a trigger context.
+func (r *Runner) Execute(ctx context.Context, workflowName string, runID string, wf *config.WorkflowConfig, trigger TriggerContext) error {
+	now := time.Now()
+	run := &types.Run{
+		ID:           runID,
+		WorkflowName: workflowName,
+		Status:       types.RunStatusRunning,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := r.store.CreateRun(ctx, run); err != nil {
+		return fmt.Errorf("create run: %w", err)
+	}
+
+	// Build DAG nodes
+	nodes := make([]dag.Node, len(wf.Pipeline))
+	for i, step := range wf.Pipeline {
+		nodes[i] = dag.Node{ID: step.ID, Depends: step.DependsOn}
+	}
+
+	layers, err := dag.Resolve(nodes)
+	if err != nil {
+		return fmt.Errorf("dag resolve: %w", err)
+	}
+
+	// Build step lookup map
+	stepByID := make(map[string]*config.PipelineStep, len(wf.Pipeline))
+	for i := range wf.Pipeline {
+		stepByID[wf.Pipeline[i].ID] = &wf.Pipeline[i]
+	}
+
+	stepOutputs := make(map[string]map[string]interface{})
+
+	failRun := func(stepRec *types.Step, errMsg string) error {
+		now := time.Now()
+		stepRec.Status = types.StepStatusFailed
+		stepRec.Error = errMsg
+		stepRec.EndedAt = &now
+		_ = r.store.UpdateStep(ctx, stepRec)
+
+		run.Status = types.RunStatusFailed
+		run.Error = errMsg
+		run.UpdatedAt = now
+		_ = r.store.UpdateRun(ctx, run)
+		return fmt.Errorf("%s", errMsg)
+	}
+
+	for _, layer := range layers {
+		for _, stepID := range layer {
+			step := stepByID[stepID]
+
+			// Determine step type
+			var stepType types.StepType
+			switch {
+			case step.Inlet != "":
+				stepType = types.StepTypeInlet
+			case step.Agent != "":
+				stepType = types.StepTypeAgent
+			case step.Transform != nil:
+				stepType = types.StepTypeTransform
+			case step.Outlet != "":
+				stepType = types.StepTypeOutlet
+			default:
+				stepType = types.StepTypeAgent
+			}
+
+			startedAt := time.Now()
+			stepRec := &types.Step{
+				ID:        step.ID,
+				RunID:     runID,
+				Name:      step.ID,
+				Type:      stepType,
+				Status:    types.StepStatusRunning,
+				StartedAt: &startedAt,
+			}
+			if err := r.store.CreateStep(ctx, stepRec); err != nil {
+				return fmt.Errorf("create step %s: %w", step.ID, err)
+			}
+
+			// Execute step
+			var rawOutput map[string]interface{}
+			var execErr error
+
+			switch stepType {
+			case types.StepTypeInlet:
+				rawOutput, execErr = r.executeInlet(ctx, step, trigger, stepOutputs)
+			case types.StepTypeTransform:
+				rawOutput, execErr = r.executeTransform(ctx, step, stepOutputs)
+			case types.StepTypeOutlet:
+				rawOutput, execErr = r.executeOutlet(ctx, step, stepOutputs, runID)
+			case types.StepTypeAgent:
+				rawOutput, execErr = map[string]interface{}{"stubbed": true}, nil
+			}
+
+			if execErr != nil {
+				return failRun(stepRec, execErr.Error())
+			}
+
+			// Check for skipped from outlet condition
+			if skipped, _ := rawOutput["skipped"].(bool); skipped {
+				now := time.Now()
+				stepRec.Status = types.StepStatusSkipped
+				stepRec.EndedAt = &now
+				if err := r.store.UpdateStep(ctx, stepRec); err != nil {
+					return fmt.Errorf("update step %s: %w", step.ID, err)
+				}
+				stepOutputs[step.ID] = rawOutput
+				continue
+			}
+
+			// Process reserved fields
+			var schema map[string]interface{}
+			if step.Output != nil {
+				schema = step.Output.Schema
+			}
+
+			cleanOutput, reservedFields, skipReason, reservedErr := processReservedFields(rawOutput, step.ConfidenceThreshold)
+
+			if reservedErr != nil {
+				return failRun(stepRec, reservedErr.Error())
+			}
+
+			if skipReason != "" {
+				now := time.Now()
+				stepRec.Status = types.StepStatusSkipped
+				stepRec.EndedAt = &now
+				if err := r.store.UpdateStep(ctx, stepRec); err != nil {
+					return fmt.Errorf("update step %s: %w", step.ID, err)
+				}
+				stepOutputs[step.ID] = cleanOutput
+				continue
+			}
+
+			// Airlock validate
+			if err := airlock.Validate(cleanOutput, schema, reservedFields); err != nil {
+				return failRun(stepRec, err.Error())
+			}
+
+			now := time.Now()
+			stepRec.Status = types.StepStatusComplete
+			stepRec.Output = cleanOutput
+			stepRec.EndedAt = &now
+			if err := r.store.UpdateStep(ctx, stepRec); err != nil {
+				return fmt.Errorf("update step %s: %w", step.ID, err)
+			}
+			stepOutputs[step.ID] = cleanOutput
+		}
+	}
+
+	now = time.Now()
+	run.Status = types.RunStatusComplete
+	run.UpdatedAt = now
+	run.CompletedAt = &now
+	return r.store.UpdateRun(ctx, run)
+}
+
+// executeInlet processes an inlet step.
+func (r *Runner) executeInlet(_ context.Context, step *config.PipelineStep, trigger TriggerContext, _ map[string]map[string]interface{}) (map[string]interface{}, error) {
+	path := config.StripVersion(step.Inlet)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(r.projectDir, path)
+	}
+
+	inletCfg, err := config.LoadInlet(path)
+	if err != nil {
+		return nil, fmt.Errorf("load inlet %s: %w", path, err)
+	}
+
+	triggerCtx := map[string]interface{}{
+		"type":       trigger.Type,
+		"body":       trigger.Body,
+		"headers":    trigger.Headers,
+		"remote_ip":  trigger.RemoteIP,
+		"request_id": trigger.RequestID,
+	}
+
+	output := make(map[string]interface{})
+	for outKey, jmesExpr := range inletCfg.Mapping.Output {
+		val, err := jmespath.Search(jmesExpr, triggerCtx)
+		if err != nil {
+			return nil, fmt.Errorf("jmespath search %q: %w", jmesExpr, err)
+		}
+		if val != nil {
+			output[outKey] = val
+		}
+	}
+
+	return output, nil
+}
+
+// executeTransform processes a transform step.
+func (r *Runner) executeTransform(_ context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}) (map[string]interface{}, error) {
+	if step.Transform == nil {
+		return map[string]interface{}{"result": nil}, nil
+	}
+
+	// Collect inputs
+	var currentData interface{}
+	if len(step.Transform.Inputs) == 1 {
+		from := step.Transform.Inputs[0].From
+		currentData = stepOutputs[from]
+	} else if len(step.Transform.Inputs) > 1 {
+		combined := make(map[string]interface{})
+		for _, input := range step.Transform.Inputs {
+			combined[input.From] = stepOutputs[input.From]
+		}
+		currentData = combined
+	}
+
+	// Apply ops sequentially
+	for _, op := range step.Transform.Ops {
+		for opName, opVal := range op {
+			var err error
+			currentData, err = applyOp(opName, opVal, currentData, stepOutputs)
+			if err != nil {
+				return nil, fmt.Errorf("op %s: %w", opName, err)
+			}
+		}
+	}
+
+	return map[string]interface{}{"result": currentData}, nil
+}
+
+// applyOp applies a single transform operation.
+func applyOp(opName string, opVal interface{}, currentData interface{}, stepOutputs map[string]map[string]interface{}) (interface{}, error) {
+	switch opName {
+	case "merge":
+		stepIDs, ok := opVal.([]interface{})
+		if !ok {
+			return currentData, fmt.Errorf("merge: expected []interface{}, got %T", opVal)
+		}
+		return applyMerge(currentData, stepIDs, stepOutputs)
+
+	case "filter":
+		opMap, ok := opVal.(map[string]interface{})
+		if !ok {
+			return currentData, fmt.Errorf("filter: expected map, got %T", opVal)
+		}
+		expr, _ := opMap["expr"].(string)
+		return applyFilter(currentData, expr)
+
+	case "sort":
+		opMap, ok := opVal.(map[string]interface{})
+		if !ok {
+			return currentData, fmt.Errorf("sort: expected map, got %T", opVal)
+		}
+		field, _ := opMap["field"].(string)
+		order, _ := opMap["order"].(string)
+		return applySort(currentData, field, order)
+
+	case "map":
+		opMap, ok := opVal.(map[string]interface{})
+		if !ok {
+			return currentData, fmt.Errorf("map: expected map, got %T", opVal)
+		}
+		expr, _ := opMap["expr"].(string)
+		return applyMap(currentData, expr)
+
+	case "flatten":
+		return applyFlatten(currentData)
+
+	case "deduplicate":
+		opMap, ok := opVal.(map[string]interface{})
+		if !ok {
+			return currentData, fmt.Errorf("deduplicate: expected map, got %T", opVal)
+		}
+		field, _ := opMap["field"].(string)
+		return applyDeduplicate(currentData, field)
+
+	default:
+		return currentData, fmt.Errorf("unknown op: %s", opName)
+	}
+}
+
+// applyMerge deep-merges the named steps' outputs.
+func applyMerge(currentData interface{}, stepIDs []interface{}, stepOutputs map[string]map[string]interface{}) (interface{}, error) {
+	var result interface{} = currentData
+
+	for _, id := range stepIDs {
+		stepID, _ := id.(string)
+		stepOut, ok := stepOutputs[stepID]
+		if !ok {
+			continue
+		}
+		result = deepMerge(result, stepOut)
+	}
+
+	return result, nil
+}
+
+// deepMerge recursively merges b into a. For maps, keys from b override a.
+// For arrays, they are concatenated.
+func deepMerge(a, b interface{}) interface{} {
+	aMap, aIsMap := a.(map[string]interface{})
+	bMap, bIsMap := b.(map[string]interface{})
+	if aIsMap && bIsMap {
+		result := make(map[string]interface{})
+		for k, v := range aMap {
+			result[k] = v
+		}
+		for k, v := range bMap {
+			if existing, ok := result[k]; ok {
+				result[k] = deepMerge(existing, v)
+			} else {
+				result[k] = v
+			}
+		}
+		return result
+	}
+
+	aSlice, aIsSlice := a.([]interface{})
+	bSlice, bIsSlice := b.([]interface{})
+	if aIsSlice && bIsSlice {
+		combined := make([]interface{}, 0, len(aSlice)+len(bSlice))
+		combined = append(combined, aSlice...)
+		combined = append(combined, bSlice...)
+		return combined
+	}
+
+	// Default: b wins
+	return b
+}
+
+// applyFilter applies a JMESPath filter expression to the data.
+func applyFilter(currentData interface{}, expr string) (interface{}, error) {
+	// Ensure we have an array
+	var items []interface{}
+	switch v := currentData.(type) {
+	case []interface{}:
+		items = v
+	case map[string]interface{}:
+		items = []interface{}{v}
+	default:
+		if currentData != nil {
+			items = []interface{}{currentData}
+		}
+	}
+
+	result, err := jmespath.Search("[?"+expr+"]", items)
+	if err != nil {
+		return nil, fmt.Errorf("jmespath filter [?%s]: %w", expr, err)
+	}
+	return result, nil
+}
+
+// applySort sorts an array by a field.
+func applySort(currentData interface{}, field string, order string) (interface{}, error) {
+	items, ok := currentData.([]interface{})
+	if !ok {
+		return currentData, fmt.Errorf("sort: expected []interface{}, got %T", currentData)
+	}
+
+	sorted := make([]interface{}, len(items))
+	copy(sorted, items)
+
+	sort.SliceStable(sorted, func(i, j int) bool {
+		iVal := extractField(sorted[i], field)
+		jVal := extractField(sorted[j], field)
+
+		less := compareValues(iVal, jVal)
+		if order == "desc" {
+			return !less
+		}
+		return less
+	})
+
+	return sorted, nil
+}
+
+// extractField extracts a field value from an item using JMESPath.
+func extractField(item interface{}, field string) interface{} {
+	val, err := jmespath.Search(field, item)
+	if err != nil {
+		return nil
+	}
+	return val
+}
+
+// compareValues compares two values for sorting (returns true if a < b).
+func compareValues(a, b interface{}) bool {
+	// Try numeric comparison
+	aFloat, aOk := toFloat64(a)
+	bFloat, bOk := toFloat64(b)
+	if aOk && bOk {
+		return aFloat < bFloat
+	}
+
+	// Fall back to string comparison
+	aStr := fmt.Sprintf("%v", a)
+	bStr := fmt.Sprintf("%v", b)
+	return aStr < bStr
+}
+
+func toFloat64(v interface{}) (float64, bool) {
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case float32:
+		return float64(val), true
+	case int:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	case int32:
+		return float64(val), true
+	}
+	return 0, false
+}
+
+// applyMap applies a JMESPath expression to each item.
+func applyMap(currentData interface{}, expr string) (interface{}, error) {
+	var items []interface{}
+	switch v := currentData.(type) {
+	case []interface{}:
+		items = v
+	case map[string]interface{}:
+		items = []interface{}{v}
+	default:
+		if currentData != nil {
+			items = []interface{}{currentData}
+		}
+	}
+
+	result := make([]interface{}, 0, len(items))
+	for _, item := range items {
+		val, err := jmespath.Search(expr, item)
+		if err != nil {
+			return nil, fmt.Errorf("jmespath map %q: %w", expr, err)
+		}
+		result = append(result, val)
+	}
+	return result, nil
+}
+
+// applyFlatten flattens one level of nested arrays.
+func applyFlatten(currentData interface{}) (interface{}, error) {
+	items, ok := currentData.([]interface{})
+	if !ok {
+		return currentData, nil
+	}
+
+	var result []interface{}
+	for _, item := range items {
+		if nested, ok := item.([]interface{}); ok {
+			result = append(result, nested...)
+		} else {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+// applyDeduplicate removes duplicates based on a field (first occurrence wins).
+func applyDeduplicate(currentData interface{}, field string) (interface{}, error) {
+	items, ok := currentData.([]interface{})
+	if !ok {
+		return currentData, nil
+	}
+
+	seen := make(map[string]bool)
+	var result []interface{}
+	for _, item := range items {
+		val := extractField(item, field)
+		key := fmt.Sprintf("%v", val)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+// executeOutlet processes an outlet step.
+func (r *Runner) executeOutlet(_ context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, _ string) (map[string]interface{}, error) {
+	// Check condition
+	if step.Condition != "" {
+		envelopeCtx := make(map[string]interface{})
+		for k, v := range stepOutputs {
+			envelopeCtx[k] = v
+		}
+		result, err := jmespath.Search(step.Condition, envelopeCtx)
+		if err != nil || isFalsy(result) {
+			return map[string]interface{}{"skipped": true, "reason": "condition_false"}, nil
+		}
+	}
+
+	// Resolve outlet path
+	path := config.StripVersion(step.Outlet)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(r.projectDir, path)
+	}
+
+	outletCfg, err := config.LoadOutlet(path)
+	if err != nil {
+		return nil, fmt.Errorf("load outlet %s: %w", path, err)
+	}
+
+	// Build context from stepOutputs
+	outCtx := make(map[string]interface{})
+	for k, v := range stepOutputs {
+		outCtx[k] = v
+	}
+
+	// Apply action body mapping
+	actionBody := make(map[string]interface{})
+	for key, jmesExprRaw := range outletCfg.Mapping.Action.Body {
+		jmesExpr, ok := jmesExprRaw.(string)
+		if !ok {
+			continue
+		}
+		val, err := jmespath.Search(jmesExpr, outCtx)
+		if err != nil {
+			return nil, fmt.Errorf("jmespath outlet body %q: %w", jmesExpr, err)
+		}
+		if val != nil {
+			actionBody[key] = val
+		}
+	}
+
+	// Execute action
+	switch outletCfg.Mapping.Action.Type {
+	case "noop":
+		return map[string]interface{}{"sent": false, "action": "noop"}, nil
+
+	case "http_post":
+		return r.doHTTPRequest(http.MethodPost, outletCfg.Mapping.Action.URL, actionBody)
+
+	case "http_put":
+		return r.doHTTPRequest(http.MethodPut, outletCfg.Mapping.Action.URL, actionBody)
+
+	case "email_reply":
+		return map[string]interface{}{"sent": false, "stubbed": true}, nil
+
+	default:
+		return map[string]interface{}{"sent": false, "action": outletCfg.Mapping.Action.Type}, nil
+	}
+}
+
+// doHTTPRequest performs an HTTP request with JSON body.
+func (r *Runner) doHTTPRequest(method, url string, body map[string]interface{}) (map[string]interface{}, error) {
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal body: %w", err)
+	}
+
+	req, err := http.NewRequest(method, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http %s %s: %w", method, url, err)
+	}
+	defer resp.Body.Close()
+	// Read and discard to avoid resource leaks
+	_, _ = bytes.NewBuffer(nil).ReadFrom(resp.Body)
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("http %s %s returned status %d", method, url, resp.StatusCode)
+	}
+
+	return map[string]interface{}{"sent": true, "status_code": resp.StatusCode}, nil
+}
+
+// isFalsy returns true if a value is nil, false, empty string, or 0.
+func isFalsy(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	switch val := v.(type) {
+	case bool:
+		return !val
+	case string:
+		return val == ""
+	case float64:
+		return val == 0
+	case int:
+		return val == 0
+	case int64:
+		return val == 0
+	}
+	return false
+}
+
+// processReservedFields extracts and processes ktsu_* fields from output.
+// Returns: (cleanOutput, reservedFields, skipReason, error)
+func processReservedFields(rawOutput map[string]interface{}, threshold float64) (map[string]interface{}, *types.ReservedFields, string, error) {
+	reserved := &types.ReservedFields{}
+
+	// 1. Check injection attempt
+	if v, ok := rawOutput["ktsu_injection_attempt"]; ok {
+		if b, ok := v.(bool); ok && b {
+			return nil, nil, "", fmt.Errorf("injection attempt detected")
+		}
+	}
+
+	// 2. Check untrusted content
+	if v, ok := rawOutput["ktsu_untrusted_content"]; ok {
+		if b, ok := v.(bool); ok && b {
+			return nil, nil, "", fmt.Errorf("untrusted content detected")
+		}
+	}
+
+	// 3. Check low quality
+	if v, ok := rawOutput["ktsu_low_quality"]; ok {
+		if b, ok := v.(bool); ok && b {
+			return nil, nil, "", fmt.Errorf("low quality output")
+		}
+	}
+
+	// 4. Check needs human
+	if v, ok := rawOutput["ktsu_needs_human"]; ok {
+		if b, ok := v.(bool); ok && b {
+			return nil, nil, "", fmt.Errorf("needs_human_review")
+		}
+	}
+
+	// 5. Check confidence
+	var confidence float64
+	if v, ok := rawOutput["ktsu_confidence"]; ok {
+		if f, ok := v.(float64); ok {
+			confidence = f
+		}
+	}
+	reserved.Confidence = confidence
+	if threshold > 0 && confidence > 0 && confidence < threshold {
+		return nil, nil, "", fmt.Errorf("confidence below threshold")
+	}
+
+	// 6. Check skip reason
+	var skipReason string
+	if v, ok := rawOutput["ktsu_skip_reason"]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			skipReason = s
+			reserved.SkipReason = s
+		}
+	}
+
+	// 7. Extract flags and rationale
+	if v, ok := rawOutput["ktsu_flags"]; ok {
+		if flags, ok := v.([]string); ok {
+			reserved.Flags = flags
+		} else if flags, ok := v.([]interface{}); ok {
+			for _, f := range flags {
+				if s, ok := f.(string); ok {
+					reserved.Flags = append(reserved.Flags, s)
+				}
+			}
+		}
+	}
+	if v, ok := rawOutput["ktsu_rationale"]; ok {
+		if s, ok := v.(string); ok {
+			reserved.Rationale = s
+		}
+	}
+
+	// Strip all ktsu_* keys from output
+	cleanOutput := make(map[string]interface{})
+	for k, v := range rawOutput {
+		if !strings.HasPrefix(k, types.ReservedPrefix) {
+			cleanOutput[k] = v
+		}
+	}
+
+	return cleanOutput, reserved, skipReason, nil
+}
