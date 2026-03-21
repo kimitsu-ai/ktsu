@@ -64,14 +64,14 @@ pipeline:
 	}
 }
 
-func TestLoadWorkflow_errorsOnMissingFile(t *testing.T) {
+func TestLoadWorkflow_error_missing_file(t *testing.T) {
 	_, err := LoadWorkflow("/nonexistent/path/workflow.yaml")
 	if err == nil {
 		t.Error("expected error for missing file, got nil")
 	}
 }
 
-func TestLoadWorkflow_errorsOnMalformedYAML(t *testing.T) {
+func TestLoadWorkflow_error_malformed(t *testing.T) {
 	path := writeFile(t, t.TempDir(), "workflow.yaml", "name: [unclosed")
 	_, err := LoadWorkflow(path)
 	if err == nil {
