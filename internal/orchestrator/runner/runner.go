@@ -669,7 +669,7 @@ func processReservedFields(rawOutput map[string]interface{}, threshold float64) 
 		}
 	}
 	reserved.Confidence = confidence
-	if threshold > 0 && confidence > 0 && confidence < threshold {
+	if threshold > 0 && confidence < threshold {
 		return nil, nil, "", fmt.Errorf("confidence below threshold")
 	}
 
