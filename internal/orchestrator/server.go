@@ -45,9 +45,12 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	workflow := r.PathValue("workflow")
 	runID := r.PathValue("run_id")
 
-	// Decode trigger body
-	var body map[string]interface{}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	// Decode trigger body — empty/non-JSON body is treated as empty object
+	body := map[string]interface{}{}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		log.Printf("handleInvoke: non-JSON body (treating as empty): %v", err)
+		body = map[string]interface{}{}
+	}
 
 	// Build headers map
 	headers := make(map[string]string)

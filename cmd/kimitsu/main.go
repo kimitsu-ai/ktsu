@@ -44,7 +44,10 @@ func rootCmd() *cobra.Command {
 
 func signalCtx() context.Context {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	_ = stop
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
 	return ctx
 }
 
