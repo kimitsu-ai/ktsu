@@ -8,8 +8,10 @@ import (
 )
 
 type Config struct {
-	EnvPath string
-	Env     *config.EnvConfig
+	EnvPath     string
+	Env         *config.EnvConfig
+	WorkflowDir string // default: "./workflows"
+	ProjectDir  string // default: "."
 }
 
 type Orchestrator struct {

@@ -69,7 +69,7 @@ func startCmd() *cobra.Command {
 }
 
 func startOrchestratorCmd() *cobra.Command {
-	var envPath string
+	var envPath, workflowDir, projectDir string
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
 		Short: "Start the Kimitsu orchestrator",
@@ -83,14 +83,18 @@ func startOrchestratorCmd() *cobra.Command {
 				}
 			}
 			o := orchestrator.New(orchestrator.Config{
-				EnvPath: envPath,
-				Env:     envCfg,
+				EnvPath:     envPath,
+				Env:         envCfg,
+				WorkflowDir: workflowDir,
+				ProjectDir:  projectDir,
 			})
 			log.Printf("starting %s", o)
 			return o.Start(signalCtx())
 		},
 	}
 	cmd.Flags().StringVar(&envPath, "env", "", "path to environment config (e.g. environments/dev.env.yaml)")
+	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "./workflows", "path to workflow directory")
+	cmd.Flags().StringVar(&projectDir, "project-dir", ".", "project root for resolving inlet/outlet paths")
 	return cmd
 }
 
