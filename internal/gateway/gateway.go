@@ -10,7 +10,8 @@ import (
 type Config struct {
 	ConfigPath    string
 	GatewayConfig *config.GatewayConfig
-	Port          int
+	Host          string // bind interface, "" = all
+	Port          int    // default 8081
 }
 
 type Gateway struct {

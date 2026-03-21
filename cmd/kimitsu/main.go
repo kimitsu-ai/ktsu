@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -51,6 +52,24 @@ func signalCtx() context.Context {
 	return ctx
 }
 
+// envOr returns the value of envKey if set and non-empty, otherwise defaultVal.
+func envOr(envKey, defaultVal string) string {
+	if v := os.Getenv(envKey); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+// envIntOr returns the integer value of envKey if set and parseable, otherwise defaultVal.
+func envIntOr(envKey string, defaultVal int) int {
+	if v := os.Getenv(envKey); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return defaultVal
+}
+
 func startCmd() *cobra.Command {
 	start := &cobra.Command{
 		Use:   "start",
@@ -72,7 +91,8 @@ func startCmd() *cobra.Command {
 }
 
 func startOrchestratorCmd() *cobra.Command {
-	var envPath, workflowDir, projectDir string
+	var envPath, workflowDir, projectDir, host string
+	var port int
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
 		Short: "Start the Kimitsu orchestrator",
@@ -90,6 +110,8 @@ func startOrchestratorCmd() *cobra.Command {
 				Env:         envCfg,
 				WorkflowDir: workflowDir,
 				ProjectDir:  projectDir,
+				Host:        host,
+				Port:        port,
 			})
 			log.Printf("starting %s", o)
 			return o.Start(signalCtx())
@@ -98,11 +120,14 @@ func startOrchestratorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&envPath, "env", "", "path to environment config (e.g. environments/dev.env.yaml)")
 	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "./workflows", "path to workflow directory")
 	cmd.Flags().StringVar(&projectDir, "project-dir", ".", "project root for resolving inlet/outlet paths")
+	cmd.Flags().StringVar(&host, "host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "host interface to bind (env: KTSU_ORCHESTRATOR_HOST)")
+	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_ORCHESTRATOR_PORT", 8080), "port to listen on (env: KTSU_ORCHESTRATOR_PORT)")
 	return cmd
 }
 
 func startRuntimeCmd() *cobra.Command {
-	var orchestratorURL, gatewayURL string
+	var orchestratorURL, gatewayURL, host string
+	var port int
 	cmd := &cobra.Command{
 		Use:   "runtime",
 		Short: "Start the Kimitsu agent runtime",
@@ -110,18 +135,27 @@ func startRuntimeCmd() *cobra.Command {
 			r := runtime.New(runtime.Config{
 				OrchestratorURL: orchestratorURL,
 				LLMGatewayURL:   gatewayURL,
+				Host:            host,
+				Port:            port,
 			})
 			log.Printf("starting %s", r)
 			return r.Start(signalCtx())
 		},
 	}
-	cmd.Flags().StringVar(&orchestratorURL, "orchestrator", "http://localhost:8080", "orchestrator URL")
-	cmd.Flags().StringVar(&gatewayURL, "gateway", "http://localhost:8081", "LLM gateway URL")
+	cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
+		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:8080"),
+		"orchestrator URL (env: KTSU_ORCHESTRATOR_URL)")
+	cmd.Flags().StringVar(&gatewayURL, "gateway",
+		envOr("KTSU_GATEWAY_URL", "http://localhost:8081"),
+		"LLM gateway URL (env: KTSU_GATEWAY_URL)")
+	cmd.Flags().StringVar(&host, "host", envOr("KTSU_RUNTIME_HOST", ""), "host interface to bind (env: KTSU_RUNTIME_HOST)")
+	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_RUNTIME_PORT", 8082), "port to listen on (env: KTSU_RUNTIME_PORT)")
 	return cmd
 }
 
 func startGatewayCmd() *cobra.Command {
-	var configPath string
+	var configPath, host string
+	var port int
 	cmd := &cobra.Command{
 		Use:   "gateway",
 		Short: "Start the Kimitsu LLM gateway",
@@ -137,16 +171,21 @@ func startGatewayCmd() *cobra.Command {
 			g := gateway.New(gateway.Config{
 				ConfigPath:    configPath,
 				GatewayConfig: gatewayCfg,
+				Host:          host,
+				Port:          port,
 			})
 			log.Printf("starting %s", g)
 			return g.Start(signalCtx())
 		},
 	}
 	cmd.Flags().StringVar(&configPath, "config", "gateway.yaml", "path to gateway config")
+	cmd.Flags().StringVar(&host, "host", envOr("KTSU_GATEWAY_HOST", ""), "host interface to bind (env: KTSU_GATEWAY_HOST)")
+	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_GATEWAY_PORT", 8081), "port to listen on (env: KTSU_GATEWAY_PORT)")
 	return cmd
 }
 
 func startBuiltinCmd(name string, defaultPort int, newFn func() builtins.BuiltinServer, hasOrchestrator bool) *cobra.Command {
+	var host string
 	var port int
 	var orchestratorURL string
 	cmd := &cobra.Command{
@@ -154,12 +193,15 @@ func startBuiltinCmd(name string, defaultPort int, newFn func() builtins.Builtin
 		Short: fmt.Sprintf("Start the ktsu/%s built-in tool server", name),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			b := newFn()
-			return builtins.StartBuiltin(b, port, orchestratorURL)
+			return builtins.StartBuiltin(b, host, port, orchestratorURL)
 		},
 	}
+	cmd.Flags().StringVar(&host, "host", "", "host interface to bind")
 	cmd.Flags().IntVar(&port, "port", defaultPort, "port to listen on")
 	if hasOrchestrator {
-		cmd.Flags().StringVar(&orchestratorURL, "orchestrator", "http://localhost:8080", "orchestrator URL for registration")
+		cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
+			envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:8080"),
+			"orchestrator URL for registration (env: KTSU_ORCHESTRATOR_URL)")
 	}
 	return cmd
 }

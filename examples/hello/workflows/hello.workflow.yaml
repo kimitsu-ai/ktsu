@@ -1,0 +1,19 @@
+kind: workflow
+name: hello
+version: "1.0.0"
+description: Minimal hello-world workflow. Receives a webhook and noops an outlet.
+
+pipeline:
+  - id: greet
+    inlet: inlets/hello.inlet.yaml
+    output:
+      schema:
+        name:
+          type: string
+        message:
+          type: string
+
+  - id: send
+    outlet: outlets/hello.outlet.yaml
+    depends_on:
+      - greet

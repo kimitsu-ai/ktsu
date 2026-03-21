@@ -1,0 +1,22 @@
+kind: outlet
+name: hello
+version: "1.0.0"
+description: Noop outlet that records what would be sent.
+
+inputs:
+  - from: greet
+    optional: false
+
+mapping:
+  action:
+    type: noop
+    body:
+      name: "steps.greet.name"
+      message: "steps.greet.message"
+
+output:
+  schema:
+    sent:
+      type: boolean
+    action:
+      type: string

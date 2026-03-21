@@ -26,24 +26,50 @@ Each service is a subcommand of the `kimitsu` binary.
 | LLM Gateway | `kimitsu start gateway` | 8081 |
 | Agent Runtime | `kimitsu start runtime` | 8082 |
 
+Every service accepts `--host` (bind interface, default `""` = all interfaces) and `--port`:
+
 ```sh
 # Orchestrator (control plane)
 go run ./cmd/kimitsu start orchestrator
 
-# With an environment config
-go run ./cmd/kimitsu start orchestrator --env environments/dev.env.yaml
+# With an environment config and custom address
+go run ./cmd/kimitsu start orchestrator --env environments/dev.env.yaml --host 0.0.0.0 --port 8080
 
 # LLM Gateway
-go run ./cmd/kimitsu start gateway --config gateway.yaml
+go run ./cmd/kimitsu start gateway --config gateway.yaml --port 8081
 
-# Agent Runtime
-go run ./cmd/kimitsu start runtime --orchestrator http://localhost:8080 --gateway http://localhost:8081
+# Agent Runtime — point at the orchestrator and gateway
+go run ./cmd/kimitsu start runtime \
+  --orchestrator http://orchestrator.internal:8080 \
+  --gateway http://llm-gateway.internal:8081
 ```
 
 Shortcut for the orchestrator:
 
 ```sh
 make run-orchestrator
+```
+
+### Environment variables
+
+All service addresses and peer URLs can be set via `KTSU_*` environment variables. CLI flags take precedence over env vars.
+
+| Variable | Flag | Service | Default |
+|---|---|---|---|
+| `KTSU_ORCHESTRATOR_HOST` | `--host` | orchestrator | `""` (all interfaces) |
+| `KTSU_ORCHESTRATOR_PORT` | `--port` | orchestrator | `8080` |
+| `KTSU_GATEWAY_HOST` | `--host` | gateway | `""` |
+| `KTSU_GATEWAY_PORT` | `--port` | gateway | `8081` |
+| `KTSU_RUNTIME_HOST` | `--host` | runtime | `""` |
+| `KTSU_RUNTIME_PORT` | `--port` | runtime | `8082` |
+| `KTSU_ORCHESTRATOR_URL` | `--orchestrator` | runtime, builtins | `http://localhost:8080` |
+| `KTSU_GATEWAY_URL` | `--gateway` | runtime | `http://localhost:8081` |
+
+```sh
+# Container / multi-host example
+KTSU_ORCHESTRATOR_URL=http://orchestrator.internal:8080 \
+KTSU_GATEWAY_URL=http://llm-gateway.internal:8081 \
+  go run ./cmd/kimitsu start runtime
 ```
 
 ### Built-in tool servers
@@ -60,8 +86,10 @@ make run-orchestrator
 | transform | `kimitsu start transform` | 9107 |
 | cli | `kimitsu start cli` | 9108 |
 
+All built-in servers accept `--host` and `--port`. Stateful built-ins also accept `--orchestrator` (reads `KTSU_ORCHESTRATOR_URL`):
+
 ```sh
-go run ./cmd/kimitsu start kv --port 9100 --orchestrator http://localhost:8080
+go run ./cmd/kimitsu start kv --host 0.0.0.0 --port 9100 --orchestrator http://orchestrator.internal:8080
 ```
 
 Stateful built-ins (`kv`, `blob`, `log`, `memory`, `envelope`) register with the orchestrator on startup and require `--orchestrator` to be set. Stateless built-ins (`format`, `validate`, `transform`, `cli`) do not.

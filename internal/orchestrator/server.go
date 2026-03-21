@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
 
 	"github.com/kimitsu-ai/ktsu/internal/config"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/runner"
@@ -110,11 +111,16 @@ func (s *server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) serve(ctx context.Context) error {
-	ln, err := net.Listen("tcp", ":8080")
+	port := s.o.cfg.Port
+	if port == 0 {
+		port = 8080
+	}
+	addr := net.JoinHostPort(s.o.cfg.Host, strconv.Itoa(port))
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
-	log.Printf("orchestrator listening on :8080")
+	log.Printf("orchestrator listening on %s", addr)
 	srv := &http.Server{Handler: s.mux}
 	go func() {
 		<-ctx.Done()

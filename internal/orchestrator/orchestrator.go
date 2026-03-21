@@ -12,6 +12,8 @@ type Config struct {
 	Env         *config.EnvConfig
 	WorkflowDir string // default: "./workflows"
 	ProjectDir  string // default: "."
+	Host        string // bind interface, "" = all
+	Port        int    // default 8080
 }
 
 type Orchestrator struct {

@@ -502,8 +502,8 @@ services:
   agent-runtime:
     image: ktsu/agent-runtime:latest
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - LLM_GATEWAY_URL=http://llm-gateway:8080
+      - KTSU_ORCHESTRATOR_URL=http://orchestrator:8080
+      - KTSU_GATEWAY_URL=http://llm-gateway:8081
       - HEARTBEAT_INTERVAL_S=5
 
   llm-gateway:
@@ -514,17 +514,17 @@ services:
   ktsu-kv:
     image: ktsu/kv:latest
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
+      - KTSU_ORCHESTRATOR_URL=http://orchestrator:8080
 
   ktsu-log:
     image: ktsu/log:latest
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
+      - KTSU_ORCHESTRATOR_URL=http://orchestrator:8080
 
   ktsu-envelope:
     image: ktsu/envelope:latest
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
+      - KTSU_ORCHESTRATOR_URL=http://orchestrator:8080
 
 volumes:
   ktsu-data:

@@ -2,9 +2,10 @@ package builtins
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"strconv"
 
 	mcp "github.com/kimitsu-ai/ktsu/pkg/mcp"
 )
@@ -61,9 +62,9 @@ func ServeHTTP(addr string, b BuiltinServer) error {
 	return http.ListenAndServe(addr, NewBuiltinHandler(b))
 }
 
-// StartBuiltin is a helper to start a builtin server and format the address
-func StartBuiltin(b BuiltinServer, port int, orchestratorURL string) error {
-	addr := fmt.Sprintf(":%d", port)
+// StartBuiltin is a helper to start a builtin server on host:port.
+func StartBuiltin(b BuiltinServer, host string, port int, orchestratorURL string) error {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	if orchestratorURL != "" {
 		log.Printf("builtin %s registered with orchestrator at %s", b.Name(), orchestratorURL)
 	}

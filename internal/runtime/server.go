@@ -3,10 +3,10 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 )
 
 type server struct {
@@ -39,7 +39,7 @@ func (s *server) serve(ctx context.Context) error {
 	if port == 0 {
 		port = 8082
 	}
-	addr := fmt.Sprintf(":%d", port)
+	addr := net.JoinHostPort(s.r.cfg.Host, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err

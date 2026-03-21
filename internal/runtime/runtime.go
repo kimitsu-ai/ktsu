@@ -8,7 +8,8 @@ import (
 type Config struct {
 	OrchestratorURL string
 	LLMGatewayURL   string
-	Port            int
+	Host            string // bind interface, "" = all
+	Port            int    // default 8082
 }
 
 type Runtime struct {

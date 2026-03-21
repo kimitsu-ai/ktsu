@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 )
 
 type server struct {
@@ -34,11 +35,16 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) serve(ctx context.Context) error {
-	ln, err := net.Listen("tcp", ":8081")
+	port := s.g.cfg.Port
+	if port == 0 {
+		port = 8081
+	}
+	addr := net.JoinHostPort(s.g.cfg.Host, strconv.Itoa(port))
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
-	log.Printf("gateway listening on :8081")
+	log.Printf("gateway listening on %s", addr)
 	srv := &http.Server{Handler: s.mux}
 	go func() {
 		<-ctx.Done()
