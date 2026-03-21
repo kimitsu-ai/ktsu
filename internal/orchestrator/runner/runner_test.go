@@ -174,6 +174,13 @@ mapping:
 	if _, hasB := resultMap["b"]; !hasB {
 		t.Errorf("merged result missing 'b': %v", resultMap)
 	}
+	// Verify no step ID keys leaked into the result (no double-wrapping)
+	if _, hasStep1 := resultMap["step1"]; hasStep1 {
+		t.Errorf("merged result should not contain 'step1' key: %v", resultMap)
+	}
+	if _, hasStep2 := resultMap["step2"]; hasStep2 {
+		t.Errorf("merged result should not contain 'step2' key: %v", resultMap)
+	}
 }
 
 // TestRunner_transformStep_filter verifies filter op on an array.
@@ -631,6 +638,106 @@ mapping:
 	}
 
 	run, getErr := store.GetRun(ctx, "run-injection")
+	if getErr != nil {
+		t.Fatalf("GetRun failed: %v", getErr)
+	}
+	if run.Status != types.RunStatusFailed {
+		t.Errorf("expected run status failed, got %s", run.Status)
+	}
+}
+
+// TestRunner_reservedField_needsHuman verifies run fails when ktsu_needs_human is true.
+func TestRunner_reservedField_needsHuman(t *testing.T) {
+	dir := t.TempDir()
+
+	inletYAML := `
+kind: inlet
+name: needs-human-inlet
+version: "1.0.0"
+trigger:
+  type: webhook
+mapping:
+  output:
+    ktsu_needs_human: body.ktsu_needs_human
+    data: body.data
+`
+	inletPath := writeInletYAML(t, dir, "needs_human.inlet.yaml", inletYAML)
+
+	store := state.NewMemStore()
+	r := New(store, dir)
+
+	wf := makeWorkflow(
+		config.PipelineStep{
+			ID:    "step1",
+			Inlet: inletPath,
+		},
+	)
+
+	trigger := TriggerContext{
+		Type: "webhook",
+		Body: map[string]interface{}{
+			"ktsu_needs_human": true,
+			"data":             "something",
+		},
+	}
+
+	ctx := context.Background()
+	err := r.Execute(ctx, "test-workflow", "run-needs-human", wf, trigger)
+	if err == nil {
+		t.Fatal("expected Execute to fail on needs_human, but it succeeded")
+	}
+
+	run, getErr := store.GetRun(ctx, "run-needs-human")
+	if getErr != nil {
+		t.Fatalf("GetRun failed: %v", getErr)
+	}
+	if run.Status != types.RunStatusFailed {
+		t.Errorf("expected run status failed, got %s", run.Status)
+	}
+}
+
+// TestRunner_reservedField_untrustedContent verifies step fails when ktsu_untrusted_content is true.
+func TestRunner_reservedField_untrustedContent(t *testing.T) {
+	dir := t.TempDir()
+
+	inletYAML := `
+kind: inlet
+name: untrusted-inlet
+version: "1.0.0"
+trigger:
+  type: webhook
+mapping:
+  output:
+    ktsu_untrusted_content: body.ktsu_untrusted_content
+    data: body.data
+`
+	inletPath := writeInletYAML(t, dir, "untrusted.inlet.yaml", inletYAML)
+
+	store := state.NewMemStore()
+	r := New(store, dir)
+
+	wf := makeWorkflow(
+		config.PipelineStep{
+			ID:    "step1",
+			Inlet: inletPath,
+		},
+	)
+
+	trigger := TriggerContext{
+		Type: "webhook",
+		Body: map[string]interface{}{
+			"ktsu_untrusted_content": true,
+			"data":                   "something",
+		},
+	}
+
+	ctx := context.Background()
+	err := r.Execute(ctx, "test-workflow", "run-untrusted", wf, trigger)
+	if err == nil {
+		t.Fatal("expected Execute to fail on untrusted content, but it succeeded")
+	}
+
+	run, getErr := store.GetRun(ctx, "run-untrusted")
 	if getErr != nil {
 		t.Fatalf("GetRun failed: %v", getErr)
 	}

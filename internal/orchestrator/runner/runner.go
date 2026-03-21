@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -86,7 +88,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 		run.Error = errMsg
 		run.UpdatedAt = now
 		_ = r.store.UpdateRun(ctx, run)
-		return fmt.Errorf("%s", errMsg)
+		return errors.New(errMsg)
 	}
 
 	for _, layer := range layers {
@@ -244,11 +246,16 @@ func (r *Runner) executeTransform(_ context.Context, step *config.PipelineStep, 
 		from := step.Transform.Inputs[0].From
 		currentData = stepOutputs[from]
 	} else if len(step.Transform.Inputs) > 1 {
-		combined := make(map[string]interface{})
-		for _, input := range step.Transform.Inputs {
-			combined[input.From] = stepOutputs[input.From]
+		// Merge all inputs into a flat map (left to right, right wins)
+		merged := map[string]interface{}{}
+		for _, inp := range step.Transform.Inputs {
+			if out, ok := stepOutputs[inp.From]; ok {
+				for k, v := range out {
+					merged[k] = v
+				}
+			}
 		}
-		currentData = combined
+		currentData = merged
 	}
 
 	// Apply ops sequentially
@@ -421,18 +428,20 @@ func extractField(item interface{}, field string) interface{} {
 }
 
 // compareValues compares two values for sorting (returns true if a < b).
+// nil values always sort last.
 func compareValues(a, b interface{}) bool {
-	// Try numeric comparison
+	if a == nil {
+		return false // nil sorts last
+	}
+	if b == nil {
+		return true // nil sorts last
+	}
 	aFloat, aOk := toFloat64(a)
 	bFloat, bOk := toFloat64(b)
 	if aOk && bOk {
 		return aFloat < bFloat
 	}
-
-	// Fall back to string comparison
-	aStr := fmt.Sprintf("%v", a)
-	bStr := fmt.Sprintf("%v", b)
-	return aStr < bStr
+	return fmt.Sprintf("%v", a) < fmt.Sprintf("%v", b)
 }
 
 func toFloat64(v interface{}) (float64, bool) {
@@ -483,7 +492,7 @@ func applyFlatten(currentData interface{}) (interface{}, error) {
 		return currentData, nil
 	}
 
-	var result []interface{}
+	result := make([]interface{}, 0)
 	for _, item := range items {
 		if nested, ok := item.([]interface{}); ok {
 			result = append(result, nested...)
@@ -599,7 +608,7 @@ func (r *Runner) doHTTPRequest(method, url string, body map[string]interface{}) 
 	}
 	defer resp.Body.Close()
 	// Read and discard to avoid resource leaks
-	_, _ = bytes.NewBuffer(nil).ReadFrom(resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("http %s %s returned status %d", method, url, resp.StatusCode)
