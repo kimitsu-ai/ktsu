@@ -162,6 +162,62 @@ func TestMemStore_GetStep_notFound(t *testing.T) {
 	}
 }
 
+func TestMemStore_CreateRun_duplicate(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemStore()
+
+	run := &types.Run{ID: "run-dup", Status: types.RunStatusPending}
+	if err := s.CreateRun(ctx, run); err != nil {
+		t.Fatalf("first CreateRun: unexpected error: %v", err)
+	}
+	if err := s.CreateRun(ctx, run); err == nil {
+		t.Fatal("second CreateRun with same ID: expected error, got nil")
+	}
+}
+
+func TestMemStore_CreateStep_duplicate(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemStore()
+
+	run := &types.Run{ID: "run-step-dup", Status: types.RunStatusPending}
+	if err := s.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	step := &types.Step{ID: "step-dup", RunID: "run-step-dup", Status: types.StepStatusPending}
+	if err := s.CreateStep(ctx, step); err != nil {
+		t.Fatalf("first CreateStep: unexpected error: %v", err)
+	}
+	if err := s.CreateStep(ctx, step); err == nil {
+		t.Fatal("second CreateStep with same ID: expected error, got nil")
+	}
+}
+
+func TestMemStore_CreateRun_copyOnStore(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemStore()
+
+	run := &types.Run{
+		ID:       "run-copy",
+		Status:   types.RunStatusPending,
+		Metadata: map[string]string{"key": "original"},
+	}
+	if err := s.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	// Mutate the original map after storing.
+	run.Metadata["key"] = "mutated"
+
+	got, err := s.GetRun(ctx, "run-copy")
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if got.Metadata["key"] != "original" {
+		t.Errorf("stored Metadata[\"key\"] = %q, want %q (map aliasing bug)", got.Metadata["key"], "original")
+	}
+}
+
 func TestMemStore_GetEnvelope_buildsFromSteps(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemStore()

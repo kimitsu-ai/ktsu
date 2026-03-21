@@ -31,15 +31,27 @@ func NewMemStore() *MemStore {
 	}
 }
 
-// copyRun returns a shallow copy of r.
+// copyRun returns a deep copy of r, including its map fields.
 func copyRun(r *types.Run) *types.Run {
 	cp := *r
+	if r.Metadata != nil {
+		cp.Metadata = make(map[string]string, len(r.Metadata))
+		for k, v := range r.Metadata {
+			cp.Metadata[k] = v
+		}
+	}
 	return &cp
 }
 
-// copyStep returns a shallow copy of s.
+// copyStep returns a deep copy of s, including its map fields.
 func copyStep(s *types.Step) *types.Step {
 	cp := *s
+	if s.Output != nil {
+		cp.Output = make(map[string]interface{}, len(s.Output))
+		for k, v := range s.Output {
+			cp.Output[k] = v
+		}
+	}
 	return &cp
 }
 
@@ -151,8 +163,13 @@ func (m *MemStore) GetEnvelope(_ context.Context, runID string) (*types.Envelope
 			continue
 		}
 
-		output := step.Output
-		if output == nil {
+		var output map[string]interface{}
+		if step.Output != nil {
+			output = make(map[string]interface{}, len(step.Output))
+			for k, v := range step.Output {
+				output[k] = v
+			}
+		} else {
 			output = make(map[string]interface{})
 		}
 
