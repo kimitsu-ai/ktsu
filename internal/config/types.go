@@ -1,24 +1,102 @@
 package config
 
-// WorkflowConfig represents a workflow.yaml file
+// WorkflowConfig represents a workflow.yaml file (kind: workflow)
 type WorkflowConfig struct {
-	Name        string            `yaml:"name"`
-	Description string            `yaml:"description"`
-	Trigger     TriggerConfig     `yaml:"trigger"`
-	Steps       []StepConfig      `yaml:"steps"`
-	Env         map[string]string `yaml:"env"`
+	Kind        string         `yaml:"kind"`
+	Name        string         `yaml:"name"`
+	Version     string         `yaml:"version"`
+	Description string         `yaml:"description"`
+	Pipeline    []PipelineStep `yaml:"pipeline"`
+	ModelPolicy *ModelPolicy   `yaml:"model_policy,omitempty"`
 }
 
-type TriggerConfig struct {
-	Type   string                 `yaml:"type"` // http, schedule, event
-	Config map[string]interface{} `yaml:"config"`
+// PipelineStep is one entry in pipeline[]. Exactly one of Inlets/Inlet/Agent/Transform/Outlet is set.
+type PipelineStep struct {
+	ID                  string                 `yaml:"id"`
+	Inlets              []string               `yaml:"inlets,omitempty"`
+	Inlet               string                 `yaml:"inlet,omitempty"`
+	Agent               string                 `yaml:"agent,omitempty"`
+	Transform           *TransformSpec         `yaml:"transform,omitempty"`
+	Outlet              string                 `yaml:"outlet,omitempty"`
+	DependsOn           []string               `yaml:"depends_on,omitempty"`
+	Condition           string                 `yaml:"condition,omitempty"`
+	ConfidenceThreshold float64                `yaml:"confidence_threshold,omitempty"`
+	Params              map[string]interface{} `yaml:"params,omitempty"`
+	Model               *ModelSpec             `yaml:"model,omitempty"`
+	Consolidation       string                 `yaml:"consolidation,omitempty"`
+	Output              *OutputSpec            `yaml:"output,omitempty"`
 }
 
-type StepConfig struct {
-	ID      string                 `yaml:"id"`
-	Type    string                 `yaml:"type"` // inlet, transform, agent, outlet
-	Depends []string               `yaml:"depends"`
-	Config  map[string]interface{} `yaml:"config"`
+type TransformSpec struct {
+	Inputs []TransformInput         `yaml:"inputs"`
+	Ops    []map[string]interface{} `yaml:"ops"`
+}
+
+type TransformInput struct {
+	From string `yaml:"from"`
+}
+
+type ModelSpec struct {
+	Group     string `yaml:"group"`
+	MaxTokens int    `yaml:"max_tokens"`
+}
+
+type ModelPolicy struct {
+	CostBudgetUSD float64           `yaml:"cost_budget_usd"`
+	ForceGroup    string            `yaml:"force_group,omitempty"`
+	GroupMap      map[string]string `yaml:"group_map,omitempty"`
+}
+
+type OutputSpec struct {
+	Schema map[string]interface{} `yaml:"schema"`
+}
+
+// InletConfig represents an inlet YAML file (kind: inlet)
+type InletConfig struct {
+	Kind        string       `yaml:"kind"`
+	Name        string       `yaml:"name"`
+	Version     string       `yaml:"version"`
+	Description string       `yaml:"description"`
+	Trigger     TriggerSpec  `yaml:"trigger"`
+	Mapping     InletMapping `yaml:"mapping"`
+	Output      OutputSpec   `yaml:"output"`
+}
+
+type TriggerSpec struct {
+	Type string `yaml:"type"` // webhook, schedule, email, workflow
+	Path string `yaml:"path,omitempty"`
+	Cron string `yaml:"cron,omitempty"`
+}
+
+type InletMapping struct {
+	Envelope map[string]string `yaml:"envelope"`
+	Output   map[string]string `yaml:"output"`
+}
+
+// OutletConfig represents an outlet YAML file (kind: outlet)
+type OutletConfig struct {
+	Kind        string        `yaml:"kind"`
+	Name        string        `yaml:"name"`
+	Version     string        `yaml:"version"`
+	Description string        `yaml:"description"`
+	Inputs      []OutletInput `yaml:"inputs"`
+	Mapping     OutletMapping `yaml:"mapping"`
+	Output      OutputSpec    `yaml:"output"`
+}
+
+type OutletInput struct {
+	From     string `yaml:"from"`
+	Optional bool   `yaml:"optional"`
+}
+
+type OutletMapping struct {
+	Action OutletAction `yaml:"action"`
+}
+
+type OutletAction struct {
+	Type string                 `yaml:"type"` // http_post, http_put, email_reply, noop
+	URL  string                 `yaml:"url,omitempty"`
+	Body map[string]interface{} `yaml:"body,omitempty"`
 }
 
 // AgentConfig represents an agent config block
@@ -40,24 +118,6 @@ type ServerRef struct {
 
 type AccessConfig struct {
 	Allowlist []string `yaml:"allowlist"`
-}
-
-// InletConfig represents an inlet step config
-type InletConfig struct {
-	Schema   map[string]interface{} `yaml:"schema"`
-	Mappings map[string]string      `yaml:"mappings"` // JMESPath mappings
-}
-
-// OutletConfig represents an outlet step config
-type OutletConfig struct {
-	Condition string            `yaml:"condition"` // JMESPath condition
-	Mappings  map[string]string `yaml:"mappings"`
-}
-
-// TransformConfig represents a transform step config
-type TransformConfig struct {
-	Filter   string            `yaml:"filter"` // JMESPath filter
-	Mappings map[string]string `yaml:"mappings"`
 }
 
 // EnvConfig represents environments/*.env.yaml
