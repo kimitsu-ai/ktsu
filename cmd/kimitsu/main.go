@@ -168,12 +168,15 @@ func startGatewayCmd() *cobra.Command {
 					return fmt.Errorf("load gateway config: %w", err)
 				}
 			}
-			g := gateway.New(gateway.Config{
+			g, err := gateway.New(gateway.Config{
 				ConfigPath:    configPath,
 				GatewayConfig: gatewayCfg,
 				Host:          host,
 				Port:          port,
 			})
+			if err != nil {
+				return fmt.Errorf("gateway init: %w", err)
+			}
 			log.Printf("starting %s", g)
 			return g.Start(signalCtx())
 		},
