@@ -99,6 +99,8 @@ Returns `{"status": "ok"}`. Used by orchestrator and runtime for liveness checks
 | `budget_exceeded` | 402 | No | Upstream billing hard limit reached (e.g. OpenAI `billing_hard_limit_reached`, Anthropic credit exhaustion) |
 | `no_models_available` | 503 | No | The resolved group's model list is empty after config load (v1 does not implement per-model health tracking or circuit breaking) |
 | `unknown_group` | 400 | No | Requested group name not found in gateway config |
+| `invalid_model_config` | 500 | No | Operator configuration error — e.g. missing required `base_url` for an OpenAI provider |
+| `provider_not_registered` | 500 | No | A model group references a provider name that was not registered at startup |
 
 Provider adapters are responsible for translating provider-native error signals into this normalized shape. `budget_exceeded` is distinct from a rate limit — it is a hard stop, not a transient condition, and must not be retried.
 
@@ -205,8 +207,8 @@ providers:
   - name: openai
     type: openai
     config:
-      base_url: https://api.openai.com/v1
-      api_key_env: OPENAI_API_KEY        # all config values are strings
+      base_url: https://api.openai.com/v1  # required; gateway refuses to start if missing
+      api_key_env: OPENAI_API_KEY          # all config values are strings
 
   - name: litellm
     type: openai                          # litellm speaks OpenAI-compatible format
