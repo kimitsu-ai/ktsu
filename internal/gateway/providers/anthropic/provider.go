@@ -32,9 +32,12 @@ func (p *Provider) Name() string { return "anthropic" }
 func (p *Provider) Invoke(ctx context.Context, req providers.InvokeRequest) (providers.InvokeResponse, error) {
 	// Anthropic requires system prompt as a top-level field, not in messages.
 	var systemPrompt string
-	var msgs []providers.Message
+	msgs := make([]providers.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		if m.Role == "system" {
+			if systemPrompt != "" {
+				return providers.InvokeResponse{}, fmt.Errorf("anthropic provider: multiple system messages not supported")
+			}
 			systemPrompt = m.Content
 		} else {
 			msgs = append(msgs, m)
@@ -105,6 +108,9 @@ func (p *Provider) Invoke(ctx context.Context, req providers.InvokeRequest) (pro
 			content = block.Text
 			break
 		}
+	}
+	if content == "" {
+		return providers.InvokeResponse{}, fmt.Errorf("no text content block in response")
 	}
 
 	return providers.InvokeResponse{

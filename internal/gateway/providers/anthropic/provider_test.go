@@ -119,6 +119,22 @@ func TestAnthropicProvider_credit_exhaustion_is_budget_exceeded(t *testing.T) {
 	}
 }
 
+func TestAnthropicProvider_no_text_content_returns_error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"content": []map[string]string{{"type": "tool_use", "id": "toolu_123"}},
+			"usage":   map[string]int{"input_tokens": 5, "output_tokens": 3},
+		})
+	}))
+	defer srv.Close()
+
+	_, err := anthropic.New(srv.URL, "key").Invoke(context.Background(), defaultRequest())
+	if err == nil {
+		t.Fatal("expected error when no text content block, got nil")
+	}
+}
+
 func TestAnthropicProvider_529_overload_retryable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(529)
