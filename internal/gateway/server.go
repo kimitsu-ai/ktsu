@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/kimitsu-ai/ktsu/internal/gateway/providers"
 )
@@ -38,7 +39,9 @@ func (s *server) Handler() http.Handler { return s.mux }
 
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		log.Printf("handleHealth: encode failed: %v", err)
+	}
 }
 
 func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +64,9 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("handleInvoke: encode failed: %v", err)
+	}
 }
 
 func gatewayErrorStatus(errType string) int {
@@ -80,11 +85,13 @@ func gatewayErrorStatus(errType string) int {
 func writeError(w http.ResponseWriter, status int, errType, message string, retryable bool) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"error":     errType,
 		"message":   message,
 		"retryable": retryable,
-	})
+	}); err != nil {
+		log.Printf("writeError: encode failed: %v", err)
+	}
 }
 
 func (s *server) serve(ctx context.Context) error {
@@ -101,7 +108,9 @@ func (s *server) serve(ctx context.Context) error {
 	srv := &http.Server{Handler: s.mux}
 	go func() {
 		<-ctx.Done()
-		srv.Shutdown(context.Background())
+		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		srv.Shutdown(shutCtx)
 	}()
 	return srv.Serve(ln)
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -63,7 +62,9 @@ func TestServer_invoke_success(t *testing.T) {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
 	var body providers.InvokeResponse
-	json.NewDecoder(resp.Body).Decode(&body)
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
 	if body.Content != "hello" {
 		t.Errorf("content: want 'hello', got %q", body.Content)
 	}
@@ -83,7 +84,9 @@ func TestServer_invoke_unknown_group_returns_400(t *testing.T) {
 		t.Errorf("want 400, got %d", resp.StatusCode)
 	}
 	var body map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&body)
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
 	if body["error"] != "unknown_group" {
 		t.Errorf("error field: want unknown_group, got %v", body["error"])
 	}
@@ -127,7 +130,9 @@ func TestServer_invoke_provider_error_retryable_returns_502(t *testing.T) {
 		t.Errorf("want 502, got %d", resp.StatusCode)
 	}
 	var body map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&body)
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
 	if body["retryable"] != true {
 		t.Errorf("retryable should be true")
 	}
@@ -158,5 +163,3 @@ func TestServer_invoke_bad_json_returns_400(t *testing.T) {
 	}
 }
 
-// Ensure errors import is used (suppress unused import errors if needed).
-var _ = errors.New
