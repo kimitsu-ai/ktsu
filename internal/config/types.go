@@ -146,9 +146,17 @@ type GatewayConfig struct {
 }
 
 type ModelGroupConfig struct {
-	Name     string   `yaml:"name"`
-	Models   []string `yaml:"models"`
-	Strategy string   `yaml:"strategy"` // round_robin, cost_optimized, etc.
+	Name               string          `yaml:"name"`
+	Models             []string        `yaml:"models"`
+	Strategy           string          `yaml:"strategy"` // round_robin, cost_optimized
+	DefaultTemperature float64         `yaml:"default_temperature,omitempty"`
+	Pricing            []PricingConfig `yaml:"pricing"`
+}
+
+type PricingConfig struct {
+	Model            string  `yaml:"model"`
+	InputPerMillion  float64 `yaml:"input_per_million"`
+	OutputPerMillion float64 `yaml:"output_per_million"`
 }
 
 // ServerManifest represents servers.yaml (marketplace)
