@@ -58,7 +58,10 @@ func (p *Provider) Invoke(ctx context.Context, req providers.InvokeRequest) (pro
 		}
 	}
 	defer resp.Body.Close()
-	respBytes, _ := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return providers.InvokeResponse{}, fmt.Errorf("read response body: %w", err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return providers.InvokeResponse{}, p.parseError(resp.StatusCode, respBytes)
@@ -97,7 +100,8 @@ func (p *Provider) parseError(statusCode int, body []byte) *providers.GatewayErr
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	json.Unmarshal(body, &errResp)
+	// Ignore parse failure; fallback msg path below handles non-JSON bodies.
+	json.Unmarshal(body, &errResp) //nolint:errcheck
 
 	code := errResp.Error.Code
 	msg := errResp.Error.Message
