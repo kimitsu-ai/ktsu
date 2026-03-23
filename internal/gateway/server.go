@@ -3,19 +3,28 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net"
 	"net/http"
 	"strconv"
+
+	"github.com/kimitsu-ai/ktsu/internal/gateway/providers"
 )
 
-type server struct {
-	g   *Gateway
-	mux *http.ServeMux
+// Dispatchable is the interface the server uses for dispatch — allows test doubles.
+type Dispatchable interface {
+	Dispatch(ctx context.Context, req DispatchRequest) (providers.InvokeResponse, error)
 }
 
-func newServer(g *Gateway) *server {
-	s := &server{g: g, mux: http.NewServeMux()}
+type server struct {
+	g          *Gateway
+	dispatcher Dispatchable
+	mux        *http.ServeMux
+}
+
+func newServer(g *Gateway, d Dispatchable) *server {
+	s := &server{g: g, dispatcher: d, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -25,13 +34,57 @@ func (s *server) routes() {
 	s.mux.HandleFunc("POST /invoke", s.handleInvoke)
 }
 
+func (s *server) Handler() http.Handler { return s.mux }
+
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	var req DispatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON: "+err.Error(), false)
+		return
+	}
+
+	resp, err := s.dispatcher.Dispatch(r.Context(), req)
+	if err != nil {
+		var gwErr *providers.GatewayError
+		if errors.As(err, &gwErr) {
+			status := gatewayErrorStatus(gwErr.Type)
+			writeError(w, status, gwErr.Type, gwErr.Message, gwErr.Retryable)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error(), false)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func gatewayErrorStatus(errType string) int {
+	switch errType {
+	case "unknown_group":
+		return http.StatusBadRequest // 400
+	case "budget_exceeded":
+		return http.StatusPaymentRequired // 402
+	case "no_models_available":
+		return http.StatusServiceUnavailable // 503
+	default:
+		return http.StatusBadGateway // 502 for provider_error
+	}
+}
+
+func writeError(w http.ResponseWriter, status int, errType, message string, retryable bool) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":     errType,
+		"message":   message,
+		"retryable": retryable,
+	})
 }
 
 func (s *server) serve(ctx context.Context) error {
