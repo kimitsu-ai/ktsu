@@ -140,6 +140,20 @@ func TestDispatcher_uses_request_temperature_when_set(t *testing.T) {
 	}
 }
 
+func TestDispatcher_provider_not_registered(t *testing.T) {
+	d := gw.NewDispatcher(gatewayConfig(), map[string]providers.Provider{
+		// "openai" not registered
+	})
+	_, err := d.Dispatch(context.Background(), gw.DispatchRequest{Group: "fast"})
+	var gwErr *providers.GatewayError
+	if !errors.As(err, &gwErr) {
+		t.Fatalf("expected GatewayError, got %T: %v", err, err)
+	}
+	if gwErr.Type != "provider_not_registered" {
+		t.Fatalf("expected provider_not_registered, got %q", gwErr.Type)
+	}
+}
+
 func TestDispatcher_calculates_cost(t *testing.T) {
 	fp := &fakeProvider{
 		name:     "openai",

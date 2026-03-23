@@ -29,6 +29,9 @@ type Gateway struct {
 // New creates a Gateway from config, registering providers from GatewayConfig.
 // Returns an error if any required provider cannot be initialized.
 func New(cfg Config) (*Gateway, error) {
+	if cfg.GatewayConfig == nil {
+		return nil, fmt.Errorf("GatewayConfig is required")
+	}
 	provs, err := buildProviders(cfg.GatewayConfig)
 	if err != nil {
 		return nil, fmt.Errorf("build providers: %w", err)
@@ -74,6 +77,9 @@ func buildProvider(pc config.ProviderConfig) (providers.Provider, error) {
 	switch pc.Type {
 	case "openai":
 		baseURL := pc.Config["base_url"]
+		if baseURL == "" {
+			return nil, fmt.Errorf("missing base_url")
+		}
 		apiKey := pc.Config["api_key_env"]
 		if apiKey == "" {
 			return nil, fmt.Errorf("missing api_key_env")

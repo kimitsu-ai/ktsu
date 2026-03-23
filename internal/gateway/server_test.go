@@ -163,3 +163,15 @@ func TestServer_invoke_bad_json_returns_400(t *testing.T) {
 	}
 }
 
+func TestServer_invoke_config_error_returns_500(t *testing.T) {
+	d := &fakeDispatcher{err: &providers.GatewayError{Type: "invalid_model_config", Message: "bad config", Retryable: false}}
+	g := gatewayWithDispatcher(d)
+	srv := httptest.NewServer(g.Handler())
+	defer srv.Close()
+
+	resp, _ := http.Post(srv.URL+"/invoke", "application/json", bytes.NewReader(invokeBody("fast")))
+	if resp.StatusCode != 500 {
+		t.Errorf("want 500, got %d", resp.StatusCode)
+	}
+}
+

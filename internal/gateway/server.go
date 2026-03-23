@@ -77,6 +77,8 @@ func gatewayErrorStatus(errType string) int {
 		return http.StatusPaymentRequired // 402
 	case "no_models_available":
 		return http.StatusServiceUnavailable // 503
+	case "invalid_model_config", "provider_not_registered":
+		return http.StatusInternalServerError // 500 — operator config error
 	default:
 		return http.StatusBadGateway // 502 for provider_error
 	}
