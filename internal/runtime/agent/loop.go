@@ -20,6 +20,7 @@ type gatewayRequest struct {
 	Group     string    `json:"group"`
 	Messages  []Message `json:"messages"`
 	MaxTokens int       `json:"max_tokens"`
+	Tools     []toolDef `json:"tools,omitempty"`
 }
 
 // Message is a single conversation turn sent to the gateway.
@@ -28,13 +29,28 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+// toolDef mirrors providers.ToolDefinition for the gateway wire format.
+type toolDef struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"input_schema"`
+}
+
+// toolCall mirrors providers.ToolCall returned by the gateway.
+type toolCall struct {
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
 // gatewayResponse is the JSON body returned by the gateway on success.
 type gatewayResponse struct {
-	Content       string  `json:"content"`
-	ModelResolved string  `json:"model_resolved"`
-	TokensIn      int     `json:"tokens_in"`
-	TokensOut     int     `json:"tokens_out"`
-	CostUSD       float64 `json:"cost_usd"`
+	Content       string     `json:"content"`
+	ModelResolved string     `json:"model_resolved"`
+	TokensIn      int        `json:"tokens_in"`
+	TokensOut     int        `json:"tokens_out"`
+	CostUSD       float64    `json:"cost_usd"`
+	ToolCalls     []toolCall `json:"tool_calls,omitempty"`
 }
 
 // gatewayErrorResponse is the JSON body returned by the gateway on error.
@@ -87,15 +103,22 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 	var metrics Metrics
 
 	// --- Tool discovery ---
-	// toolByName maps tool name → server URL (for routing tool calls)
+	// toolByName maps tool name → server URL (for routing tool calls).
+	// tools is the flat list sent to the gateway.
 	toolByName := make(map[string]string)
+	var tools []toolDef
 	for _, srv := range req.ToolServers {
-		tools, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.Allowlist)
+		discovered, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.Allowlist)
 		if err != nil {
 			return nil, metrics, fmt.Errorf("discover tools from %s: %w", srv.Name, err)
 		}
-		for _, t := range tools {
+		for _, t := range discovered {
 			toolByName[t.Name] = srv.URL
+			tools = append(tools, toolDef{
+				Name:        t.Name,
+				Description: t.Description,
+				InputSchema: t.InputSchema,
+			})
 		}
 	}
 
@@ -120,7 +143,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 			messages = append(messages, Message{Role: "user", Content: forcedConclusionMessage})
 		}
 
-		gwResp, err := l.callGateway(ctx, req, messages)
+		gwResp, err := l.callGateway(ctx, req, messages, tools)
 		if err != nil {
 			return nil, metrics, err
 		}
@@ -132,13 +155,47 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 			metrics.ModelResolved = gwResp.ModelResolved
 		}
 
-		// For now: no tool_calls in gateway response (phase 7 extends this).
-		// Parse content as JSON output and finish.
+		if len(gwResp.ToolCalls) > 0 {
+			for _, tc := range gwResp.ToolCalls {
+				serverURL, ok := toolByName[tc.Name]
+				if !ok {
+					return nil, metrics, fmt.Errorf("tool_not_permitted: %s", tc.Name)
+				}
+				result, err := l.mcpClient.CallTool(ctx, serverURL, tc.Name, tc.Arguments)
+				if err != nil {
+					return nil, metrics, fmt.Errorf("tool call %s: %w", tc.Name, err)
+				}
+				metrics.ToolCalls++
+
+				// Append assistant tool_use block.
+				toolUseContent, _ := json.Marshal([]map[string]any{{
+					"type":  "tool_use",
+					"id":    tc.ID,
+					"name":  tc.Name,
+					"input": tc.Arguments,
+				}})
+				messages = append(messages, Message{Role: "assistant", Content: string(toolUseContent)})
+
+				// Append user tool_result block.
+				resultText := ""
+				if len(result.Content) > 0 {
+					resultText = result.Content[0].Text
+				}
+				toolResultContent, _ := json.Marshal([]map[string]any{{
+					"type":        "tool_result",
+					"tool_use_id": tc.ID,
+					"content":     resultText,
+				}})
+				messages = append(messages, Message{Role: "user", Content: string(toolResultContent)})
+			}
+			continue
+		}
+
+		// No tool calls — parse content as final JSON output.
 		output, err := parseOutput(gwResp.Content)
 		if err != nil {
 			return nil, metrics, fmt.Errorf("parse output: %w", err)
 		}
-		_ = toolByName // will be used in phase 7 tool dispatch
 		return output, metrics, nil
 	}
 
@@ -146,13 +203,14 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 }
 
 // callGateway POSTs to the gateway /invoke and returns the parsed response.
-func (l *Loop) callGateway(ctx context.Context, req InvokeRequest, messages []Message) (gatewayResponse, error) {
+func (l *Loop) callGateway(ctx context.Context, req InvokeRequest, messages []Message, tools []toolDef) (gatewayResponse, error) {
 	body, err := json.Marshal(gatewayRequest{
 		RunID:     req.RunID,
 		StepID:    req.StepID,
 		Group:     req.Model.Group,
 		Messages:  messages,
 		MaxTokens: req.Model.MaxTokens,
+		Tools:     tools,
 	})
 	if err != nil {
 		return gatewayResponse{}, fmt.Errorf("marshal gateway request: %w", err)
