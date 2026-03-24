@@ -119,11 +119,47 @@ func TestAnthropicProvider_credit_exhaustion_is_budget_exceeded(t *testing.T) {
 	}
 }
 
-func TestAnthropicProvider_no_text_content_returns_error(t *testing.T) {
+func TestAnthropicProvider_tool_use_response(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"content": []map[string]string{{"type": "tool_use", "id": "toolu_123"}},
+			"content": []map[string]interface{}{
+				{
+					"type":  "tool_use",
+					"id":    "toolu_123",
+					"name":  "kv-get",
+					"input": map[string]interface{}{"key": "foo"},
+				},
+			},
+			"usage": map[string]int{"input_tokens": 5, "output_tokens": 3},
+		})
+	}))
+	defer srv.Close()
+
+	resp, err := anthropic.New(srv.URL, "key").Invoke(context.Background(), defaultRequest())
+	if err != nil {
+		t.Fatalf("unexpected error for tool_use response: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("want 1 tool call, got %d", len(resp.ToolCalls))
+	}
+	tc := resp.ToolCalls[0]
+	if tc.ID != "toolu_123" || tc.Name != "kv-get" {
+		t.Errorf("tool call: want id=toolu_123 name=kv-get, got id=%q name=%q", tc.ID, tc.Name)
+	}
+	if tc.Arguments["key"] != "foo" {
+		t.Errorf("arguments: want key=foo, got %v", tc.Arguments)
+	}
+	if resp.Content != "" {
+		t.Errorf("content: want empty for tool-only response, got %q", resp.Content)
+	}
+}
+
+func TestAnthropicProvider_empty_content_returns_error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"content": []map[string]interface{}{},
 			"usage":   map[string]int{"input_tokens": 5, "output_tokens": 3},
 		})
 	}))
@@ -131,7 +167,7 @@ func TestAnthropicProvider_no_text_content_returns_error(t *testing.T) {
 
 	_, err := anthropic.New(srv.URL, "key").Invoke(context.Background(), defaultRequest())
 	if err == nil {
-		t.Fatal("expected error when no text content block, got nil")
+		t.Fatal("expected error for empty content array, got nil")
 	}
 }
 

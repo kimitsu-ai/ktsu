@@ -164,6 +164,48 @@ func TestOpenAIProvider_5xx_retryable(t *testing.T) {
 	}
 }
 
+func TestOpenAIProvider_tool_call_response(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]interface{}{
+						"content": nil,
+						"tool_calls": []map[string]interface{}{
+							{
+								"id":   "call_abc",
+								"type": "function",
+								"function": map[string]string{
+									"name":      "kv-get",
+									"arguments": `{"key":"foo"}`,
+								},
+							},
+						},
+					},
+				},
+			},
+			"usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 5},
+		})
+	}))
+	defer srv.Close()
+
+	resp, err := openai.New(srv.URL, "key").Invoke(context.Background(), defaultRequest())
+	if err != nil {
+		t.Fatalf("unexpected error for tool call response: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("want 1 tool call, got %d", len(resp.ToolCalls))
+	}
+	tc := resp.ToolCalls[0]
+	if tc.ID != "call_abc" || tc.Name != "kv-get" {
+		t.Errorf("tool call: want id=call_abc name=kv-get, got id=%q name=%q", tc.ID, tc.Name)
+	}
+	if tc.Arguments["key"] != "foo" {
+		t.Errorf("arguments: want key=foo, got %v", tc.Arguments)
+	}
+}
+
 func TestOpenAIProvider_4xx_not_retryable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(400)

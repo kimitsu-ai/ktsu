@@ -14,6 +14,8 @@ type Config struct {
 	ProjectDir  string // default: "."
 	Host        string // bind interface, "" = all
 	Port        int    // default 8080
+	RuntimeURL  string // URL of the Agent Runtime (e.g. "http://runtime:8082")
+	OwnURL      string // this orchestrator's own URL, for constructing callback_url
 }
 
 type Orchestrator struct {

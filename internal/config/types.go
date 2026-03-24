@@ -150,7 +150,7 @@ type ModelGroupConfig struct {
 	Models             []string        `yaml:"models"`
 	Strategy           string          `yaml:"strategy"` // round_robin, cost_optimized
 	DefaultTemperature float64         `yaml:"default_temperature,omitempty"`
-	Pricing            []PricingConfig `yaml:"pricing"`
+	Pricing            []PricingConfig `yaml:"pricing,omitempty"`
 }
 
 type PricingConfig struct {

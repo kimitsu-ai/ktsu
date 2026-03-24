@@ -30,10 +30,16 @@ type TriggerContext struct {
 	RequestID string
 }
 
+// AgentDispatcher dispatches an agent invocation to the runtime and waits for the result.
+type AgentDispatcher interface {
+	Dispatch(ctx context.Context, runID, stepID string, req map[string]interface{}) (map[string]interface{}, error)
+}
+
 // Runner executes workflow pipelines.
 type Runner struct {
 	store      state.Store
 	projectDir string
+	dispatcher AgentDispatcher // nil = agent steps are stubbed
 }
 
 // New creates a new Runner.
@@ -41,6 +47,15 @@ func New(store state.Store, projectDir string) *Runner {
 	return &Runner{
 		store:      store,
 		projectDir: projectDir,
+	}
+}
+
+// NewWithDispatcher creates a Runner that dispatches agent steps to the given AgentDispatcher.
+func NewWithDispatcher(store state.Store, projectDir string, dispatcher AgentDispatcher) *Runner {
+	return &Runner{
+		store:      store,
+		projectDir: projectDir,
+		dispatcher: dispatcher,
 	}
 }
 
@@ -135,7 +150,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			case types.StepTypeOutlet:
 				rawOutput, execErr = r.executeOutlet(ctx, step, stepOutputs, runID)
 			case types.StepTypeAgent:
-				rawOutput, execErr = map[string]interface{}{"stubbed": true}, nil
+				rawOutput, execErr = r.executeAgent(ctx, step, stepOutputs, runID)
 			}
 
 			if execErr != nil {
@@ -160,7 +175,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 				schema = step.Output.Schema
 			}
 
-			cleanOutput, reservedFields, skipReason, reservedErr := processReservedFields(rawOutput, step.ConfidenceThreshold)
+			cleanOutput, reservedFields, skipReason, reservedErr := ProcessReservedFields(rawOutput, step.ConfidenceThreshold)
 
 			if reservedErr != nil {
 				return failRun(stepRec, reservedErr.Error())
@@ -198,6 +213,22 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 	run.UpdatedAt = now
 	run.CompletedAt = &now
 	return r.store.UpdateRun(ctx, run)
+}
+
+// executeAgent dispatches an agent step to the runtime and waits for the result.
+// If no dispatcher is configured, the step is stubbed with {"stubbed": true}.
+func (r *Runner) executeAgent(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, runID string) (map[string]interface{}, error) {
+	if r.dispatcher == nil {
+		return map[string]interface{}{"stubbed": true}, nil
+	}
+
+	// Assemble inputs from upstream step outputs.
+	input := make(map[string]interface{})
+	for id, out := range stepOutputs {
+		input[id] = out
+	}
+
+	return r.dispatcher.Dispatch(ctx, runID, step.ID, input)
 }
 
 // executeInlet processes an inlet step.
@@ -637,9 +668,9 @@ func isFalsy(v interface{}) bool {
 	return false
 }
 
-// processReservedFields extracts and processes ktsu_* fields from output.
+// ProcessReservedFields extracts and processes ktsu_* fields from output.
 // Returns: (cleanOutput, reservedFields, skipReason, error)
-func processReservedFields(rawOutput map[string]interface{}, threshold float64) (map[string]interface{}, *types.ReservedFields, string, error) {
+func ProcessReservedFields(rawOutput map[string]interface{}, threshold float64) (map[string]interface{}, *types.ReservedFields, string, error) {
 	reserved := &types.ReservedFields{}
 
 	// 1. Check injection attempt

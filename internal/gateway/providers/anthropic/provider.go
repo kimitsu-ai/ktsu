@@ -32,21 +32,21 @@ func (p *Provider) Name() string { return "anthropic" }
 func (p *Provider) Invoke(ctx context.Context, req providers.InvokeRequest) (providers.InvokeResponse, error) {
 	// Anthropic requires system prompt as a top-level field, not in messages.
 	var systemPrompt string
-	msgs := make([]providers.Message, 0, len(req.Messages))
+	antMsgs := make([]any, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		if m.Role == "system" {
 			if systemPrompt != "" {
 				return providers.InvokeResponse{}, fmt.Errorf("anthropic provider: multiple system messages not supported")
 			}
 			systemPrompt = m.Content
-		} else {
-			msgs = append(msgs, m)
+			continue
 		}
+		antMsgs = append(antMsgs, p.toAntMessage(m))
 	}
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"model":      req.Model,
-		"messages":   msgs,
+		"messages":   antMsgs,
 		"max_tokens": req.MaxTokens,
 	}
 	if systemPrompt != "" {
@@ -54,6 +54,9 @@ func (p *Provider) Invoke(ctx context.Context, req providers.InvokeRequest) (pro
 	}
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = p.toAntTools(req.Tools)
 	}
 
 	bodyBytes, err := json.Marshal(body)
@@ -90,10 +93,14 @@ func (p *Provider) Invoke(ctx context.Context, req providers.InvokeRequest) (pro
 
 	var antResp struct {
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type  string         `json:"type"`
+			Text  string         `json:"text"`
+			ID    string         `json:"id"`
+			Name  string         `json:"name"`
+			Input map[string]any `json:"input"`
 		} `json:"content"`
-		Usage struct {
+		StopReason string `json:"stop_reason"`
+		Usage      struct {
 			InputTokens  int `json:"input_tokens"`
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
@@ -102,22 +109,79 @@ func (p *Provider) Invoke(ctx context.Context, req providers.InvokeRequest) (pro
 		return providers.InvokeResponse{}, fmt.Errorf("decode response: %w", err)
 	}
 
-	var content string
-	for _, block := range antResp.Content {
-		if block.Type == "text" {
-			content = block.Text
-			break
-		}
-	}
-	if content == "" {
-		return providers.InvokeResponse{}, fmt.Errorf("no text content block in response")
-	}
-
-	return providers.InvokeResponse{
-		Content:   content,
+	result := providers.InvokeResponse{
 		TokensIn:  antResp.Usage.InputTokens,
 		TokensOut: antResp.Usage.OutputTokens,
-	}, nil
+	}
+
+	for _, block := range antResp.Content {
+		switch block.Type {
+		case "text":
+			result.Content = block.Text
+		case "tool_use":
+			result.ToolCalls = append(result.ToolCalls, providers.ToolCall{
+				ID:        block.ID,
+				Name:      block.Name,
+				Arguments: block.Input,
+			})
+		}
+	}
+
+	if result.Content == "" && len(result.ToolCalls) == 0 {
+		return providers.InvokeResponse{}, fmt.Errorf("no text or tool_use content block in response")
+	}
+
+	return result, nil
+}
+
+// toAntMessage converts a normalized Message to the Anthropic wire format.
+// For tool_use turns (assistant) and tool_result turns (user), structured content is used.
+func (p *Provider) toAntMessage(m providers.Message) map[string]any {
+	if m.Role == "tool" {
+		// Tool result — Anthropic uses role "user" with tool_result content block.
+		return map[string]any{
+			"role": "user",
+			"content": []map[string]any{
+				{
+					"type":        "tool_result",
+					"tool_use_id": m.ToolCallID,
+					"content":     m.Content,
+				},
+			},
+		}
+	}
+
+	if len(m.ToolCalls) > 0 {
+		// Assistant turn with tool use — encode as content array.
+		content := []map[string]any{}
+		if m.Content != "" {
+			content = append(content, map[string]any{"type": "text", "text": m.Content})
+		}
+		for _, tc := range m.ToolCalls {
+			content = append(content, map[string]any{
+				"type":  "tool_use",
+				"id":    tc.ID,
+				"name":  tc.Name,
+				"input": tc.Arguments,
+			})
+		}
+		return map[string]any{"role": m.Role, "content": content}
+	}
+
+	return map[string]any{"role": m.Role, "content": m.Content}
+}
+
+// toAntTools maps provider ToolDefinitions to the Anthropic tools format.
+func (p *Provider) toAntTools(tools []providers.ToolDefinition) []map[string]any {
+	out := make([]map[string]any, len(tools))
+	for i, t := range tools {
+		out[i] = map[string]any{
+			"name":         t.Name,
+			"description":  t.Description,
+			"input_schema": t.InputSchema,
+		}
+	}
+	return out
 }
 
 func (p *Provider) parseError(statusCode int, body []byte) *providers.GatewayError {
@@ -127,7 +191,6 @@ func (p *Provider) parseError(statusCode int, body []byte) *providers.GatewayErr
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	// Ignore parse failure; fallback msg path below handles non-JSON bodies.
 	json.Unmarshal(body, &errResp) //nolint:errcheck
 
 	msg := errResp.Error.Message
@@ -135,13 +198,11 @@ func (p *Provider) parseError(statusCode int, body []byte) *providers.GatewayErr
 		msg = fmt.Sprintf("upstream returned status %d", statusCode)
 	}
 
-	// Detect credit exhaustion by message content
 	if strings.Contains(strings.ToLower(msg), "credit balance") ||
 		strings.Contains(strings.ToLower(msg), "credit limit") {
 		return &providers.GatewayError{Type: "budget_exceeded", Message: msg, Retryable: false}
 	}
 
-	// 429, 529, and 5xx are retryable
 	retryable := statusCode == 429 || statusCode == 529 || statusCode >= 500
 	return &providers.GatewayError{
 		Type:      "provider_error",

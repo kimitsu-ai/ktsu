@@ -27,13 +27,21 @@ func New(baseURL, apiKey string) *Provider {
 func (p *Provider) Name() string { return "openai" }
 
 func (p *Provider) Invoke(ctx context.Context, req providers.InvokeRequest) (providers.InvokeResponse, error) {
-	body := map[string]interface{}{
+	msgs := make([]map[string]any, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		msgs = append(msgs, p.toOAIMessage(m))
+	}
+
+	body := map[string]any{
 		"model":      req.Model,
-		"messages":   req.Messages,
+		"messages":   msgs,
 		"max_tokens": req.MaxTokens,
 	}
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = p.toOAITools(req.Tools)
 	}
 
 	bodyBytes, err := json.Marshal(body)
@@ -70,7 +78,15 @@ func (p *Provider) Invoke(ctx context.Context, req providers.InvokeRequest) (pro
 	var oaiResp struct {
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Type     string `json:"type"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"` // JSON-encoded string
+					} `json:"function"`
+				} `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
@@ -85,11 +101,82 @@ func (p *Provider) Invoke(ctx context.Context, req providers.InvokeRequest) (pro
 		return providers.InvokeResponse{}, fmt.Errorf("empty choices in response")
 	}
 
-	return providers.InvokeResponse{
+	result := providers.InvokeResponse{
 		Content:   oaiResp.Choices[0].Message.Content,
 		TokensIn:  oaiResp.Usage.PromptTokens,
 		TokensOut: oaiResp.Usage.CompletionTokens,
-	}, nil
+	}
+
+	for _, tc := range oaiResp.Choices[0].Message.ToolCalls {
+		var args map[string]any
+		// OpenAI returns arguments as a JSON-encoded string; parse it.
+		if tc.Function.Arguments != "" {
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				args = map[string]any{"_raw": tc.Function.Arguments}
+			}
+		}
+		result.ToolCalls = append(result.ToolCalls, providers.ToolCall{
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: args,
+		})
+	}
+
+	if result.Content == "" && len(result.ToolCalls) == 0 {
+		return providers.InvokeResponse{}, fmt.Errorf("empty content and no tool calls in response")
+	}
+
+	return result, nil
+}
+
+// toOAIMessage converts a normalized Message to the OpenAI wire format.
+func (p *Provider) toOAIMessage(m providers.Message) map[string]any {
+	if m.Role == "tool" {
+		return map[string]any{
+			"role":         "tool",
+			"content":      m.Content,
+			"tool_call_id": m.ToolCallID,
+		}
+	}
+	if len(m.ToolCalls) > 0 {
+		oaiToolCalls := make([]map[string]any, len(m.ToolCalls))
+		for i, tc := range m.ToolCalls {
+			argsJSON, _ := json.Marshal(tc.Arguments)
+			oaiToolCalls[i] = map[string]any{
+				"id":   tc.ID,
+				"type": "function",
+				"function": map[string]any{
+					"name":      tc.Name,
+					"arguments": string(argsJSON),
+				},
+			}
+		}
+		msg := map[string]any{
+			"role":       m.Role,
+			"tool_calls": oaiToolCalls,
+		}
+		if m.Content != "" {
+			msg["content"] = m.Content
+		}
+		return msg
+	}
+	return map[string]any{"role": m.Role, "content": m.Content}
+}
+
+// toOAITools maps provider ToolDefinitions to the OpenAI function calling format.
+func (p *Provider) toOAITools(tools []providers.ToolDefinition) []map[string]any {
+	out := make([]map[string]any, len(tools))
+	for i, t := range tools {
+		out[i] = map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        t.Name,
+				"description": t.Description,
+				"parameters":  t.InputSchema,
+			},
+		}
+	}
+	return out
 }
 
 // parseError translates an upstream error response into a GatewayError.
@@ -100,7 +187,6 @@ func (p *Provider) parseError(statusCode int, body []byte) *providers.GatewayErr
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	// Ignore parse failure; fallback msg path below handles non-JSON bodies.
 	json.Unmarshal(body, &errResp) //nolint:errcheck
 
 	code := errResp.Error.Code
@@ -109,12 +195,10 @@ func (p *Provider) parseError(statusCode int, body []byte) *providers.GatewayErr
 		msg = fmt.Sprintf("upstream returned status %d", statusCode)
 	}
 
-	// Billing hard limits are not retryable
 	if code == "billing_hard_limit_reached" || code == "insufficient_quota" {
 		return &providers.GatewayError{Type: "budget_exceeded", Message: msg, Retryable: false}
 	}
 
-	// 429 rate limit and 5xx are retryable
 	retryable := statusCode == 429 || statusCode >= 500
 	return &providers.GatewayError{
 		Type:      "provider_error",

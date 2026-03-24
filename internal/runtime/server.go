@@ -1,21 +1,27 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
+
+	"github.com/kimitsu-ai/ktsu/internal/runtime/agent"
 )
 
 type server struct {
-	r   *Runtime
-	mux *http.ServeMux
+	r                 *Runtime
+	loop              *agent.Loop
+	activeInvocations sync.Map // key: "run_id/step_id", value: struct{}
+	mux               *http.ServeMux
 }
 
-func newServer(r *Runtime) *server {
-	s := &server{r: r, mux: http.NewServeMux()}
+func newServer(r *Runtime, loop *agent.Loop) *server {
+	s := &server{r: r, loop: loop, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -27,11 +33,56 @@ func (s *server) routes() {
 
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		log.Printf("handleHealth: encode failed: %v", err)
+	}
 }
 
 func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	var req agent.InvokeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid_request","message":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+	if req.RunID == "" || req.StepID == "" || req.CallbackURL == "" {
+		http.Error(w, `{"error":"invalid_request","message":"run_id, step_id, and callback_url are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	key := req.RunID + "/" + req.StepID
+	s.activeInvocations.Store(key, struct{}{})
+
+	// Run the loop in a goroutine; deliver result via callback.
+	go func() {
+		payload := s.loop.Run(context.Background(), req)
+		s.activeInvocations.Delete(key)
+		if err := s.postCallback(req.CallbackURL, payload); err != nil {
+			log.Printf("runtime: callback failed for %s/%s: %v", req.RunID, req.StepID, err)
+		}
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"run_id":  req.RunID,
+		"step_id": req.StepID,
+		"status":  "accepted",
+	}); err != nil {
+		log.Printf("handleInvoke: encode failed: %v", err)
+	}
+}
+
+func (s *server) postCallback(callbackURL string, payload agent.CallbackPayload) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	resp, err := http.Post(callbackURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
 }
 
 func (s *server) serve(ctx context.Context) error {

@@ -14,12 +14,13 @@ import (
 // DispatchRequest is the internal request type used by the dispatcher.
 // It is also used directly for JSON decoding of the HTTP /invoke request body.
 type DispatchRequest struct {
-	RunID       string              `json:"run_id"`
-	StepID      string              `json:"step_id"`
-	Group       string              `json:"group"`
-	Messages    []providers.Message `json:"messages"`
-	MaxTokens   int                 `json:"max_tokens"`
-	Temperature *float64            `json:"temperature,omitempty"`
+	RunID       string                   `json:"run_id"`
+	StepID      string                   `json:"step_id"`
+	Group       string                   `json:"group"`
+	Messages    []providers.Message      `json:"messages"`
+	MaxTokens   int                      `json:"max_tokens"`
+	Temperature *float64                 `json:"temperature,omitempty"`
+	Tools       []providers.ToolDefinition `json:"tools,omitempty"`
 }
 
 // Dispatcher resolves model groups, selects a provider, and dispatches invocations.
@@ -103,6 +104,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req DispatchRequest) (provide
 		Messages:    req.Messages,
 		MaxTokens:   req.MaxTokens,
 		Temperature: temp,
+		Tools:       req.Tools,
 	}
 	resp, err := prov.Invoke(ctx, provReq)
 	if err != nil {
