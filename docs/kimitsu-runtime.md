@@ -1,5 +1,5 @@
 # Kimitsu — Runtime Architecture
-## Architecture & Design Reference — v3
+## Architecture & Design Reference — v4
 
 ---
 
@@ -54,16 +54,16 @@ An Kimitsu deployment consists of four container tiers running on a shared inter
 A long-running container that owns the pipeline lifecycle. It is the only component that understands the DAG. It makes zero LLM calls. It is the single writer to the state store database.
 
 Responsibilities:
-- Parse and validate workflow, agent, tool server, inlet, and outlet YAML files
+- Parse and validate workflow, agent, and tool server YAML files
 - Resolve the dependency graph and determine execution order
-- Execute inlet and outlet mappings directly (no Agent Runtime involvement)
+- Validate workflow input schema on `POST /invoke/{workflow}` — reject invalid input with 422
 - Execute transform op chains directly (no Agent Runtime involvement)
+- Dispatch webhook steps via HTTP POST, check 2xx, record result
 - Dispatch agent invocations to the Agent Runtime via HTTP
 - Run the Air-Lock validator on all step output
 - Maintain all run and step state in the state store database
 - Serve the envelope as a live query over the state store
 - Enforce declared tool lists — agent invocations include the list of permitted tool server endpoints
-- Expose inlet trigger endpoints (webhooks, schedule triggers)
 - Enforce `cost_budget_usd` circuit breaker via the LLM Gateway
 - Monitor Agent Runtime heartbeats and fail steps that go silent
 - Act on reserved output fields (`ktsu_*`) from agent output before passing results downstream
@@ -76,7 +76,7 @@ The Agent Runtime is a **generic, reusable image**. It has no workflow-specific 
 
 The runtime is stateless between invocations. It holds no data about previous runs. All persistence is handled by tool calls (ktsu/kv, ktsu/blob, ktsu/memory) which write to the orchestrator's state store via their respective tool servers.
 
-Inlets, outlets, and transform steps do **not** execute on the Agent Runtime. They are executed directly by the orchestrator.
+Transform steps and webhook steps do **not** execute on the Agent Runtime. They are executed directly by the orchestrator.
 
 ### Agent Runtime Heartbeat
 
@@ -249,8 +249,7 @@ The orchestrator persists all run state in a relational database. The state stor
 | `status` | text | `running` \| `completed` \| `failed` |
 | `started_at` | timestamp | When the run began |
 | `completed_at` | timestamp | When the run finished (null if running) |
-| `inlet_context` | jsonb | Trigger context from the inlet |
-| `parent_run_id` | text FK | References `runs.run_id` of the triggering run. Null for runs not triggered by another workflow. Only written when the inlet trigger type is `workflow` and a valid `parent_run_id` is present in the payload. |
+| `input` | jsonb | Validated workflow input from the invoke request body |
 | `cost_usd` | decimal | Accumulated cost across all steps |
 | `tokens_in` | integer | Accumulated input tokens |
 | `tokens_out` | integer | Accumulated output tokens |
@@ -261,8 +260,8 @@ The orchestrator persists all run state in a relational database. The state stor
 |---|---|---|
 | `run_id` | text FK | References `runs.run_id` |
 | `step_id` | text | Step identifier from the pipeline |
-| `step_type` | text | `inlet` \| `transform` \| `agent` \| `outlet` |
-| `agent_name` | text | Agent/inlet/outlet name (null for transforms) |
+| `step_type` | text | `transform` \| `agent` \| `webhook` |
+| `agent_name` | text | Agent name (null for transform and webhook steps) |
 | `agent_version` | text | Agent semver |
 | `runtime_id` | text | Which Agent Runtime instance executed this step (null for non-agent steps) |
 | `status` | text | `pending` \| `running` \| `ok` \| `failed` \| `skipped` |
@@ -370,20 +369,18 @@ state_store:
 ### How a Pipeline Run Executes
 
 ```
-1. Trigger arrives        Orchestrator receives webhook / schedule fires / email arrives /
-                          workflow outlet posts to a workflow inlet
-2. Inlet execution        Orchestrator runs JMESPath mapping directly — no Agent Runtime.
-                          If trigger type is `workflow` and payload contains parent_run_id,
-                          orchestrator writes parent_run_id to runs table.
-3. Air-Lock validates     Orchestrator validates inlet output against declared output.schema
+1. Invoke arrives         Orchestrator receives POST /invoke/{workflow} with JSON body
+2. Input validation       Orchestrator validates request body against workflow input.schema.
+                          Failure → 422 with error detail, no run created.
+3. Run created            Orchestrator creates runs row, generates run_id, pre-populates
+                          stepOutputs["input"] with the validated workflow input.
 4. DAG resolves           Orchestrator determines which steps are now unblocked
-5. Fan-out                Agent steps dispatched to Agent Runtime; transforms executed directly
+5. Fan-out                Agent steps dispatched to Agent Runtime;
+                          transform steps executed directly by orchestrator;
+                          webhook steps executed directly by orchestrator (HTTP POST)
 6. Steps complete         Each step returns result → Air-Lock → reserved field processing → resolve next steps
 7. Repeat                 Until all steps complete, fail, or skip
-8. Outlet evaluation      For each terminal outlet step, orchestrator evaluates the `condition`
-                          expression against the envelope. If false, step is marked `skipped`.
-                          Remaining outlets execute their mapping directly — no Agent Runtime.
-9. Envelope finalized     Orchestrator marks run complete in state store, fires log drain
+8. Envelope finalized     Orchestrator marks run complete in state store, fires log drain
 ```
 
 ### Agent Runtime Invocation Lifecycle
@@ -420,17 +417,10 @@ state_store:
   "workflow_v": "1.0.0",
   "started_at": "2026-03-14T09:11:44Z",
 
-  "inlet": {
-    "type": "webhook",
-    "step_id": "inbound",
-    "context": {
-      "channel_id":   "C04XZ99",
-      "channel_name": "#support",
-      "user_id":      "U8821AB",
-      "user_name":    "dana.chen",
-      "thread_ts":    "1741234567.000100",
-      "message":      "I was charged twice for my subscription"
-    }
+  "input": {
+    "message": "I was charged twice for my subscription",
+    "user_id": "U8821AB",
+    "channel_id": "C04XZ99"
   },
 
   "steps": {
@@ -491,8 +481,6 @@ services:
       - ./workflows:/app/workflows
       - ./servers:/app/servers
       - ./agents:/app/agents
-      - ./inlets:/app/inlets
-      - ./outlets:/app/outlets
       - ./environments:/app/environments
       - ./gateway.yaml:/app/gateway.yaml
       - ktsu-data:/app/data
@@ -542,7 +530,7 @@ networks:
 
 - **Default on failure is halt.** If a step fails and the downstream agent does not declare that input as `optional: true`, the downstream step is halted.
 - **Failure tolerance is declared on the consumer.** The `optional` field on an agent's `inputs` entry is the only mechanism for tolerating upstream failure.
-- **Transform steps, inlets, and outlets never tolerate upstream failure.** They have no `optional` flag — any failed upstream halts them immediately.
+- **Transform steps and webhook steps never tolerate upstream failure.** They have no `optional` flag — any failed upstream halts them immediately.
 - **Parallel branches run independently.** A sibling branch failure never halts another branch mid-execution.
 - **`optional` is local and shallow.** It applies only to the direct upstream steps named in the agent's `inputs`.
 - **Failure tolerance is never transitive.**

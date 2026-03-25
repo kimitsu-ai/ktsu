@@ -5,10 +5,9 @@ import "time"
 type StepType string
 
 const (
-	StepTypeInlet     StepType = "inlet"
 	StepTypeTransform StepType = "transform"
 	StepTypeAgent     StepType = "agent"
-	StepTypeOutlet    StepType = "outlet"
+	StepTypeWebhook   StepType = "webhook"
 )
 
 type StepStatus string

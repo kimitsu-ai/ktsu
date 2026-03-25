@@ -6,18 +6,23 @@ type WorkflowConfig struct {
 	Name        string         `yaml:"name"`
 	Version     string         `yaml:"version"`
 	Description string         `yaml:"description"`
+	Input       WorkflowInput  `yaml:"input,omitempty"`
 	Pipeline    []PipelineStep `yaml:"pipeline"`
 	ModelPolicy *ModelPolicy   `yaml:"model_policy,omitempty"`
 }
 
-// PipelineStep is one entry in pipeline[]. Exactly one of Inlets/Inlet/Agent/Transform/Outlet is set.
+// WorkflowInput declares the expected input schema for a workflow.
+// The orchestrator validates incoming invoke payloads against this schema.
+type WorkflowInput struct {
+	Schema map[string]interface{} `yaml:"schema,omitempty"`
+}
+
+// PipelineStep is one entry in pipeline[]. Exactly one of Agent/Transform/Webhook is set.
 type PipelineStep struct {
 	ID                  string                 `yaml:"id"`
-	Inlets              []string               `yaml:"inlets,omitempty"`
-	Inlet               string                 `yaml:"inlet,omitempty"`
 	Agent               string                 `yaml:"agent,omitempty"`
 	Transform           *TransformSpec         `yaml:"transform,omitempty"`
-	Outlet              string                 `yaml:"outlet,omitempty"`
+	Webhook             *WebhookSpec           `yaml:"webhook,omitempty"`
 	DependsOn           []string               `yaml:"depends_on,omitempty"`
 	Condition           string                 `yaml:"condition,omitempty"`
 	ConfidenceThreshold float64                `yaml:"confidence_threshold,omitempty"`
@@ -25,6 +30,16 @@ type PipelineStep struct {
 	Model               *ModelSpec             `yaml:"model,omitempty"`
 	Consolidation       string                 `yaml:"consolidation,omitempty"`
 	Output              *OutputSpec            `yaml:"output,omitempty"`
+}
+
+// WebhookSpec declares an HTTP webhook call made by the orchestrator when this step runs.
+// The body values are JMESPath expressions evaluated against the accumulated step outputs.
+// The URL may use env:VAR_NAME to resolve from the environment at runtime.
+type WebhookSpec struct {
+	URL       string                 `yaml:"url"`
+	Method    string                 `yaml:"method,omitempty"` // default: POST
+	Body      map[string]interface{} `yaml:"body,omitempty"`
+	TimeoutS  int                    `yaml:"timeout_s,omitempty"` // default: 30
 }
 
 type TransformSpec struct {
@@ -49,54 +64,6 @@ type ModelPolicy struct {
 
 type OutputSpec struct {
 	Schema map[string]interface{} `yaml:"schema"`
-}
-
-// InletConfig represents an inlet YAML file (kind: inlet)
-type InletConfig struct {
-	Kind        string       `yaml:"kind"`
-	Name        string       `yaml:"name"`
-	Version     string       `yaml:"version"`
-	Description string       `yaml:"description"`
-	Trigger     TriggerSpec  `yaml:"trigger"`
-	Mapping     InletMapping `yaml:"mapping"`
-	Output      OutputSpec   `yaml:"output"`
-}
-
-type TriggerSpec struct {
-	Type string `yaml:"type"` // webhook, schedule, email, workflow
-	Path string `yaml:"path,omitempty"`
-	Cron string `yaml:"cron,omitempty"`
-}
-
-type InletMapping struct {
-	Envelope map[string]string `yaml:"envelope"`
-	Output   map[string]string `yaml:"output"`
-}
-
-// OutletConfig represents an outlet YAML file (kind: outlet)
-type OutletConfig struct {
-	Kind        string        `yaml:"kind"`
-	Name        string        `yaml:"name"`
-	Version     string        `yaml:"version"`
-	Description string        `yaml:"description"`
-	Inputs      []OutletInput `yaml:"inputs"`
-	Mapping     OutletMapping `yaml:"mapping"`
-	Output      OutputSpec    `yaml:"output"`
-}
-
-type OutletInput struct {
-	From     string `yaml:"from"`
-	Optional bool   `yaml:"optional"`
-}
-
-type OutletMapping struct {
-	Action OutletAction `yaml:"action"`
-}
-
-type OutletAction struct {
-	Type string                 `yaml:"type"` // http_post, http_put, email_reply, noop
-	URL  string                 `yaml:"url,omitempty"`
-	Body map[string]interface{} `yaml:"body,omitempty"`
 }
 
 // AgentConfig represents an agent config block

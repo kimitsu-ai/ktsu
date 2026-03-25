@@ -1,5 +1,5 @@
 # Kimitsu — Overview & Philosophy
-## Architecture & Design Reference — v3
+## Architecture & Design Reference — v4
 
 > **Tools are pure functions. Agents are stateful processes.**
 > **The pipeline is a declaration. The orchestrator is the kernel. The tool server is the atom.**
@@ -23,7 +23,7 @@ This maps directly to how engineers already think about software:
 | Tool server | Library / service |
 | Agent | Application |
 | Sub-agent | Internal service / module |
-| Workflow Compose | Deployment manifest |
+| Workflow | Deployment manifest |
 | Orchestrator | Kernel / control plane |
 | Agent Runtime | Worker pool / function runtime |
 | LLM Gateway | Provider-normalizing proxy (first-party) |
@@ -55,18 +55,26 @@ Well-documented boundaries make this possible. When in doubt, document the contr
 
 ## Core Concepts
 
-### The Four Pipeline Primitives
+### The Three Pipeline Primitives
 
-Every step in an Kimitsu pipeline is exactly one of four things:
+Every step in a Kimitsu pipeline is exactly one of three things:
 
 | Primitive | LLM | Tools | Role |
 |---|---|---|---|
-| **Inlet** | Never | Never | Receives external trigger, extracts structured data via declarative mapping. Multiple inlets per step supported — all must produce identical output schemas. |
 | **Transform** | Never | Never | Reshapes data between steps via deterministic ops |
 | **Agent** | Always | Optional | Reasons, classifies, synthesizes — the only LLM-bearing step type |
-| **Outlet** | Never | Never | Emits pipeline result to an external system via declarative mapping |
+| **Webhook** | Never | Never | POSTs pipeline data to an external URL; expects 200 for success |
 
-Nothing else. If logic requires reasoning about content, it is an agent. If it is pure data shaping, it is a transform. If it sits at the boundary, it is an inlet or outlet. There is no fourth option and no escape hatch.
+Nothing else. If logic requires reasoning about content, it is an agent. If it is pure data shaping, it is a transform. If it needs to call out to an external system, it is a webhook. There is no fourth option and no escape hatch.
+
+### Everything is HTTP
+
+The Kimitsu invoke API is a standard HTTP endpoint. Any service, script, cron job, or language that can make an HTTP POST can trigger a workflow. The orchestrator does not own or prescribe how triggers are built — it only validates the shape of the data that arrives and the shape of the data that leaves.
+
+- **To start a run:** `POST /invoke/{workflow}` with a JSON body
+- **To receive pipeline output:** declare a `webhook` step that POSTs to your endpoint
+
+This is the entirety of the integration surface.
 
 ### Tools are Pure Functions
 
@@ -94,17 +102,11 @@ A sub-agent is a full agent invoked by a parent agent as a tool call rather than
 
 Sub-agents do not appear in the pipeline DAG. They are private implementation details of the agent that declares them. Their cost and token usage roll up to the parent step's metrics.
 
-### Inlets and Outlets are Declarative Boundaries
-
-Inlets and outlets are pure mapping steps — they never invoke an LLM. An inlet receives a raw external trigger and uses a declarative field mapping to produce a typed, Air-Lock validated output and write envelope context. An outlet receives pipeline output and maps it to an external action. They appear as named steps in the pipeline DAG and follow the same output schema and Air-Lock rules as every other step. They do not execute on the Agent Runtime.
-
-**Why no LLM at the boundary:** Untrusted data enters the system at the inlet. If that data flows into an agent reasoning loop before being structurally extracted, an attacker can craft a payload that hijacks the agent's behavior. JMESPath field extraction has no reasoning loop to hijack — `body.event.text` is always `body.event.text` regardless of what the text says. The inlet is a sanitization boundary, not a reasoning step.
-
 ### The Air-Lock
 
 A middleware validator running inside the orchestrator. It validates every step's output against the declared `output.schema` before making the output available to downstream steps. Bad data never reaches the next step.
 
-When validation fails on an agent step, the Air-Lock returns the validation error to the Agent Runtime, which reinjects the error into the agent's reasoning loop. The agent may retry up to the configured `retry.max` limit (default: 0). If all retries are exhausted, the step fails. Transform steps, inlets, and outlets do not retry — they fail immediately on bad output.
+When validation fails on an agent step, the Air-Lock returns the validation error to the Agent Runtime, which reinjects the error into the agent's reasoning loop. The agent may retry up to the configured `retry.max` limit (default: 0). If all retries are exhausted, the step fails. Transform and webhook steps do not retry — they fail immediately on bad output.
 
 ### MCP as the Singular Interface
 
@@ -126,7 +128,9 @@ Any agent may include reserved `ktsu_` prefixed fields in its output schema. The
 
 **MCP as the only interface.** Tool servers are MCP servers. Kimitsu does not wrap, host, or manage user-provided tool servers. Agents call them directly over HTTP. There is one protocol and one mental model.
 
-**Four and only four pipeline primitives.** Inlet, transform, agent, outlet. No special cases, no escape hatches. If it needs reasoning, it is an agent. Everything else is deterministic.
+**Three and only three pipeline primitives.** Transform, agent, webhook. No special cases, no escape hatches. If it needs reasoning, it is an agent. Everything else is deterministic.
+
+**The invoke endpoint is the integration contract.** Any HTTP client can start a workflow. Any HTTP server can receive pipeline output. Kimitsu does not prescribe trigger infrastructure or output destination — only the data shapes at the boundary.
 
 **Four container tiers, clearly separated.** Orchestrator, Agent Runtime, LLM Gateway, and built-in tool servers are distinct tiers with distinct responsibilities. Built-in tool servers are first-party Docker images managed by Kimitsu — not generic external MCP servers. Stateful built-ins (kv, blob, log, memory) have a back-channel to the orchestrator and are part of the Kimitsu state surface. User-provided tool servers have no orchestrator dependency and are operator-managed. The architecture diagram makes this split explicit.
 
@@ -136,23 +140,13 @@ Any agent may include reserved `ktsu_` prefixed fields in its output schema. The
 
 **`ktsu/cli` — CLI tools as typed MCP tools.** The standard CLI tool server wraps Unix utilities as named MCP tools with typed inputs. Agents call `jq`, `date`, `wc`, and others the same way they call any tool — over MCP, with the same access policy enforcement, the same audit trail in `skill_calls`, and the same container isolation. Custom images extend `ktsu/cli` as a base with a single Dockerfile and a local tool server file. No new concepts.
 
-**Inlets are pure mappings, never agents.** The boundary between the untrusted world and the pipeline is a JMESPath extraction layer with no reasoning loop. Prompt injection in external input cannot hijack an inlet.
-
-**Multiple inlets per step for reusable workflows.** A single pipeline step can declare multiple inlets — Slack, email, and workflow trigger — each normalising to an identical output schema. The downstream DAG is identical regardless of which inlet fired. Workflows are reusable across trigger sources without duplication.
-
-**Conditional outlets for multi-inlet workflows.** Outlet steps declare a `condition` JMESPath expression evaluated against the envelope at runtime. If the condition is false, the outlet is skipped cleanly. Each outlet is responsible for knowing whether it applies to the current trigger origin.
-
-**Workflow-to-workflow chaining via outlet and inlet.** Workflows chain via a standard outlet posting to a `workflow` inlet. The causal link — `parent_run_id` — is explicit and opt-in. Each run owns its own envelope and cost budget.
-
-**Built-in agents for hardened common patterns.** `ktsu/` namespaced agents ship with Kimitsu for patterns like secure parsing that are easy to get wrong. Drop them into a pipeline the same way you reference a built-in tool server.
-
 **Sub-agents replace prompt skills.** LLM-backed reasoning tasks are modelled as full agents invoked by a parent, not as a special skill type. They get the full agent contract: typed output, Air-Lock validation, model declaration.
 
 **Declarative pipeline with typed IO contracts.** The full pipeline is declared in files with no code required. The Air-Lock validates every boundary.
 
 **Gateway-driven model routing.** A `gateway.yaml` defines providers and named model groups. Agents declare a group name — the gateway owns provider selection, fallback chains, and routing strategy.
 
-**Shared resources across workflows.** Tool servers, agents, inlets, and outlets live in shared directories. Multiple workflows compose the same building blocks.
+**Shared resources across workflows.** Tool servers and agents live in shared directories. Multiple workflows compose the same building blocks.
 
 **Event-loop agent runtime.** Agents execute as lightweight functions on a shared worker pool. 1000 concurrent triggers do not require 1000 containers.
 

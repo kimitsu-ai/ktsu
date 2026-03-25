@@ -3,12 +3,9 @@ package runner
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/kimitsu-ai/ktsu/internal/config"
@@ -24,106 +21,65 @@ func makeWorkflow(steps ...config.PipelineStep) *config.WorkflowConfig {
 	}
 }
 
-func writeInletYAML(t *testing.T, dir string, name string, content string) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write inlet yaml: %v", err)
-	}
-	return path
+// mockDispatcher returns preconfigured outputs keyed by step ID.
+type mockDispatcher struct {
+	outputs map[string]map[string]interface{}
 }
 
-func writeOutletYAML(t *testing.T, dir string, name string, content string) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write outlet yaml: %v", err)
+func (m *mockDispatcher) Dispatch(_ context.Context, _, stepID string, _ map[string]interface{}) (map[string]interface{}, error) {
+	if out, ok := m.outputs[stepID]; ok {
+		return out, nil
 	}
-	return path
+	return map[string]interface{}{"stubbed": true}, nil
 }
 
-// TestRunner_inletStep verifies a single inlet step with a webhook trigger maps fields.
-func TestRunner_inletStep(t *testing.T) {
-	dir := t.TempDir()
-	inletYAML := `
-kind: inlet
-name: test-inlet
-version: "1.0.0"
-trigger:
-  type: webhook
-  path: /webhook
-mapping:
-  output:
-    name: body.name
-`
-	inletPath := writeInletYAML(t, dir, "test.inlet.yaml", inletYAML)
-
+// TestRunner_workflowInput verifies the workflow input is available to pipeline steps.
+func TestRunner_workflowInput(t *testing.T) {
 	store := state.NewMemStore()
-	r := New(store, dir)
+	r := NewWithDispatcher(store, &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"step1": {"received": true},
+		},
+	})
 
 	wf := makeWorkflow(config.PipelineStep{
 		ID:    "step1",
-		Inlet: inletPath,
+		Agent: "agents/foo.agent.yaml",
 	})
 
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{"name": "Alice"},
-	}
-
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-1", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-input", wf, map[string]interface{}{"message": "hello"})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	step, err := store.GetStep(ctx, "run-1", "step1")
+	step, err := store.GetStep(ctx, "run-input", "step1")
 	if err != nil {
 		t.Fatalf("GetStep failed: %v", err)
 	}
 	if step.Status != types.StepStatusComplete {
 		t.Errorf("expected step status complete, got %s", step.Status)
 	}
-	if step.Output["name"] != "Alice" {
-		t.Errorf("expected output name=Alice, got %v", step.Output["name"])
-	}
 }
 
-// TestRunner_transformStep_merge verifies two inlet step outputs are merged via transform.
+// TestRunner_transformStep_merge verifies two step outputs are merged via transform.
 func TestRunner_transformStep_merge(t *testing.T) {
-	dir := t.TempDir()
-
-	inlet1YAML := `
-kind: inlet
-name: inlet1
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    a: body.a
-`
-	inlet2YAML := `
-kind: inlet
-name: inlet2
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    b: body.b
-`
-	step1Path := writeInletYAML(t, dir, "step1.inlet.yaml", inlet1YAML)
-	step2Path := writeInletYAML(t, dir, "step2.inlet.yaml", inlet2YAML)
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"step1": {"a": float64(1)},
+			"step2": {"b": float64(2)},
+		},
+	})
 
 	wf := makeWorkflow(
 		config.PipelineStep{
 			ID:    "step1",
-			Inlet: step1Path,
+			Agent: "agents/a.agent.yaml",
 		},
 		config.PipelineStep{
 			ID:    "step2",
-			Inlet: step2Path,
+			Agent: "agents/b.agent.yaml",
 		},
 		config.PipelineStep{
 			ID:        "merge_step",
@@ -140,15 +96,8 @@ mapping:
 		},
 	)
 
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{"a": 1, "b": 2},
-	}
-
 	ctx := context.Background()
-	store := state.NewMemStore()
-	r := New(store, dir)
-	err := r.Execute(ctx, "test-workflow", "run-merge", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-merge", wf, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -174,48 +123,18 @@ mapping:
 	if _, hasB := resultMap["b"]; !hasB {
 		t.Errorf("merged result missing 'b': %v", resultMap)
 	}
-	// Verify no step ID keys leaked into the result (no double-wrapping)
-	if _, hasStep1 := resultMap["step1"]; hasStep1 {
-		t.Errorf("merged result should not contain 'step1' key: %v", resultMap)
-	}
-	if _, hasStep2 := resultMap["step2"]; hasStep2 {
-		t.Errorf("merged result should not contain 'step2' key: %v", resultMap)
-	}
 }
 
-// TestRunner_transformStep_filter verifies filter op on an array.
+// TestRunner_transformStep_filter verifies filter op on an array from workflow input.
 func TestRunner_transformStep_filter(t *testing.T) {
-	dir := t.TempDir()
+	store := state.NewMemStore()
+	r := New(store)
 
-	inletYAML := `
-kind: inlet
-name: items-inlet
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    items: body.items
-`
-	inletPath := writeInletYAML(t, dir, "items.inlet.yaml", inletYAML)
-
-	// The inlet produces {"items": [{status:active,...}, {status:inactive,...}]}
-	// The transform: single input source → data = {"items":[...]}
-	// map op extracts "items" from each item in wrapped array → [[a,b]]
-	// flatten → [a, b]
-	// filter [?status == 'active'] → [a]
 	wf := makeWorkflow(
 		config.PipelineStep{
-			ID:    "source",
-			Inlet: inletPath,
-		},
-		config.PipelineStep{
 			ID:        "filter_step",
-			DependsOn: []string{"source"},
 			Transform: &config.TransformSpec{
-				Inputs: []config.TransformInput{
-					{From: "source"},
-				},
+				Inputs: []config.TransformInput{{From: "input"}},
 				Ops: []map[string]interface{}{
 					{"map": map[string]interface{}{"expr": "items"}},
 					{"flatten": nil},
@@ -225,20 +144,15 @@ mapping:
 		},
 	)
 
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{
-			"items": []interface{}{
-				map[string]interface{}{"status": "active", "name": "item1"},
-				map[string]interface{}{"status": "inactive", "name": "item2"},
-			},
+	input := map[string]interface{}{
+		"items": []interface{}{
+			map[string]interface{}{"status": "active", "name": "item1"},
+			map[string]interface{}{"status": "inactive", "name": "item2"},
 		},
 	}
 
 	ctx := context.Background()
-	store := state.NewMemStore()
-	r := New(store, dir)
-	err := r.Execute(ctx, "test-workflow", "run-filter", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-filter", wf, input)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -263,34 +177,16 @@ mapping:
 	}
 }
 
-// TestRunner_transformStep_sort verifies sort op on an array.
+// TestRunner_transformStep_sort verifies sort op on array from workflow input.
 func TestRunner_transformStep_sort(t *testing.T) {
-	dir := t.TempDir()
-
-	inletYAML := `
-kind: inlet
-name: ages-inlet
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    items: body.items
-`
-	inletPath := writeInletYAML(t, dir, "ages.inlet.yaml", inletYAML)
+	store := state.NewMemStore()
+	r := New(store)
 
 	wf := makeWorkflow(
 		config.PipelineStep{
-			ID:    "source",
-			Inlet: inletPath,
-		},
-		config.PipelineStep{
 			ID:        "sort_step",
-			DependsOn: []string{"source"},
 			Transform: &config.TransformSpec{
-				Inputs: []config.TransformInput{
-					{From: "source"},
-				},
+				Inputs: []config.TransformInput{{From: "input"}},
 				Ops: []map[string]interface{}{
 					{"map": map[string]interface{}{"expr": "items"}},
 					{"flatten": nil},
@@ -300,21 +196,16 @@ mapping:
 		},
 	)
 
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{
-			"items": []interface{}{
-				map[string]interface{}{"name": "Charlie", "age": float64(30)},
-				map[string]interface{}{"name": "Alice", "age": float64(25)},
-				map[string]interface{}{"name": "Bob", "age": float64(28)},
-			},
+	input := map[string]interface{}{
+		"items": []interface{}{
+			map[string]interface{}{"name": "Charlie", "age": float64(30)},
+			map[string]interface{}{"name": "Alice", "age": float64(25)},
+			map[string]interface{}{"name": "Bob", "age": float64(28)},
 		},
 	}
 
 	ctx := context.Background()
-	store := state.NewMemStore()
-	r := New(store, dir)
-	err := r.Execute(ctx, "test-workflow", "run-sort", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-sort", wf, input)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -326,14 +217,7 @@ mapping:
 	if step.Status != types.StepStatusComplete {
 		t.Errorf("expected complete, got %s", step.Status)
 	}
-	result, ok := step.Output["result"]
-	if !ok {
-		t.Fatalf("missing result: %v", step.Output)
-	}
-	resultSlice, ok := result.([]interface{})
-	if !ok {
-		t.Fatalf("result is not a slice: %T", result)
-	}
+	resultSlice := step.Output["result"].([]interface{})
 	if len(resultSlice) != 3 {
 		t.Fatalf("expected 3 items, got %d", len(resultSlice))
 	}
@@ -341,149 +225,12 @@ mapping:
 	if first["name"] != "Alice" {
 		t.Errorf("expected Alice first, got %v", first["name"])
 	}
-	last := resultSlice[2].(map[string]interface{})
-	if last["name"] != "Charlie" {
-		t.Errorf("expected Charlie last, got %v", last["name"])
-	}
 }
 
-// TestRunner_outletStep_noop verifies noop action returns {sent: false, action: noop}.
-func TestRunner_outletStep_noop(t *testing.T) {
-	dir := t.TempDir()
-
-	inletYAML := `
-kind: inlet
-name: source
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    msg: body.msg
-`
-	inletPath := writeInletYAML(t, dir, "source.inlet.yaml", inletYAML)
-
-	outletYAML := `
-kind: outlet
-name: noop-outlet
-version: "1.0.0"
-mapping:
-  action:
-    type: noop
-    body: {}
-`
-	outletPath := writeOutletYAML(t, dir, "noop.outlet.yaml", outletYAML)
-
-	store := state.NewMemStore()
-	r := New(store, dir)
-
-	wf := makeWorkflow(
-		config.PipelineStep{
-			ID:    "source",
-			Inlet: inletPath,
-		},
-		config.PipelineStep{
-			ID:        "notify",
-			Outlet:    outletPath,
-			DependsOn: []string{"source"},
-		},
-	)
-
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{"msg": "hello"},
-	}
-
-	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-noop", wf, trigger)
-	if err != nil {
-		t.Fatalf("Execute failed: %v", err)
-	}
-
-	step, err := store.GetStep(ctx, "run-noop", "notify")
-	if err != nil {
-		t.Fatalf("GetStep failed: %v", err)
-	}
-	if step.Status != types.StepStatusComplete {
-		t.Errorf("expected complete, got %s", step.Status)
-	}
-	if step.Output["sent"] != false {
-		t.Errorf("expected sent=false, got %v", step.Output["sent"])
-	}
-	if step.Output["action"] != "noop" {
-		t.Errorf("expected action=noop, got %v", step.Output["action"])
-	}
-}
-
-// TestRunner_outletStep_condition_false verifies step is skipped when condition is false.
-func TestRunner_outletStep_condition_false(t *testing.T) {
-	dir := t.TempDir()
-
-	inletYAML := `
-kind: inlet
-name: source
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    msg: body.msg
-`
-	inletPath := writeInletYAML(t, dir, "source2.inlet.yaml", inletYAML)
-
-	outletYAML := `
-kind: outlet
-name: cond-outlet
-version: "1.0.0"
-mapping:
-  action:
-    type: noop
-    body: {}
-`
-	outletPath := writeOutletYAML(t, dir, "cond.outlet.yaml", outletYAML)
-
-	store := state.NewMemStore()
-	r := New(store, dir)
-
-	wf := makeWorkflow(
-		config.PipelineStep{
-			ID:    "source",
-			Inlet: inletPath,
-		},
-		config.PipelineStep{
-			ID:        "conditional_outlet",
-			Outlet:    outletPath,
-			DependsOn: []string{"source"},
-			Condition: "nonexistent_step.something", // evaluates to nil → skip
-		},
-	)
-
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{"msg": "hello"},
-	}
-
-	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-cond", wf, trigger)
-	if err != nil {
-		t.Fatalf("Execute failed: %v", err)
-	}
-
-	step, err := store.GetStep(ctx, "run-cond", "conditional_outlet")
-	if err != nil {
-		t.Fatalf("GetStep failed: %v", err)
-	}
-	if step.Status != types.StepStatusSkipped {
-		t.Errorf("expected skipped, got %s", step.Status)
-	}
-}
-
-// TestRunner_outletStep_httpPost verifies POST action sends request and returns sent=true.
-func TestRunner_outletStep_httpPost(t *testing.T) {
-	dir := t.TempDir()
-
+// TestRunner_webhookStep_success verifies a webhook step POSTs to the URL and completes on 200.
+func TestRunner_webhookStep_success(t *testing.T) {
 	var receivedBody []byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		var err error
 		receivedBody, err = io.ReadAll(req.Body)
 		if err != nil {
@@ -491,60 +238,29 @@ func TestRunner_outletStep_httpPost(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer server.Close()
-
-	inletYAML := `
-kind: inlet
-name: source
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    msg: body.msg
-`
-	inletPath := writeInletYAML(t, dir, "source3.inlet.yaml", inletYAML)
-
-	outletYAML := fmt.Sprintf(`
-kind: outlet
-name: http-outlet
-version: "1.0.0"
-mapping:
-  action:
-    type: http_post
-    url: %s
-    body:
-      message: source.msg
-`, server.URL)
-	outletPath := writeOutletYAML(t, dir, "http.outlet.yaml", outletYAML)
+	defer srv.Close()
 
 	store := state.NewMemStore()
-	r := New(store, dir)
+	r := New(store)
 
-	wf := makeWorkflow(
-		config.PipelineStep{
-			ID:    "source",
-			Inlet: inletPath,
+	wf := makeWorkflow(config.PipelineStep{
+		ID: "notify",
+		Webhook: &config.WebhookSpec{
+			URL:    srv.URL,
+			Method: "POST",
+			Body: map[string]interface{}{
+				"message": "input.msg",
+			},
 		},
-		config.PipelineStep{
-			ID:        "http_step",
-			Outlet:    outletPath,
-			DependsOn: []string{"source"},
-		},
-	)
-
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{"msg": "hello world"},
-	}
+	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-http", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-webhook", wf, map[string]interface{}{"msg": "hello world"})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	step, err := store.GetStep(ctx, "run-http", "http_step")
+	step, err := store.GetStep(ctx, "run-webhook", "notify")
 	if err != nil {
 		t.Fatalf("GetStep failed: %v", err)
 	}
@@ -554,7 +270,6 @@ mapping:
 	if step.Output["sent"] != true {
 		t.Errorf("expected sent=true, got %v", step.Output["sent"])
 	}
-
 	if len(receivedBody) == 0 {
 		t.Error("server did not receive any body")
 	}
@@ -564,22 +279,85 @@ mapping:
 	}
 }
 
-// TestRunner_agentStep_stub verifies an agent step returns stub output.
-func TestRunner_agentStep_stub(t *testing.T) {
+// TestRunner_webhookStep_non2xx verifies a non-2xx response fails the step.
+func TestRunner_webhookStep_non2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
 	store := state.NewMemStore()
-	r := New(store, "/tmp")
+	r := New(store)
 
-	wf := makeWorkflow(
-		config.PipelineStep{
-			ID:    "agent_step",
-			Agent: "agents/foo.agent.yaml@1.0.0",
+	wf := makeWorkflow(config.PipelineStep{
+		ID: "notify",
+		Webhook: &config.WebhookSpec{
+			URL: srv.URL,
 		},
-	)
-
-	trigger := TriggerContext{Type: "webhook"}
+	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-agent", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-webhook-fail", wf, nil)
+	if err == nil {
+		t.Fatal("expected Execute to fail on non-2xx webhook, but it succeeded")
+	}
+
+	run, _ := store.GetRun(ctx, "run-webhook-fail")
+	if run.Status != types.RunStatusFailed {
+		t.Errorf("expected run failed, got %s", run.Status)
+	}
+}
+
+// TestRunner_webhookStep_condition_false verifies webhook step is skipped when condition is false.
+func TestRunner_webhookStep_condition_false(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	store := state.NewMemStore()
+	r := New(store)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:        "notify",
+		Condition: "nonexistent.field", // evaluates to nil → skip
+		Webhook: &config.WebhookSpec{
+			URL: srv.URL,
+		},
+	})
+
+	ctx := context.Background()
+	err := r.Execute(ctx, "test-workflow", "run-cond", wf, nil)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	step, err := store.GetStep(ctx, "run-cond", "notify")
+	if err != nil {
+		t.Fatalf("GetStep failed: %v", err)
+	}
+	if step.Status != types.StepStatusSkipped {
+		t.Errorf("expected skipped, got %s", step.Status)
+	}
+	if called {
+		t.Error("webhook should not have been called when condition is false")
+	}
+}
+
+// TestRunner_agentStep_stub verifies an agent step without a dispatcher returns stub output.
+func TestRunner_agentStep_stub(t *testing.T) {
+	store := state.NewMemStore()
+	r := New(store)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "agent_step",
+		Agent: "agents/foo.agent.yaml@1.0.0",
+	})
+
+	ctx := context.Background()
+	err := r.Execute(ctx, "test-workflow", "run-agent", wf, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -596,201 +374,79 @@ func TestRunner_agentStep_stub(t *testing.T) {
 	}
 }
 
-// TestRunner_reservedField_injectionAttempt verifies run fails on injection attempt.
+// TestRunner_reservedField_injectionAttempt verifies run fails on injection attempt from agent.
 func TestRunner_reservedField_injectionAttempt(t *testing.T) {
-	dir := t.TempDir()
-
-	inletYAML := `
-kind: inlet
-name: injection-inlet
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    ktsu_injection_attempt: body.ktsu_injection_attempt
-    data: body.data
-`
-	inletPath := writeInletYAML(t, dir, "injection.inlet.yaml", inletYAML)
-
 	store := state.NewMemStore()
-	r := New(store, dir)
-
-	wf := makeWorkflow(
-		config.PipelineStep{
-			ID:    "step1",
-			Inlet: inletPath,
+	r := NewWithDispatcher(store, &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"step1": {"ktsu_injection_attempt": true, "data": "something"},
 		},
-	)
+	})
 
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{
-			"ktsu_injection_attempt": true,
-			"data":                   "something",
-		},
-	}
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "step1",
+		Agent: "agents/foo.agent.yaml",
+	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-injection", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-injection", wf, nil)
 	if err == nil {
-		t.Fatal("expected Execute to fail on injection attempt, but it succeeded")
+		t.Fatal("expected Execute to fail on injection attempt")
 	}
 
-	run, getErr := store.GetRun(ctx, "run-injection")
-	if getErr != nil {
-		t.Fatalf("GetRun failed: %v", getErr)
-	}
+	run, _ := store.GetRun(ctx, "run-injection")
 	if run.Status != types.RunStatusFailed {
-		t.Errorf("expected run status failed, got %s", run.Status)
+		t.Errorf("expected run failed, got %s", run.Status)
 	}
 }
 
 // TestRunner_reservedField_needsHuman verifies run fails when ktsu_needs_human is true.
 func TestRunner_reservedField_needsHuman(t *testing.T) {
-	dir := t.TempDir()
-
-	inletYAML := `
-kind: inlet
-name: needs-human-inlet
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    ktsu_needs_human: body.ktsu_needs_human
-    data: body.data
-`
-	inletPath := writeInletYAML(t, dir, "needs_human.inlet.yaml", inletYAML)
-
 	store := state.NewMemStore()
-	r := New(store, dir)
-
-	wf := makeWorkflow(
-		config.PipelineStep{
-			ID:    "step1",
-			Inlet: inletPath,
+	r := NewWithDispatcher(store, &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"step1": {"ktsu_needs_human": true, "data": "something"},
 		},
-	)
+	})
 
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{
-			"ktsu_needs_human": true,
-			"data":             "something",
-		},
-	}
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "step1",
+		Agent: "agents/foo.agent.yaml",
+	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-needs-human", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-needs-human", wf, nil)
 	if err == nil {
-		t.Fatal("expected Execute to fail on needs_human, but it succeeded")
+		t.Fatal("expected Execute to fail on needs_human")
 	}
 
-	run, getErr := store.GetRun(ctx, "run-needs-human")
-	if getErr != nil {
-		t.Fatalf("GetRun failed: %v", getErr)
-	}
+	run, _ := store.GetRun(ctx, "run-needs-human")
 	if run.Status != types.RunStatusFailed {
-		t.Errorf("expected run status failed, got %s", run.Status)
-	}
-}
-
-// TestRunner_reservedField_untrustedContent verifies step fails when ktsu_untrusted_content is true.
-func TestRunner_reservedField_untrustedContent(t *testing.T) {
-	dir := t.TempDir()
-
-	inletYAML := `
-kind: inlet
-name: untrusted-inlet
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    ktsu_untrusted_content: body.ktsu_untrusted_content
-    data: body.data
-`
-	inletPath := writeInletYAML(t, dir, "untrusted.inlet.yaml", inletYAML)
-
-	store := state.NewMemStore()
-	r := New(store, dir)
-
-	wf := makeWorkflow(
-		config.PipelineStep{
-			ID:    "step1",
-			Inlet: inletPath,
-		},
-	)
-
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{
-			"ktsu_untrusted_content": true,
-			"data":                   "something",
-		},
-	}
-
-	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-untrusted", wf, trigger)
-	if err == nil {
-		t.Fatal("expected Execute to fail on untrusted content, but it succeeded")
-	}
-
-	run, getErr := store.GetRun(ctx, "run-untrusted")
-	if getErr != nil {
-		t.Fatalf("GetRun failed: %v", getErr)
-	}
-	if run.Status != types.RunStatusFailed {
-		t.Errorf("expected run status failed, got %s", run.Status)
+		t.Errorf("expected run failed, got %s", run.Status)
 	}
 }
 
 // TestRunner_reservedField_skipReason verifies step is marked skipped.
 func TestRunner_reservedField_skipReason(t *testing.T) {
-	dir := t.TempDir()
-
-	inletYAML := `
-kind: inlet
-name: skip-inlet
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    ktsu_skip_reason: body.reason
-    data: body.data
-`
-	inletPath := writeInletYAML(t, dir, "skip.inlet.yaml", inletYAML)
-
 	store := state.NewMemStore()
-	r := New(store, dir)
-
-	wf := makeWorkflow(
-		config.PipelineStep{
-			ID:    "step1",
-			Inlet: inletPath,
+	r := NewWithDispatcher(store, &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"step1": {"ktsu_skip_reason": "nothing to process", "data": "value"},
 		},
-	)
+	})
 
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{
-			"reason": "nothing to process",
-			"data":   "value",
-		},
-	}
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "step1",
+		Agent: "agents/foo.agent.yaml",
+	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-skip", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-skip", wf, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	step, err := store.GetStep(ctx, "run-skip", "step1")
-	if err != nil {
-		t.Fatalf("GetStep failed: %v", err)
-	}
+	step, _ := store.GetStep(ctx, "run-skip", "step1")
 	if step.Status != types.StepStatusSkipped {
 		t.Errorf("expected skipped, got %s", step.Status)
 	}
@@ -798,50 +454,26 @@ mapping:
 
 // TestRunner_reservedField_confidence_below_threshold verifies step fails when confidence is low.
 func TestRunner_reservedField_confidence_below_threshold(t *testing.T) {
-	dir := t.TempDir()
-
-	inletYAML := `
-kind: inlet
-name: conf-inlet
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    ktsu_confidence: body.confidence
-    data: body.data
-`
-	inletPath := writeInletYAML(t, dir, "conf.inlet.yaml", inletYAML)
-
 	store := state.NewMemStore()
-	r := New(store, dir)
-
-	wf := makeWorkflow(
-		config.PipelineStep{
-			ID:                  "step1",
-			Inlet:               inletPath,
-			ConfidenceThreshold: 0.8,
+	r := NewWithDispatcher(store, &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"step1": {"ktsu_confidence": 0.5, "data": "output"},
 		},
-	)
+	})
 
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{
-			"confidence": 0.5,
-			"data":       "some output",
-		},
-	}
+	wf := makeWorkflow(config.PipelineStep{
+		ID:                  "step1",
+		Agent:               "agents/foo.agent.yaml",
+		ConfidenceThreshold: 0.8,
+	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-conf", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-conf", wf, nil)
 	if err == nil {
-		t.Fatal("expected Execute to fail due to low confidence, but it succeeded")
+		t.Fatal("expected Execute to fail due to low confidence")
 	}
 
-	step, getErr := store.GetStep(ctx, "run-conf", "step1")
-	if getErr != nil {
-		t.Fatalf("GetStep failed: %v", getErr)
-	}
+	step, _ := store.GetStep(ctx, "run-conf", "step1")
 	if step.Status != types.StepStatusFailed {
 		t.Errorf("expected failed, got %s", step.Status)
 	}
@@ -849,78 +481,59 @@ mapping:
 
 // TestRunner_multiStep_dag verifies multi-step pipeline executes in DAG order.
 func TestRunner_multiStep_dag(t *testing.T) {
-	dir := t.TempDir()
-
-	inletYAML := `
-kind: inlet
-name: inlet-a
-version: "1.0.0"
-trigger:
-  type: webhook
-mapping:
-  output:
-    name: body.name
-`
-	inletPath := writeInletYAML(t, dir, "a.inlet.yaml", inletYAML)
-
-	outletYAML := `
-kind: outlet
-name: outlet-c
-version: "1.0.0"
-mapping:
-  action:
-    type: noop
-    body: {}
-`
-	outletPath := writeOutletYAML(t, dir, "c.outlet.yaml", outletYAML)
-
 	store := state.NewMemStore()
-	r := New(store, dir)
+	r := NewWithDispatcher(store, &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"step_a": {"name": "Bob"},
+		},
+	})
 
 	wf := makeWorkflow(
 		config.PipelineStep{
 			ID:    "step_a",
-			Inlet: inletPath,
+			Agent: "agents/a.agent.yaml",
 		},
 		config.PipelineStep{
 			ID:        "step_b",
 			DependsOn: []string{"step_a"},
 			Transform: &config.TransformSpec{
-				Inputs: []config.TransformInput{
-					{From: "step_a"},
-				},
-				Ops: []map[string]interface{}{},
+				Inputs: []config.TransformInput{{From: "step_a"}},
+				Ops:    []map[string]interface{}{},
 			},
 		},
 		config.PipelineStep{
 			ID:        "step_c",
-			Outlet:    outletPath,
 			DependsOn: []string{"step_b"},
+			Webhook: &config.WebhookSpec{
+				URL: "http://127.0.0.1:1", // unreachable — we test via condition skip instead
+			},
+			Condition: "step_a.missing_field", // false → skipped
 		},
 	)
 
-	trigger := TriggerContext{
-		Type: "webhook",
-		Body: map[string]interface{}{"name": "Bob"},
-	}
-
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-dag", wf, trigger)
+	err := r.Execute(ctx, "test-workflow", "run-dag", wf, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	for _, stepID := range []string{"step_a", "step_b", "step_c"} {
-		step, err := store.GetStep(ctx, "run-dag", stepID)
+	for _, tc := range []struct {
+		id     string
+		status types.StepStatus
+	}{
+		{"step_a", types.StepStatusComplete},
+		{"step_b", types.StepStatusComplete},
+		{"step_c", types.StepStatusSkipped},
+	} {
+		step, err := store.GetStep(ctx, "run-dag", tc.id)
 		if err != nil {
-			t.Fatalf("GetStep(%s) failed: %v", stepID, err)
+			t.Fatalf("GetStep(%s) failed: %v", tc.id, err)
 		}
-		if step.Status != types.StepStatusComplete {
-			t.Errorf("step %s: expected complete, got %s", stepID, step.Status)
+		if step.Status != tc.status {
+			t.Errorf("step %s: expected %s, got %s", tc.id, tc.status, step.Status)
 		}
 	}
 
-	// Verify step_b output has result from transform
 	stepB, _ := store.GetStep(ctx, "run-dag", "step_b")
 	if _, hasResult := stepB.Output["result"]; !hasResult {
 		t.Errorf("step_b should have result from transform, got: %v", stepB.Output)

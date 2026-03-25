@@ -1,5 +1,5 @@
 # Kimitsu — Configuration Reference
-## Architecture & Design Reference — v3
+## Architecture & Design Reference — v4
 
 ---
 
@@ -9,8 +9,6 @@ All Kimitsu files use a `kind` field to declare what they are.
 
 ```
 kind: agent       → agents/*.agent.yaml
-kind: inlet       → inlets/*.inlet.yaml
-kind: outlet      → outlets/*.outlet.yaml
 kind: workflow    → workflows/*.workflow.yaml
 kind: env         → environments/*.env.yaml
 kind: tool-server → servers/*.server.yaml
@@ -29,23 +27,13 @@ my-project/
 
   servers/                          # local tool server files
     wiki-search.server.yaml
-    slack-reply.server.yaml
-    email-send.server.yaml
+    crm-lookup.server.yaml
 
   agents/
     triage.agent.yaml
     legal.agent.yaml
     consolidator.agent.yaml
     summarize.agent.yaml            # sub-agent
-
-  inlets/
-    slack-webhook.inlet.yaml
-    email-inbound.inlet.yaml
-    daily-digest.inlet.yaml
-
-  outlets/
-    slack-responder.outlet.yaml
-    email-reply.outlet.yaml
 
   environments/
     dev.env.yaml
@@ -69,16 +57,18 @@ kind: workflow
 name: "support-triage"
 version: "1.2.0"
 
-pipeline:
-  - id: inbound
-    inlets:
-      - "./inlets/slack-webhook.inlet.yaml@1.0.0"
-      - "./inlets/email-inbound.inlet.yaml@1.0.0"
-      - "./inlets/workflow-inbound.inlet.yaml@1.0.0"
+input:
+  schema:
+    type: object
+    required: [message, user_id]
+    properties:
+      message:    { type: string }
+      user_id:    { type: string }
+      channel_id: { type: string }
 
+pipeline:
   - id: parse
     agent: ktsu/secure-parser@1.0.0
-    depends_on: [inbound]
     params:
       source_field: message
       extract:
@@ -119,19 +109,15 @@ pipeline:
     agent: "./agents/consolidator.agent.yaml@1.0.0"
     depends_on: [merge-reviews]
 
-  - id: reply-slack
-    outlet: "./outlets/slack-responder.outlet.yaml@1.0.0"
-    condition: "envelope.inlet.context.source == 'slack'"
-    depends_on: [consolidate]
-
-  - id: reply-email
-    outlet: "./outlets/email-reply.outlet.yaml@1.0.0"
-    condition: "envelope.inlet.context.source == 'email'"
-    depends_on: [consolidate]
-
-  - id: reply-workflow
-    outlet: "./outlets/workflow-callback.outlet.yaml@1.0.0"
-    condition: "envelope.inlet.context.source == 'workflow'"
+  - id: notify-billing
+    webhook:
+      url: "env:SLACK_WEBHOOK_URL"
+      method: POST
+      body:
+        text:    "consolidate.recommendation"
+        channel: "input.channel_id"
+      timeout_s: 10
+    condition: "triage.category == 'billing'"
     depends_on: [consolidate]
 
 model_policy:
@@ -144,11 +130,9 @@ model_policy:
 |---|---|
 | `id` | Unique step identifier |
 | `agent` | Path or built-in reference with pinned version |
-| `inlet` | Path to a single inlet definition (first step only, mutually exclusive with `inlets`) |
-| `inlets` | List of inlet paths — all must produce identical output schemas (first step only, mutually exclusive with `inlet`) |
-| `outlet` | Path to an outlet definition (terminal step only) |
-| `condition` | JMESPath expression evaluated against the envelope at runtime. If falsy, the outlet step is marked `skipped`. Declared on the pipeline step, not in the outlet file. |
 | `transform` | Inline transform declaration |
+| `webhook` | Inline webhook declaration — URL, method, body mapping, timeout |
+| `condition` | JMESPath expression evaluated against step outputs at runtime. If falsy, the step is marked `skipped`. Valid on webhook steps. |
 | `depends_on` | Array of step IDs this step waits for (not needed for transform steps — derived from inputs) |
 | `consolidation` | Fan-in strategy: `array` \| `merge` \| `first` |
 | `confidence_threshold` | Minimum `ktsu_confidence` value required for the step to proceed |
@@ -188,11 +172,6 @@ environment: dev
 model_policy:
   force_group:     local
   cost_budget_usd: 0.00
-
-inlets:
-  overrides:
-    - id: inbound
-      mock: "./fixtures/sample-request.json"
 
 runtime:
   agent_runtime_instances: 1
@@ -448,7 +427,6 @@ The orchestrator validates the full dependency graph at startup before any conta
                     URL warnings
 7.  check-tools     Verify marketplace tool names exist in servers.yaml;
                     verify no sub-agent declares restricted built-in tool servers;
-                    verify inlets and outlets have no model/prompt/tools fields;
                     verify every tool name in each access.allowlist exists in the
                     server's declared tools interface — typos are boot errors;
                     verify allowlist entries are valid (exact name, prefix-*, or *
@@ -457,9 +435,9 @@ The orchestrator validates the full dependency graph at startup before any conta
                     absent on servers marked sensitive (warning only)
 8.  validate-io     Type-check input/output schemas at every boundary;
                     check reserved field types and confidence_threshold consistency;
-                    if a step declares multiple inlets, verify all produce identical
-                    output schemas — mismatched schemas are a boot error;
-                    verify outlet condition expressions are valid JMESPath
+                    verify workflow input.schema is a valid JSON Schema;
+                    verify webhook condition expressions are valid JMESPath;
+                    verify webhook body value expressions are valid JMESPath
 9.  check-inputs    Verify agent inputs match depends_on — no undeclared dependencies
 10. policy          Apply env model_policy, verify all declared groups exist in gateway.yaml
 11. recover         Check for in-flight runs from a previous crash, resolve stale steps
@@ -483,9 +461,6 @@ for each tool server file with access.allowlist:
   for each entry in allowlist:
     if not "*", not "prefix-*", not exact tool name: → fail (invalid wildcard)
     if exact tool name: → must exist in server's declared tools interface
-
-for each inlet/outlet:
-  if model, prompt, or tools field present: → fail
 ```
 
 ### Sub-Agent Server Resolution (Step 6)
@@ -581,6 +556,11 @@ ERROR  Graph validation failed. Run aborted. No containers started.
        Entry: "jq-*-filter"
        Mid-string wildcards are not permitted. Use an exact name, a prefix
        wildcard (e.g. "jq-*"), or "*" to permit all tools.
+
+  [10] Invalid webhook body expression
+       Workflow: workflows/support-triage.workflow.yaml
+       Step: notify-billing
+       Body key "text" — expression "consolidate.recommendation" is not valid JMESPath.
 
 WARNING  Possible server URL mismatch
          Sub-agent:   agents/summarize.agent.yaml

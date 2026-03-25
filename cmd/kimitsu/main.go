@@ -91,7 +91,7 @@ func startCmd() *cobra.Command {
 }
 
 func startOrchestratorCmd() *cobra.Command {
-	var envPath, workflowDir, projectDir, host string
+	var envPath, workflowDir, host string
 	var port int
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
@@ -109,7 +109,6 @@ func startOrchestratorCmd() *cobra.Command {
 				EnvPath:     envPath,
 				Env:         envCfg,
 				WorkflowDir: workflowDir,
-				ProjectDir:  projectDir,
 				Host:        host,
 				Port:        port,
 			})
@@ -119,7 +118,6 @@ func startOrchestratorCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&envPath, "env", "", "path to environment config (e.g. environments/dev.env.yaml)")
 	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "./workflows", "path to workflow directory")
-	cmd.Flags().StringVar(&projectDir, "project-dir", ".", "project root for resolving inlet/outlet paths")
 	cmd.Flags().StringVar(&host, "host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "host interface to bind (env: KTSU_ORCHESTRATOR_HOST)")
 	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_ORCHESTRATOR_PORT", 8080), "port to listen on (env: KTSU_ORCHESTRATOR_PORT)")
 	return cmd

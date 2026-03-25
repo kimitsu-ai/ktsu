@@ -22,17 +22,27 @@ func TestLoadWorkflow_pipeline_format(t *testing.T) {
 kind: workflow
 name: my-workflow
 version: "1.0.0"
+input:
+  schema:
+    type: object
+    required: [data]
+    properties:
+      data: {type: string}
 pipeline:
-  - id: fetch
-    inlet: inlets/fetch.inlet.yaml@1.0.0
+  - id: notify
+    webhook:
+      url: https://hooks.example.com/notify
+      method: POST
+      body:
+        text: input.data
     depends_on: []
   - id: process
     transform:
       inputs:
-        - from: fetch
+        - from: notify
       ops:
         - filter: {expr: "status == 'active'"}
-    depends_on: [fetch]
+    depends_on: [notify]
 `)
 	cfg, err := LoadWorkflow(path)
 	if err != nil {
@@ -47,20 +57,26 @@ pipeline:
 	if cfg.Version != "1.0.0" {
 		t.Errorf("expected version %q, got %q", "1.0.0", cfg.Version)
 	}
+	if cfg.Input.Schema == nil {
+		t.Fatal("expected input schema to be set")
+	}
 	if len(cfg.Pipeline) != 2 {
 		t.Fatalf("expected 2 pipeline steps, got %d", len(cfg.Pipeline))
 	}
-	if cfg.Pipeline[0].ID != "fetch" {
-		t.Errorf("expected pipeline[0].ID %q, got %q", "fetch", cfg.Pipeline[0].ID)
+	if cfg.Pipeline[0].ID != "notify" {
+		t.Errorf("expected pipeline[0].ID %q, got %q", "notify", cfg.Pipeline[0].ID)
 	}
-	if cfg.Pipeline[0].Inlet != "inlets/fetch.inlet.yaml@1.0.0" {
-		t.Errorf("expected pipeline[0].Inlet %q, got %q", "inlets/fetch.inlet.yaml@1.0.0", cfg.Pipeline[0].Inlet)
+	if cfg.Pipeline[0].Webhook == nil {
+		t.Fatal("expected pipeline[0].Webhook to be non-nil")
+	}
+	if cfg.Pipeline[0].Webhook.URL != "https://hooks.example.com/notify" {
+		t.Errorf("expected webhook URL %q, got %q", "https://hooks.example.com/notify", cfg.Pipeline[0].Webhook.URL)
 	}
 	if cfg.Pipeline[1].Transform == nil {
 		t.Fatal("expected pipeline[1].Transform to be non-nil")
 	}
-	if len(cfg.Pipeline[1].Transform.Inputs) != 1 || cfg.Pipeline[1].Transform.Inputs[0].From != "fetch" {
-		t.Errorf("expected transform input from 'fetch', got %v", cfg.Pipeline[1].Transform.Inputs)
+	if len(cfg.Pipeline[1].Transform.Inputs) != 1 || cfg.Pipeline[1].Transform.Inputs[0].From != "notify" {
+		t.Errorf("expected transform input from 'notify', got %v", cfg.Pipeline[1].Transform.Inputs)
 	}
 }
 
@@ -248,100 +264,6 @@ func TestLoadServerManifest_errorsOnMalformedYAML(t *testing.T) {
 	_, err := LoadServerManifest(path)
 	if err == nil {
 		t.Error("expected error for malformed YAML, got nil")
-	}
-}
-
-// --- LoadInlet ---
-
-func TestLoadInlet_webhook(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "inlet.yaml", `
-kind: inlet
-name: fetch-webhook
-version: "1.0.0"
-trigger:
-  type: webhook
-  path: /webhook/fetch
-mapping:
-  envelope:
-    request_id: headers."x-request-id"
-  output:
-    data: body.data
-output:
-  schema:
-    required: [data]
-`)
-	cfg, err := LoadInlet(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg.Kind != "inlet" {
-		t.Errorf("expected kind %q, got %q", "inlet", cfg.Kind)
-	}
-	if cfg.Name != "fetch-webhook" {
-		t.Errorf("expected name %q, got %q", "fetch-webhook", cfg.Name)
-	}
-	if cfg.Trigger.Type != "webhook" {
-		t.Errorf("expected trigger type %q, got %q", "webhook", cfg.Trigger.Type)
-	}
-	if cfg.Trigger.Path != "/webhook/fetch" {
-		t.Errorf("expected trigger path %q, got %q", "/webhook/fetch", cfg.Trigger.Path)
-	}
-	if cfg.Mapping.Output["data"] != "body.data" {
-		t.Errorf("expected mapping output data %q, got %q", "body.data", cfg.Mapping.Output["data"])
-	}
-}
-
-func TestLoadInlet_error_missing_file(t *testing.T) {
-	_, err := LoadInlet("/nonexistent/inlet.yaml")
-	if err == nil {
-		t.Error("expected error for missing file, got nil")
-	}
-}
-
-// --- LoadOutlet ---
-
-func TestLoadOutlet_http_post(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "outlet.yaml", `
-kind: outlet
-name: post-result
-version: "1.0.0"
-inputs:
-  - from: process
-    optional: false
-mapping:
-  action:
-    type: http_post
-    url: https://api.example.com/results
-    body:
-      result: process.output
-output:
-  schema: {}
-`)
-	cfg, err := LoadOutlet(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg.Kind != "outlet" {
-		t.Errorf("expected kind %q, got %q", "outlet", cfg.Kind)
-	}
-	if cfg.Name != "post-result" {
-		t.Errorf("expected name %q, got %q", "post-result", cfg.Name)
-	}
-	if len(cfg.Inputs) != 1 || cfg.Inputs[0].From != "process" {
-		t.Errorf("expected 1 input from 'process', got %v", cfg.Inputs)
-	}
-	if cfg.Mapping.Action.Type != "http_post" {
-		t.Errorf("expected action type %q, got %q", "http_post", cfg.Mapping.Action.Type)
-	}
-	if cfg.Mapping.Action.URL != "https://api.example.com/results" {
-		t.Errorf("expected action URL %q, got %q", "https://api.example.com/results", cfg.Mapping.Action.URL)
-	}
-}
-
-func TestLoadOutlet_error_missing_file(t *testing.T) {
-	_, err := LoadOutlet("/nonexistent/outlet.yaml")
-	if err == nil {
-		t.Error("expected error for missing file, got nil")
 	}
 }
 

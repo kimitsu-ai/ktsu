@@ -11,7 +11,6 @@ type Config struct {
 	EnvPath     string
 	Env         *config.EnvConfig
 	WorkflowDir string // default: "./workflows"
-	ProjectDir  string // default: "."
 	Host        string // bind interface, "" = all
 	Port        int    // default 8080
 	RuntimeURL  string // URL of the Agent Runtime (e.g. "http://runtime:8082")

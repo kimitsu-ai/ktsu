@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -42,14 +44,14 @@ func newServer(o *Orchestrator) *server {
 
 	var r *runner.Runner
 	if o.cfg.RuntimeURL != "" {
-		r = runner.NewWithDispatcher(store, o.cfg.ProjectDir, &runtimeDispatcher{
+		r = runner.NewWithDispatcher(store, &runtimeDispatcher{
 			runtimeURL:      o.cfg.RuntimeURL,
 			ownURL:          o.cfg.OwnURL,
 			pendingMu:       &s.pendingMu,
 			pendingCallbacks: s.pendingCallbacks,
 		})
 	} else {
-		r = runner.New(store, o.cfg.ProjectDir)
+		r = runner.New(store)
 	}
 	s.runner = r
 	s.routes()
@@ -58,7 +60,7 @@ func newServer(o *Orchestrator) *server {
 
 func (s *server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
-	s.mux.HandleFunc("POST /invoke/{workflow}/{run_id}", s.handleInvoke)
+	s.mux.HandleFunc("POST /invoke/{workflow}", s.handleInvoke)
 	s.mux.HandleFunc("GET /envelope/{run_id}", s.handleGetEnvelope)
 	s.mux.HandleFunc("POST /heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /runs/{run_id}/steps/{step_id}/complete", s.handleStepComplete)
@@ -71,25 +73,11 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	workflow := r.PathValue("workflow")
-	runID := r.PathValue("run_id")
 
-	body := map[string]interface{}{}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	input := map[string]interface{}{}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		log.Printf("handleInvoke: non-JSON body (treating as empty): %v", err)
-		body = map[string]interface{}{}
-	}
-
-	headers := make(map[string]string)
-	for k := range r.Header {
-		headers[k] = r.Header.Get(k)
-	}
-
-	trigger := runner.TriggerContext{
-		Type:      "webhook",
-		Body:      body,
-		Headers:   headers,
-		RemoteIP:  r.RemoteAddr,
-		RequestID: r.Header.Get("X-Request-ID"),
+		input = map[string]interface{}{}
 	}
 
 	wfPath := filepath.Join(s.o.cfg.WorkflowDir, workflow+".workflow.yaml")
@@ -99,9 +87,11 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	runID := generateRunID()
+
 	go func() {
 		ctx := context.Background()
-		if err := s.runner.Execute(ctx, workflow, runID, wf, trigger); err != nil {
+		if err := s.runner.Execute(ctx, workflow, runID, wf, input); err != nil {
 			log.Printf("run %s failed: %v", runID, err)
 		}
 	}()
@@ -109,6 +99,13 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{"run_id": runID, "status": "accepted"})
+}
+
+// generateRunID creates a random run identifier.
+func generateRunID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return "run_" + hex.EncodeToString(b)
 }
 
 func (s *server) handleGetEnvelope(w http.ResponseWriter, r *http.Request) {

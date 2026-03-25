@@ -68,30 +68,6 @@ func LoadServerManifest(path string) (*ServerManifest, error) {
 	return &manifest, nil
 }
 
-func LoadInlet(path string) (*InletConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read inlet: %w", err)
-	}
-	var cfg InletConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse inlet: %w", err)
-	}
-	return &cfg, nil
-}
-
-func LoadOutlet(path string) (*OutletConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read outlet: %w", err)
-	}
-	var cfg OutletConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse outlet: %w", err)
-	}
-	return &cfg, nil
-}
-
 // StripVersion trims the @version suffix from a ref string.
 // e.g. "inlets/fetch.inlet.yaml@1.0.0" → "inlets/fetch.inlet.yaml"
 func StripVersion(ref string) string {

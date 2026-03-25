@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -21,15 +21,6 @@ import (
 	"github.com/kimitsu-ai/ktsu/pkg/types"
 )
 
-// TriggerContext holds the incoming trigger data for a run.
-type TriggerContext struct {
-	Type      string
-	Body      map[string]interface{}
-	Headers   map[string]string
-	RemoteIP  string
-	RequestID string
-}
-
 // AgentDispatcher dispatches an agent invocation to the runtime and waits for the result.
 type AgentDispatcher interface {
 	Dispatch(ctx context.Context, runID, stepID string, req map[string]interface{}) (map[string]interface{}, error)
@@ -38,29 +29,25 @@ type AgentDispatcher interface {
 // Runner executes workflow pipelines.
 type Runner struct {
 	store      state.Store
-	projectDir string
 	dispatcher AgentDispatcher // nil = agent steps are stubbed
 }
 
 // New creates a new Runner.
-func New(store state.Store, projectDir string) *Runner {
-	return &Runner{
-		store:      store,
-		projectDir: projectDir,
-	}
+func New(store state.Store) *Runner {
+	return &Runner{store: store}
 }
 
 // NewWithDispatcher creates a Runner that dispatches agent steps to the given AgentDispatcher.
-func NewWithDispatcher(store state.Store, projectDir string, dispatcher AgentDispatcher) *Runner {
+func NewWithDispatcher(store state.Store, dispatcher AgentDispatcher) *Runner {
 	return &Runner{
 		store:      store,
-		projectDir: projectDir,
 		dispatcher: dispatcher,
 	}
 }
 
-// Execute runs a workflow pipeline given a trigger context.
-func (r *Runner) Execute(ctx context.Context, workflowName string, runID string, wf *config.WorkflowConfig, trigger TriggerContext) error {
+// Execute runs a workflow pipeline with the provided input.
+// The input is pre-populated as stepOutputs["input"] and available to all steps.
+func (r *Runner) Execute(ctx context.Context, workflowName string, runID string, wf *config.WorkflowConfig, input map[string]interface{}) error {
 	now := time.Now()
 	run := &types.Run{
 		ID:           runID,
@@ -90,7 +77,12 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 		stepByID[wf.Pipeline[i].ID] = &wf.Pipeline[i]
 	}
 
+	// Pre-populate workflow input as a synthetic step output.
+	// All pipeline steps can reference upstream outputs via stepOutputs["input"].
 	stepOutputs := make(map[string]map[string]interface{})
+	if input != nil {
+		stepOutputs["input"] = input
+	}
 
 	failRun := func(stepRec *types.Step, errMsg string) error {
 		now := time.Now()
@@ -113,14 +105,12 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			// Determine step type
 			var stepType types.StepType
 			switch {
-			case step.Inlet != "":
-				stepType = types.StepTypeInlet
 			case step.Agent != "":
 				stepType = types.StepTypeAgent
 			case step.Transform != nil:
 				stepType = types.StepTypeTransform
-			case step.Outlet != "":
-				stepType = types.StepTypeOutlet
+			case step.Webhook != nil:
+				stepType = types.StepTypeWebhook
 			default:
 				stepType = types.StepTypeAgent
 			}
@@ -143,12 +133,10 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			var execErr error
 
 			switch stepType {
-			case types.StepTypeInlet:
-				rawOutput, execErr = r.executeInlet(ctx, step, trigger, stepOutputs)
 			case types.StepTypeTransform:
 				rawOutput, execErr = r.executeTransform(ctx, step, stepOutputs)
-			case types.StepTypeOutlet:
-				rawOutput, execErr = r.executeOutlet(ctx, step, stepOutputs, runID)
+			case types.StepTypeWebhook:
+				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs)
 			case types.StepTypeAgent:
 				rawOutput, execErr = r.executeAgent(ctx, step, stepOutputs, runID)
 			}
@@ -157,7 +145,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 				return failRun(stepRec, execErr.Error())
 			}
 
-			// Check for skipped from outlet condition
+			// Check for skipped from webhook condition
 			if skipped, _ := rawOutput["skipped"].(bool); skipped {
 				now := time.Now()
 				stepRec.Status = types.StepStatusSkipped
@@ -231,38 +219,91 @@ func (r *Runner) executeAgent(ctx context.Context, step *config.PipelineStep, st
 	return r.dispatcher.Dispatch(ctx, runID, step.ID, input)
 }
 
-// executeInlet processes an inlet step.
-func (r *Runner) executeInlet(_ context.Context, step *config.PipelineStep, trigger TriggerContext, _ map[string]map[string]interface{}) (map[string]interface{}, error) {
-	path := config.StripVersion(step.Inlet)
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(r.projectDir, path)
+// executeWebhook executes a webhook step: evaluates the condition, builds the body
+// via JMESPath, and POSTs to the configured URL. Expects a 2xx response for success.
+func (r *Runner) executeWebhook(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}) (map[string]interface{}, error) {
+	spec := step.Webhook
+
+	// Check condition
+	if step.Condition != "" {
+		envelopeCtx := make(map[string]interface{})
+		for k, v := range stepOutputs {
+			envelopeCtx[k] = v
+		}
+		result, err := jmespath.Search(step.Condition, envelopeCtx)
+		if err != nil || isFalsy(result) {
+			return map[string]interface{}{"skipped": true, "reason": "condition_false"}, nil
+		}
 	}
 
-	inletCfg, err := config.LoadInlet(path)
-	if err != nil {
-		return nil, fmt.Errorf("load inlet %s: %w", path, err)
+	// Resolve URL — supports env:VAR_NAME
+	url := spec.URL
+	if strings.HasPrefix(url, "env:") {
+		envVar := strings.TrimPrefix(url, "env:")
+		url = os.Getenv(envVar)
+		if url == "" {
+			return nil, fmt.Errorf("env var %s not set for webhook URL", envVar)
+		}
 	}
 
-	triggerCtx := map[string]interface{}{
-		"type":       trigger.Type,
-		"body":       trigger.Body,
-		"headers":    trigger.Headers,
-		"remote_ip":  trigger.RemoteIP,
-		"request_id": trigger.RequestID,
+	// Build body context from all step outputs
+	outCtx := make(map[string]interface{})
+	for k, v := range stepOutputs {
+		outCtx[k] = v
 	}
 
-	output := make(map[string]interface{})
-	for outKey, jmesExpr := range inletCfg.Mapping.Output {
-		val, err := jmespath.Search(jmesExpr, triggerCtx)
+	// Apply body mapping via JMESPath
+	body := make(map[string]interface{})
+	for key, jmesExprRaw := range spec.Body {
+		jmesExpr, ok := jmesExprRaw.(string)
+		if !ok {
+			continue
+		}
+		val, err := jmespath.Search(jmesExpr, outCtx)
 		if err != nil {
-			return nil, fmt.Errorf("jmespath search %q: %w", jmesExpr, err)
+			return nil, fmt.Errorf("jmespath webhook body %q: %w", jmesExpr, err)
 		}
 		if val != nil {
-			output[outKey] = val
+			body[key] = val
 		}
 	}
 
-	return output, nil
+	method := spec.Method
+	if method == "" {
+		method = http.MethodPost
+	}
+
+	timeout := time.Duration(spec.TimeoutS) * time.Second
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal webhook body: %w", err)
+	}
+
+	httpCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(httpCtx, method, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("create webhook request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("webhook %s %s: %w", method, url, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("webhook %s %s returned status %d", method, url, resp.StatusCode)
+	}
+
+	return map[string]interface{}{"sent": true, "status_code": resp.StatusCode}, nil
 }
 
 // executeTransform processes a transform step.
@@ -552,100 +593,6 @@ func applyDeduplicate(currentData interface{}, field string) (interface{}, error
 		}
 	}
 	return result, nil
-}
-
-// executeOutlet processes an outlet step.
-func (r *Runner) executeOutlet(_ context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, _ string) (map[string]interface{}, error) {
-	// Check condition
-	if step.Condition != "" {
-		envelopeCtx := make(map[string]interface{})
-		for k, v := range stepOutputs {
-			envelopeCtx[k] = v
-		}
-		result, err := jmespath.Search(step.Condition, envelopeCtx)
-		if err != nil || isFalsy(result) {
-			return map[string]interface{}{"skipped": true, "reason": "condition_false"}, nil
-		}
-	}
-
-	// Resolve outlet path
-	path := config.StripVersion(step.Outlet)
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(r.projectDir, path)
-	}
-
-	outletCfg, err := config.LoadOutlet(path)
-	if err != nil {
-		return nil, fmt.Errorf("load outlet %s: %w", path, err)
-	}
-
-	// Build context from stepOutputs
-	outCtx := make(map[string]interface{})
-	for k, v := range stepOutputs {
-		outCtx[k] = v
-	}
-
-	// Apply action body mapping
-	actionBody := make(map[string]interface{})
-	for key, jmesExprRaw := range outletCfg.Mapping.Action.Body {
-		jmesExpr, ok := jmesExprRaw.(string)
-		if !ok {
-			continue
-		}
-		val, err := jmespath.Search(jmesExpr, outCtx)
-		if err != nil {
-			return nil, fmt.Errorf("jmespath outlet body %q: %w", jmesExpr, err)
-		}
-		if val != nil {
-			actionBody[key] = val
-		}
-	}
-
-	// Execute action
-	switch outletCfg.Mapping.Action.Type {
-	case "noop":
-		return map[string]interface{}{"sent": false, "action": "noop"}, nil
-
-	case "http_post":
-		return r.doHTTPRequest(http.MethodPost, outletCfg.Mapping.Action.URL, actionBody)
-
-	case "http_put":
-		return r.doHTTPRequest(http.MethodPut, outletCfg.Mapping.Action.URL, actionBody)
-
-	case "email_reply":
-		return map[string]interface{}{"sent": false, "stubbed": true}, nil
-
-	default:
-		return map[string]interface{}{"sent": false, "action": outletCfg.Mapping.Action.Type}, nil
-	}
-}
-
-// doHTTPRequest performs an HTTP request with JSON body.
-func (r *Runner) doHTTPRequest(method, url string, body map[string]interface{}) (map[string]interface{}, error) {
-	bodyBytes, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal body: %w", err)
-	}
-
-	req, err := http.NewRequest(method, url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("http %s %s: %w", method, url, err)
-	}
-	defer resp.Body.Close()
-	// Read and discard to avoid resource leaks
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("http %s %s returned status %d", method, url, resp.StatusCode)
-	}
-
-	return map[string]interface{}{"sent": true, "status_code": resp.StatusCode}, nil
 }
 
 // isFalsy returns true if a value is nil, false, empty string, or 0.
