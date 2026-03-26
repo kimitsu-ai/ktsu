@@ -48,6 +48,12 @@ func NewWithDispatcher(store state.Store, dispatcher AgentDispatcher) *Runner {
 // Execute runs a workflow pipeline with the provided input.
 // The input is pre-populated as stepOutputs["input"] and available to all steps.
 func (r *Runner) Execute(ctx context.Context, workflowName string, runID string, wf *config.WorkflowConfig, input map[string]interface{}) error {
+	if wf.ModelPolicy != nil && wf.ModelPolicy.TimeoutS > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(wf.ModelPolicy.TimeoutS)*time.Second)
+		defer cancel()
+	}
+
 	now := time.Now()
 	run := &types.Run{
 		ID:           runID,
@@ -252,11 +258,18 @@ func (r *Runner) executeWebhook(ctx context.Context, step *config.PipelineStep, 
 		outCtx[k] = v
 	}
 
-	// Apply body mapping via JMESPath
+	// Apply body mapping via JMESPath or env:VAR_NAME
 	body := make(map[string]interface{})
 	for key, jmesExprRaw := range spec.Body {
 		jmesExpr, ok := jmesExprRaw.(string)
 		if !ok {
+			continue
+		}
+		if strings.HasPrefix(jmesExpr, "env:") {
+			envVar := strings.TrimPrefix(jmesExpr, "env:")
+			if val := os.Getenv(envVar); val != "" {
+				body[key] = val
+			}
 			continue
 		}
 		val, err := jmespath.Search(jmesExpr, outCtx)

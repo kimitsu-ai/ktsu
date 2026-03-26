@@ -2,12 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/kimitsu-ai/ktsu/internal/builtins"
@@ -23,6 +29,7 @@ import (
 	"github.com/kimitsu-ai/ktsu/internal/config"
 	"github.com/kimitsu-ai/ktsu/internal/gateway"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator"
+	"github.com/kimitsu-ai/ktsu/internal/orchestrator/dag"
 	"github.com/kimitsu-ai/ktsu/internal/runtime"
 )
 
@@ -39,6 +46,7 @@ func rootCmd() *cobra.Command {
 	}
 	root.AddCommand(startCmd())
 	root.AddCommand(validateCmd())
+	root.AddCommand(invokeCmd())
 	root.AddCommand(lockCmd())
 	return root
 }
@@ -207,8 +215,57 @@ func startBuiltinCmd(name string, defaultPort int, newFn func() builtins.Builtin
 	return cmd
 }
 
+func invokeCmd() *cobra.Command {
+	var orchestratorURL, inputJSON string
+	var wait bool
+	cmd := &cobra.Command{
+		Use:   "invoke <workflow>",
+		Short: "Invoke a workflow on the orchestrator",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			workflow := args[0]
+			resp, err := http.Post(orchestratorURL+"/invoke/"+workflow, "application/json", strings.NewReader(inputJSON))
+			if err != nil {
+				return fmt.Errorf("invoke: %w", err)
+			}
+			defer resp.Body.Close()
+			var result map[string]interface{}
+			json.NewDecoder(resp.Body).Decode(&result)
+			runID, _ := result["run_id"].(string)
+			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", runID)
+			if !wait || runID == "" {
+				return nil
+			}
+			// Poll GET /runs/{run_id} until the run reaches a terminal status.
+			for {
+				time.Sleep(1 * time.Second)
+				r, err := http.Get(orchestratorURL + "/runs/" + runID)
+				if err != nil {
+					return fmt.Errorf("poll: %w", err)
+				}
+				var status map[string]interface{}
+				json.NewDecoder(r.Body).Decode(&status)
+				r.Body.Close()
+				run, _ := status["run"].(map[string]interface{})
+				s, _ := run["status"].(string)
+				if s != "running" && s != "pending" && s != "" {
+					data, _ := json.MarshalIndent(status, "", "  ")
+					fmt.Fprintln(cmd.OutOrStdout(), string(data))
+					return nil
+				}
+			}
+		},
+	}
+	cmd.Flags().StringVar(&inputJSON, "input", "{}", "JSON input for the workflow")
+	cmd.Flags().BoolVar(&wait, "wait", false, "poll until the run completes and print result")
+	cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
+		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:8080"),
+		"orchestrator URL (env: KTSU_ORCHESTRATOR_URL)")
+	return cmd
+}
+
 func validateCmd() *cobra.Command {
-	var envPath string
+	var envPath, workflowDir string
 	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate Kimitsu configuration files",
@@ -217,14 +274,85 @@ func validateCmd() *cobra.Command {
 				if _, err := config.LoadEnv(envPath); err != nil {
 					return fmt.Errorf("invalid env config: %w", err)
 				}
-				fmt.Printf("env config OK: %s\n", envPath)
+				fmt.Fprintf(cmd.OutOrStdout(), "env config OK: %s\n", envPath)
 			}
-			fmt.Println("validation complete")
+
+			if workflowDir != "" {
+				if err := validateWorkflows(cmd, workflowDir); err != nil {
+					return err
+				}
+			}
+
+			fmt.Fprintln(cmd.OutOrStdout(), "validation complete")
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&envPath, "env", "", "path to environment config")
+	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "", "directory of *.workflow.yaml files to validate")
 	return cmd
+}
+
+// validateWorkflows loads every *.workflow.yaml in dir and runs DAG cycle detection and
+// depends_on reference checks. Returns a combined error if any workflow is invalid.
+func validateWorkflows(cmd *cobra.Command, dir string) error {
+	files, err := filepath.Glob(filepath.Join(dir, "*.workflow.yaml"))
+	if err != nil {
+		return fmt.Errorf("glob workflows: %w", err)
+	}
+	if len(files) == 0 {
+		fmt.Fprintf(cmd.OutOrStdout(), "no workflow files found in %s\n", dir)
+		return nil
+	}
+
+	var errs []string
+	for _, file := range files {
+		wf, err := config.LoadWorkflow(file)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: load error: %v", file, err))
+			continue
+		}
+		fileErrs := checkWorkflow(file, wf)
+		if len(fileErrs) == 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "OK: %s\n", file)
+		}
+		errs = append(errs, fileErrs...)
+	}
+
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "\n"))
+	}
+	return nil
+}
+
+// checkWorkflow validates a single workflow: depends_on references and DAG cycle detection.
+func checkWorkflow(file string, wf *config.WorkflowConfig) []string {
+	var errs []string
+
+	// Build step ID set
+	stepIDs := make(map[string]bool, len(wf.Pipeline))
+	for _, step := range wf.Pipeline {
+		stepIDs[step.ID] = true
+	}
+
+	// Check depends_on references
+	for _, step := range wf.Pipeline {
+		for _, dep := range step.DependsOn {
+			if !stepIDs[dep] {
+				errs = append(errs, fmt.Sprintf("%s: step %q depends on unknown step %q", file, step.ID, dep))
+			}
+		}
+	}
+
+	// DAG cycle check
+	nodes := make([]dag.Node, len(wf.Pipeline))
+	for i, step := range wf.Pipeline {
+		nodes[i] = dag.Node{ID: step.ID, Depends: step.DependsOn}
+	}
+	if _, err := dag.Resolve(nodes); err != nil {
+		errs = append(errs, fmt.Sprintf("%s: %v", file, err))
+	}
+
+	return errs
 }
 
 func lockCmd() *cobra.Command {

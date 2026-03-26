@@ -141,6 +141,22 @@ func (m *MemStore) GetStep(_ context.Context, runID, stepID string) (*types.Step
 	return copyStep(s), nil
 }
 
+// ListSteps returns copies of all steps for the given run. Returns nil, nil if the run has no steps.
+func (m *MemStore) ListSteps(_ context.Context, runID string) ([]*types.Step, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	runSteps, ok := m.steps[runID]
+	if !ok {
+		return nil, nil
+	}
+	out := make([]*types.Step, 0, len(runSteps))
+	for _, s := range runSteps {
+		out = append(out, copyStep(s))
+	}
+	return out, nil
+}
+
 // GetEnvelope builds a *types.Envelope on-the-fly from all completed or skipped
 // steps for the given run. Returns an error if the run does not exist.
 func (m *MemStore) GetEnvelope(_ context.Context, runID string) (*types.Envelope, error) {

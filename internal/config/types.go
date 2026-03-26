@@ -60,6 +60,7 @@ type ModelPolicy struct {
 	CostBudgetUSD float64           `yaml:"cost_budget_usd"`
 	ForceGroup    string            `yaml:"force_group,omitempty"`
 	GroupMap      map[string]string `yaml:"group_map,omitempty"`
+	TimeoutS      int               `yaml:"timeout_s,omitempty"`
 }
 
 type OutputSpec struct {

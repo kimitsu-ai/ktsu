@@ -14,6 +14,7 @@ type Store interface {
 	CreateStep(ctx context.Context, step *types.Step) error
 	UpdateStep(ctx context.Context, step *types.Step) error
 	GetStep(ctx context.Context, runID, stepID string) (*types.Step, error)
+	ListSteps(ctx context.Context, runID string) ([]*types.Step, error)
 	GetEnvelope(ctx context.Context, runID string) (*types.Envelope, error)
 }
 
@@ -47,6 +48,10 @@ func (s *SQLiteStore) UpdateStep(ctx context.Context, step *types.Step) error {
 }
 
 func (s *SQLiteStore) GetStep(ctx context.Context, runID, stepID string) (*types.Step, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *SQLiteStore) ListSteps(ctx context.Context, runID string) ([]*types.Step, error) {
 	return nil, ErrNotImplemented
 }
 

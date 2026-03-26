@@ -61,6 +61,7 @@ func newServer(o *Orchestrator) *server {
 func (s *server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /invoke/{workflow}", s.handleInvoke)
+	s.mux.HandleFunc("GET /runs/{run_id}", s.handleGetRun)
 	s.mux.HandleFunc("GET /envelope/{run_id}", s.handleGetEnvelope)
 	s.mux.HandleFunc("POST /heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /runs/{run_id}/steps/{step_id}/complete", s.handleStepComplete)
@@ -106,6 +107,21 @@ func generateRunID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return "run_" + hex.EncodeToString(b)
+}
+
+func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("run_id")
+	run, err := s.store.GetRun(r.Context(), runID)
+	if err != nil {
+		http.Error(w, "run not found", http.StatusNotFound)
+		return
+	}
+	steps, _ := s.store.ListSteps(r.Context(), runID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"run":   run,
+		"steps": steps,
+	})
 }
 
 func (s *server) handleGetEnvelope(w http.ResponseWriter, r *http.Request) {

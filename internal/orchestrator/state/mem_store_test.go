@@ -218,6 +218,46 @@ func TestMemStore_CreateRun_copyOnStore(t *testing.T) {
 	}
 }
 
+func TestMemStore_ListSteps_returnsAllStepsForRun(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemStore()
+
+	run := &types.Run{ID: "run-list", Status: types.RunStatusRunning}
+	if err := s.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	stepA := &types.Step{ID: "step-a", RunID: "run-list", Status: types.StepStatusComplete}
+	stepB := &types.Step{ID: "step-b", RunID: "run-list", Status: types.StepStatusRunning}
+	if err := s.CreateStep(ctx, stepA); err != nil {
+		t.Fatalf("CreateStep a: %v", err)
+	}
+	if err := s.CreateStep(ctx, stepB); err != nil {
+		t.Fatalf("CreateStep b: %v", err)
+	}
+
+	steps, err := s.ListSteps(ctx, "run-list")
+	if err != nil {
+		t.Fatalf("ListSteps: %v", err)
+	}
+	if len(steps) != 2 {
+		t.Errorf("want 2 steps, got %d", len(steps))
+	}
+}
+
+func TestMemStore_ListSteps_unknownRunReturnsEmpty(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemStore()
+
+	steps, err := s.ListSteps(ctx, "no-such-run")
+	if err != nil {
+		t.Fatalf("ListSteps for unknown run: want nil error, got %v", err)
+	}
+	if len(steps) != 0 {
+		t.Errorf("want 0 steps, got %d", len(steps))
+	}
+}
+
 func TestMemStore_GetEnvelope_buildsFromSteps(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemStore()

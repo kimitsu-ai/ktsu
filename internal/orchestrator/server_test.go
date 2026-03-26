@@ -10,12 +10,22 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
 	"github.com/kimitsu-ai/ktsu/internal/runtime/agent"
+	"github.com/kimitsu-ai/ktsu/pkg/types"
 )
 
 // newHandlerServer creates a minimal server suitable for testing handleStepComplete.
 func newHandlerServer() *server {
 	return &server{
+		pendingCallbacks: make(map[stepCallbackKey]chan agent.CallbackPayload),
+	}
+}
+
+// newHandlerServerWithStore creates a server with a MemStore for testing handleGetRun.
+func newHandlerServerWithStore() *server {
+	return &server{
+		store:            state.NewMemStore(),
 		pendingCallbacks: make(map[stepCallbackKey]chan agent.CallbackPayload),
 	}
 }
@@ -337,6 +347,58 @@ func TestRuntimeDispatcher_Dispatch_agentFailure(t *testing.T) {
 	}
 	if err.Error() != "agent step failed: tool call timed out" {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// TestHandleGetRun_returnsRunAndSteps verifies GET /runs/{run_id} returns the run status and steps.
+func TestHandleGetRun_returnsRunAndSteps(t *testing.T) {
+	s := newHandlerServerWithStore()
+	ctx := context.Background()
+
+	run := &types.Run{ID: "run-get", WorkflowName: "wf", Status: types.RunStatusRunning}
+	if err := s.store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	step := &types.Step{ID: "step-1", RunID: "run-get", Status: types.StepStatusComplete}
+	if err := s.store.CreateStep(ctx, step); err != nil {
+		t.Fatalf("CreateStep: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-get", nil)
+	req.SetPathValue("run_id", "run-get")
+	rr := httptest.NewRecorder()
+	s.handleGetRun(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rr.Code)
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["run"] == nil {
+		t.Error("response missing 'run' field")
+	}
+	if body["steps"] == nil {
+		t.Error("response missing 'steps' field")
+	}
+	steps, ok := body["steps"].([]interface{})
+	if !ok || len(steps) != 1 {
+		t.Errorf("want 1 step, got %v", body["steps"])
+	}
+}
+
+// TestHandleGetRun_notFound verifies GET /runs/{run_id} returns 404 for unknown run.
+func TestHandleGetRun_notFound(t *testing.T) {
+	s := newHandlerServerWithStore()
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/no-such-run", nil)
+	req.SetPathValue("run_id", "no-such-run")
+	rr := httptest.NewRecorder()
+	s.handleGetRun(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", rr.Code)
 	}
 }
 

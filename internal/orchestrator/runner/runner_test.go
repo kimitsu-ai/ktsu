@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/kimitsu-ai/ktsu/internal/config"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
@@ -537,5 +538,97 @@ func TestRunner_multiStep_dag(t *testing.T) {
 	stepB, _ := store.GetStep(ctx, "run-dag", "step_b")
 	if _, hasResult := stepB.Output["result"]; !hasResult {
 		t.Errorf("step_b should have result from transform, got: %v", stepB.Output)
+	}
+}
+
+// TestRunner_timeout_failsRunOnDeadline verifies that a workflow with timeout_s fires and marks the run failed.
+func TestRunner_timeout_failsRunOnDeadline(t *testing.T) {
+	// unblock is closed after Execute returns so the hanging handler can exit cleanly.
+	unblock := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// Block until the run timeout fires (signalled via unblock).
+		<-unblock
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	store := state.NewMemStore()
+	r := New(store)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID: "slow",
+		Webhook: &config.WebhookSpec{
+			URL:      srv.URL,
+			TimeoutS: 30, // webhook's own timeout is generous; run timeout fires first
+		},
+	})
+	wf.ModelPolicy = &config.ModelPolicy{TimeoutS: 1} // 1-second run deadline
+
+	start := time.Now()
+	ctx := context.Background()
+	err := r.Execute(ctx, "test-workflow", "run-timeout", wf, nil)
+	elapsed := time.Since(start)
+	close(unblock) // release the handler goroutine
+
+	if err == nil {
+		t.Fatal("want error from timed-out run, got nil")
+	}
+	// Verify the run deadline (1s) fired, not the webhook timeout (30s).
+	if elapsed > 10*time.Second {
+		t.Errorf("run should have been cancelled in ~1s (run timeout), took %v", elapsed)
+	}
+
+	run, gerr := store.GetRun(ctx, "run-timeout")
+	if gerr != nil {
+		t.Fatalf("GetRun: %v", gerr)
+	}
+	if run.Status != types.RunStatusFailed {
+		t.Errorf("want run status failed, got %s", run.Status)
+	}
+	if run.Error == "" {
+		t.Error("want non-empty run error message")
+	}
+}
+
+// TestRunner_webhookStep_envBodyValue verifies env:VAR_NAME body values are resolved from the environment.
+func TestRunner_webhookStep_envBodyValue(t *testing.T) {
+	t.Setenv("WEBHOOK_TENANT", "tenant-xyz")
+
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var err error
+		receivedBody, err = io.ReadAll(req.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	store := state.NewMemStore()
+	r := New(store)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID: "notify",
+		Webhook: &config.WebhookSpec{
+			URL:    srv.URL,
+			Method: "POST",
+			Body: map[string]interface{}{
+				"tenant_id": "env:WEBHOOK_TENANT",
+			},
+		},
+	})
+
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-workflow", "run-env-body", wf, nil); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &payload); err != nil {
+		t.Fatalf("invalid JSON received: %v", err)
+	}
+	if payload["tenant_id"] != "tenant-xyz" {
+		t.Errorf("want tenant_id=tenant-xyz, got %v", payload["tenant_id"])
 	}
 }
