@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -168,4 +169,95 @@ pipeline:
 
 func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+// TestNewProjectCmd_happyPath verifies that all 5 scaffold files are created and
+// the workflow YAML has the project name substituted.
+func TestNewProjectCmd_happyPath(t *testing.T) {
+	dir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+
+	var buf strings.Builder
+	cmd := newProjectCmd()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	if err := cmd.RunE(cmd, []string{"myproject"}); err != nil {
+		t.Fatalf("newProjectCmd.RunE: %v", err)
+	}
+
+	expectedFiles := []string{
+		"myproject/workflows/myproject.workflow.yaml",
+		"myproject/agents/placeholder.agent.yaml",
+		"myproject/environments/dev.env.yaml",
+		"myproject/gateway.yaml",
+		"myproject/servers.yaml",
+	}
+
+	output := buf.String()
+	for _, f := range expectedFiles {
+		if !strings.Contains(output, "created: "+f) {
+			t.Errorf("want output to contain %q, got:\n%s", "created: "+f, output)
+		}
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Errorf("expected file %s to exist: %v", f, err)
+		}
+	}
+
+	// Check workflow YAML has the project name substituted.
+	workflowPath := filepath.Join(dir, "myproject/workflows/myproject.workflow.yaml")
+	contents, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+	if !strings.Contains(string(contents), "name: myproject") {
+		t.Errorf("workflow YAML should contain 'name: myproject', got:\n%s", contents)
+	}
+	if strings.Contains(string(contents), "{{") {
+		t.Errorf("workflow YAML should not contain unrendered template markers, got:\n%s", contents)
+	}
+}
+
+// TestNewProjectCmd_alreadyExists verifies an error is returned when the target directory exists.
+func TestNewProjectCmd_alreadyExists(t *testing.T) {
+	dir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+
+	// Pre-create the directory so the command should fail.
+	if err := os.Mkdir("existing", 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	cmd := newProjectCmd()
+	err = cmd.RunE(cmd, []string{"existing"})
+	if err == nil {
+		t.Fatal("want error when project directory already exists, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("want error containing 'already exists', got: %v", err)
+	}
+}
+
+// TestNewProjectCmd_missingName verifies cobra returns an error when no name argument is given.
+func TestNewProjectCmd_missingName(t *testing.T) {
+	cmd := newCmd()
+	cmd.SetArgs([]string{"project"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("want error for missing name argument, got nil")
+	}
 }
