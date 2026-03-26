@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -388,6 +389,8 @@ func newProjectCmd() *cobra.Command {
 
 			if _, err := os.Stat(name); err == nil {
 				return fmt.Errorf("project %q already exists", name)
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("stat %s: %w", name, err)
 			}
 
 			type fileSpec struct {
@@ -434,19 +437,30 @@ model_groups: []
 
 			data := struct{ Name string }{Name: name}
 
+			type parsedFile struct {
+				path string
+				tmpl *template.Template
+			}
+			parsed := make([]parsedFile, 0, len(files))
 			for _, f := range files {
-				tmpl, err := template.New("").Parse(f.tmplSrc)
+				tmpl, err := template.New(f.path).Parse(f.tmplSrc)
 				if err != nil {
 					return fmt.Errorf("parse template for %s: %w", f.path, err)
 				}
+				parsed = append(parsed, parsedFile{path: f.path, tmpl: tmpl})
+			}
+
+			for _, f := range parsed {
 				var buf bytes.Buffer
-				if err := tmpl.Execute(&buf, data); err != nil {
+				if err := f.tmpl.Execute(&buf, data); err != nil {
 					return fmt.Errorf("render template for %s: %w", f.path, err)
 				}
 				if err := os.MkdirAll(filepath.Dir(f.path), 0o755); err != nil {
+					os.RemoveAll(name)
 					return fmt.Errorf("mkdir %s: %w", filepath.Dir(f.path), err)
 				}
 				if err := os.WriteFile(f.path, buf.Bytes(), 0o644); err != nil {
+					os.RemoveAll(name)
 					return fmt.Errorf("write %s: %w", f.path, err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "created: %s\n", f.path)
