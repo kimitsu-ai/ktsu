@@ -10,8 +10,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/kimitsu-ai/ktsu/internal/config"
@@ -20,6 +22,14 @@ import (
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
 	"github.com/kimitsu-ai/ktsu/internal/runtime/agent"
 )
+
+// defaultProjectDir returns "." when projectDir is empty.
+func defaultProjectDir(d string) string {
+	if d == "" {
+		return "."
+	}
+	return d
+}
 
 // stepCallbackKey is used as a map key for pending step callbacks.
 type stepCallbackKey struct{ runID, stepID string }
@@ -45,9 +55,10 @@ func newServer(o *Orchestrator) *server {
 	var r *runner.Runner
 	if o.cfg.RuntimeURL != "" {
 		r = runner.NewWithDispatcher(store, &runtimeDispatcher{
-			runtimeURL:      o.cfg.RuntimeURL,
-			ownURL:          o.cfg.OwnURL,
-			pendingMu:       &s.pendingMu,
+			runtimeURL:       o.cfg.RuntimeURL,
+			ownURL:           o.cfg.OwnURL,
+			projectDir:       defaultProjectDir(o.cfg.ProjectDir),
+			pendingMu:        &s.pendingMu,
 			pendingCallbacks: s.pendingCallbacks,
 		})
 	} else {
@@ -212,13 +223,14 @@ func (s *server) serve(ctx context.Context) error {
 
 // runtimeDispatcher implements runner.AgentDispatcher by POSTing to the runtime.
 type runtimeDispatcher struct {
-	runtimeURL      string
-	ownURL          string
-	pendingMu       *sync.Mutex
+	runtimeURL       string
+	ownURL           string
+	projectDir       string
+	pendingMu        *sync.Mutex
 	pendingCallbacks map[stepCallbackKey]chan agent.CallbackPayload
 }
 
-func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, input map[string]interface{}) (map[string]interface{}, error) {
+func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, step *config.PipelineStep, input map[string]interface{}) (map[string]interface{}, error) {
 	callbackURL := d.ownURL + "/runs/" + runID + "/steps/" + stepID + "/complete"
 
 	// Register a channel before sending to avoid a race with a fast callback.
@@ -233,12 +245,73 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		d.pendingMu.Unlock()
 	}()
 
+	// Load agent config and resolve tool servers when an agent path is provided.
+	var (
+		agentName    string
+		system       string
+		maxTurns     = 10
+		modelGroup   string
+		maxTokens    = 1024
+		toolServers  []agent.ToolServerSpec
+		outputSchema map[string]any
+	)
+
+	if step != nil && step.Agent != "" {
+		agentPath := filepath.Join(d.projectDir, config.StripVersion(step.Agent))
+		agentCfg, err := config.LoadAgent(agentPath)
+		if err != nil {
+			return nil, fmt.Errorf("load agent %s: %w", step.Agent, err)
+		}
+		agentName = agentCfg.Name
+		system = agentCfg.System
+		modelGroup = agentCfg.Model
+		if agentCfg.MaxTurns > 0 {
+			maxTurns = agentCfg.MaxTurns
+		}
+		if agentCfg.Output == nil || len(agentCfg.Output.Schema) == 0 {
+			return nil, fmt.Errorf("agent %s has no output schema defined", agentCfg.Name)
+		}
+		outputSchema = agentCfg.Output.Schema
+		for _, srv := range agentCfg.Servers {
+			serverPath := filepath.Join(d.projectDir, srv.Path)
+			serverCfg, err := config.LoadToolServer(serverPath)
+			if err != nil {
+				return nil, fmt.Errorf("load server %s: %w", srv.Path, err)
+			}
+			authToken := serverCfg.Auth
+			if strings.HasPrefix(authToken, "env:") {
+				authToken = os.Getenv(strings.TrimPrefix(authToken, "env:"))
+			}
+			toolServers = append(toolServers, agent.ToolServerSpec{
+				Name:      serverCfg.Name,
+				URL:       serverCfg.URL,
+				Allowlist: srv.Access.Allowlist,
+				AuthToken: authToken,
+			})
+		}
+	}
+
+	// Step-level model overrides agent default.
+	if step != nil && step.Model != nil {
+		if step.Model.Group != "" {
+			modelGroup = step.Model.Group
+		}
+		if step.Model.MaxTokens > 0 {
+			maxTokens = step.Model.MaxTokens
+		}
+	}
+
 	req := agent.InvokeRequest{
-		RunID:       runID,
-		StepID:      stepID,
-		Input:       input,
-		CallbackURL: callbackURL,
-		MaxTurns:    10, // default; step-level override is a future concern
+		RunID:        runID,
+		StepID:       stepID,
+		AgentName:    agentName,
+		System:       system,
+		MaxTurns:     maxTurns,
+		Model:        agent.ModelSpec{Group: modelGroup, MaxTokens: maxTokens},
+		ToolServers:  toolServers,
+		Input:        input,
+		CallbackURL:  callbackURL,
+		OutputSchema: outputSchema,
 	}
 	body, err := json.Marshal(req)
 	if err != nil {

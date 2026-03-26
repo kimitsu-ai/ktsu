@@ -76,6 +76,7 @@ type AgentConfig struct {
 	SubAgents   []string    `yaml:"sub_agents"`
 	System      string      `yaml:"system"`
 	MaxTurns    int         `yaml:"max_turns"`
+	Output      *OutputSpec `yaml:"output,omitempty"`
 }
 
 type ServerRef struct {
@@ -137,6 +138,7 @@ type ToolServerConfig struct {
 	Name        string            `yaml:"name"`
 	Description string            `yaml:"description"`
 	URL         string            `yaml:"url"`
+	Auth        string            `yaml:"auth,omitempty"` // bearer token or "env:VAR_NAME"
 	Image       string            `yaml:"image"`
 	Env         map[string]string `yaml:"env"`
 }

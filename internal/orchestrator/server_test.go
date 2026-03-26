@@ -7,9 +7,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
+	"github.com/kimitsu-ai/ktsu/internal/config"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
 	"github.com/kimitsu-ai/ktsu/internal/runtime/agent"
 	"github.com/kimitsu-ai/ktsu/pkg/types"
@@ -270,7 +273,7 @@ func TestRuntimeDispatcher_Dispatch_returns202AndDelivery(t *testing.T) {
 	resultCh := make(chan map[string]any, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		out, err := d.Dispatch(context.Background(), "run-8", "step-8", map[string]any{"input": "data"})
+		out, err := d.Dispatch(context.Background(), "run-8", "step-8", nil, map[string]any{"input": "data"})
 		resultCh <- out
 		errCh <- err
 	}()
@@ -327,7 +330,7 @@ func TestRuntimeDispatcher_Dispatch_agentFailure(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := d.Dispatch(context.Background(), "run-9", "step-9", nil)
+		_, err := d.Dispatch(context.Background(), "run-9", "step-9", nil, nil)
 		errCh <- err
 	}()
 
@@ -420,9 +423,47 @@ func TestRuntimeDispatcher_Dispatch_runtimeNon202(t *testing.T) {
 		pendingCallbacks: pendingCallbacks,
 	}
 
-	_, err := d.Dispatch(context.Background(), "run-10", "step-10", nil)
+	_, err := d.Dispatch(context.Background(), "run-10", "step-10", nil, nil)
 	if err == nil {
 		t.Fatal("want error for non-202, got nil")
+	}
+}
+
+// TestRuntimeDispatcher_Dispatch_missingOutputSchema verifies that an agent config without
+// an output schema causes Dispatch to return an error without calling the runtime.
+func TestRuntimeDispatcher_Dispatch_missingOutputSchema(t *testing.T) {
+	// Write a minimal agent config with no output field.
+	dir := t.TempDir()
+	agentPath := filepath.Join(dir, "no-schema.agent.yaml")
+	if err := os.WriteFile(agentPath, []byte("name: no-schema\nsystem: test\n"), 0o600); err != nil {
+		t.Fatalf("write agent file: %v", err)
+	}
+
+	runtimeCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		runtimeCalled = true
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	pendingCallbacks := make(map[stepCallbackKey]chan agent.CallbackPayload)
+	var mu sync.Mutex
+
+	d := &runtimeDispatcher{
+		runtimeURL:       srv.URL,
+		ownURL:           "http://orchestrator",
+		projectDir:       dir,
+		pendingMu:        &mu,
+		pendingCallbacks: pendingCallbacks,
+	}
+
+	step := &config.PipelineStep{ID: "fetch", Agent: "no-schema.agent.yaml"}
+	_, err := d.Dispatch(context.Background(), "run-schema", "fetch", step, nil)
+	if err == nil {
+		t.Fatal("expected error for agent missing output schema, got nil")
+	}
+	if runtimeCalled {
+		t.Error("runtime should not have been called when agent has no output schema")
 	}
 }
 
@@ -450,7 +491,7 @@ func TestRuntimeDispatcher_Dispatch_contextCancellation(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := d.Dispatch(ctx, "run-11", "step-11", nil)
+		_, err := d.Dispatch(ctx, "run-11", "step-11", nil, nil)
 		errCh <- err
 	}()
 

@@ -365,6 +365,128 @@ func TestLoop_toolNotPermitted(t *testing.T) {
 	}
 }
 
+func TestLoop_markdownCodeFenceStripped(t *testing.T) {
+	gw := fakeGateway(t, []map[string]any{
+		{
+			"content":        "```json\n{\"result\":\"ok\"}\n```",
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      30,
+			"tokens_out":     10,
+			"cost_usd":       0.0001,
+		},
+	})
+	defer gw.Close()
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), baseReq())
+
+	if payload.Status != "ok" {
+		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
+	}
+	if payload.Output["result"] != "ok" {
+		t.Errorf("unexpected output: %v", payload.Output)
+	}
+}
+
+func TestLoop_codeFenceWithoutLanguageTag(t *testing.T) {
+	gw := fakeGateway(t, []map[string]any{
+		{
+			"content":        "```\n{\"result\":\"ok\"}\n```",
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      30,
+			"tokens_out":     10,
+			"cost_usd":       0.0001,
+		},
+	})
+	defer gw.Close()
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), baseReq())
+
+	if payload.Status != "ok" {
+		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
+	}
+	if payload.Output["result"] != "ok" {
+		t.Errorf("unexpected output: %v", payload.Output)
+	}
+}
+
+func TestLoop_outputSchemaInjectedInSystemPrompt(t *testing.T) {
+	var capturedSystemPrompt string
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if msgs, ok := body["messages"].([]any); ok && len(msgs) > 0 {
+			if first, ok := msgs[0].(map[string]any); ok {
+				capturedSystemPrompt, _ = first["content"].(string)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"content":        `{"answer":"yes"}`,
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      10,
+			"tokens_out":     5,
+			"cost_usd":       0.0,
+		})
+	}))
+	defer gw.Close()
+
+	req := baseReq()
+	req.OutputSchema = map[string]any{
+		"type":     "object",
+		"required": []string{"answer"},
+		"properties": map[string]any{
+			"answer": map[string]any{"type": "string"},
+		},
+	}
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "ok" {
+		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
+	}
+	if !strings.Contains(capturedSystemPrompt, "JSON schema") {
+		t.Errorf("expected system prompt to contain schema, got: %s", capturedSystemPrompt)
+	}
+	if !strings.Contains(capturedSystemPrompt, `"answer"`) {
+		t.Errorf("expected system prompt to contain schema field 'answer', got: %s", capturedSystemPrompt)
+	}
+}
+
+func TestLoop_noOutputSchemaNoSchemaInPrompt(t *testing.T) {
+	var capturedSystemPrompt string
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if msgs, ok := body["messages"].([]any); ok && len(msgs) > 0 {
+			if first, ok := msgs[0].(map[string]any); ok {
+				capturedSystemPrompt, _ = first["content"].(string)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"content":        `{"answer":"yes"}`,
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      10,
+			"tokens_out":     5,
+			"cost_usd":       0.0,
+		})
+	}))
+	defer gw.Close()
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), baseReq())
+
+	if payload.Status != "ok" {
+		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
+	}
+	if strings.Contains(capturedSystemPrompt, "JSON schema") {
+		t.Errorf("expected no schema in system prompt when OutputSchema is nil, got: %s", capturedSystemPrompt)
+	}
+}
+
 func TestLoop_toolDiscoveryError(t *testing.T) {
 	// MCP server that returns 500
 	badMCP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

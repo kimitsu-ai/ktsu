@@ -2,15 +2,16 @@ package agent
 
 // InvokeRequest is the payload the orchestrator sends to POST /invoke.
 type InvokeRequest struct {
-	RunID       string           `json:"run_id"`
-	StepID      string           `json:"step_id"`
-	AgentName   string           `json:"agent_name"`
-	System      string           `json:"system"`
-	MaxTurns    int              `json:"max_turns"`
-	Model       ModelSpec        `json:"model"`
-	Input       map[string]any   `json:"input"`
-	ToolServers []ToolServerSpec `json:"tool_servers"`
-	CallbackURL string           `json:"callback_url"`
+	RunID        string           `json:"run_id"`
+	StepID       string           `json:"step_id"`
+	AgentName    string           `json:"agent_name"`
+	System       string           `json:"system"`
+	MaxTurns     int              `json:"max_turns"`
+	Model        ModelSpec        `json:"model"`
+	Input        map[string]any   `json:"input"`
+	ToolServers  []ToolServerSpec `json:"tool_servers"`
+	CallbackURL  string           `json:"callback_url"`
+	OutputSchema map[string]any   `json:"output_schema,omitempty"`
 }
 
 // ModelSpec identifies which LLM model group to use.
@@ -24,6 +25,7 @@ type ToolServerSpec struct {
 	Name      string   `json:"name"`
 	URL       string   `json:"url"`
 	Allowlist []string `json:"allowlist"`
+	AuthToken string   `json:"auth_token,omitempty"` // resolved bearer token
 }
 
 // CallbackPayload is the result POSTed to callback_url when the loop finishes.

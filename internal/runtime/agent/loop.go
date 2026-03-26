@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/kimitsu-ai/ktsu/internal/runtime/agent/mcp"
@@ -103,17 +105,21 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 	var metrics Metrics
 
 	// --- Tool discovery ---
-	// toolByName maps tool name → server URL (for routing tool calls).
+	// toolByName maps tool name → ToolServerSpec (for routing tool calls with auth).
 	// tools is the flat list sent to the gateway.
-	toolByName := make(map[string]string)
+	type serverRef struct {
+		url       string
+		authToken string
+	}
+	toolByName := make(map[string]serverRef)
 	var tools []toolDef
 	for _, srv := range req.ToolServers {
-		discovered, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.Allowlist)
+		discovered, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.AuthToken, srv.Allowlist)
 		if err != nil {
 			return nil, metrics, fmt.Errorf("discover tools from %s: %w", srv.Name, err)
 		}
 		for _, t := range discovered {
-			toolByName[t.Name] = srv.URL
+			toolByName[t.Name] = serverRef{url: srv.URL, authToken: srv.AuthToken}
 			tools = append(tools, toolDef{
 				Name:        t.Name,
 				Description: t.Description,
@@ -127,8 +133,15 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 	if err != nil {
 		return nil, metrics, fmt.Errorf("marshal input: %w", err)
 	}
+	systemPrompt := req.System
+	if len(req.OutputSchema) > 0 {
+		schemaJSON, err := json.MarshalIndent(req.OutputSchema, "", "  ")
+		if err == nil {
+			systemPrompt += "\n\nYour output MUST conform to this JSON schema:\n" + string(schemaJSON)
+		}
+	}
 	messages := []Message{
-		{Role: "system", Content: req.System},
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: string(inputJSON)},
 	}
 
@@ -157,11 +170,13 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 
 		if len(gwResp.ToolCalls) > 0 {
 			for _, tc := range gwResp.ToolCalls {
-				serverURL, ok := toolByName[tc.Name]
+				sref, ok := toolByName[tc.Name]
 				if !ok {
 					return nil, metrics, fmt.Errorf("tool_not_permitted: %s", tc.Name)
 				}
-				result, err := l.mcpClient.CallTool(ctx, serverURL, tc.Name, tc.Arguments)
+				argsJSON, _ := json.Marshal(tc.Arguments)
+				log.Printf("[agent] run=%s step=%s tool=%s args=%s", req.RunID, req.StepID, tc.Name, argsJSON)
+				result, err := l.mcpClient.CallTool(ctx, sref.url, sref.authToken, tc.Name, tc.Arguments)
 				if err != nil {
 					return nil, metrics, fmt.Errorf("tool call %s: %w", tc.Name, err)
 				}
@@ -244,11 +259,32 @@ func (l *Loop) callGateway(ctx context.Context, req InvokeRequest, messages []Me
 }
 
 // parseOutput attempts to parse content as a JSON object.
+// Strips markdown code fences if present before parsing.
 // Returns an error if content is not valid JSON.
 func parseOutput(content string) (map[string]any, error) {
+	content = stripCodeFence(content)
 	var out map[string]any
 	if err := json.Unmarshal([]byte(content), &out); err != nil {
 		return nil, fmt.Errorf("LLM output is not valid JSON: %w", err)
 	}
 	return out, nil
+}
+
+// stripCodeFence removes markdown code fences (```json ... ``` or ``` ... ```) from s.
+func stripCodeFence(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	// Remove opening fence line
+	end := strings.Index(s, "\n")
+	if end == -1 {
+		return s
+	}
+	s = s[end+1:]
+	// Remove closing fence
+	if idx := strings.LastIndex(s, "```"); idx != -1 {
+		s = s[:idx]
+	}
+	return strings.TrimSpace(s)
 }
