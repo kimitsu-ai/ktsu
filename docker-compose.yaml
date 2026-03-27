@@ -1,0 +1,67 @@
+services:
+  gateway:
+    build: .
+    command: ["start", "gateway", "--config", "/app/gateway.yaml"]
+    volumes:
+      - ./examples/hello/gateway.yaml:/app/gateway.yaml:ro
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ktsu
+
+  orchestrator:
+    build: .
+    command:
+      - start
+      - orchestrator
+      - --workflow-dir
+      - /app/workflows
+      - --project-dir
+      - /app
+    ports:
+      - "${KTSU_PORT:-8080}:8080"
+    volumes:
+      - ./examples/hello/workflows:/app/workflows:ro
+      - ./examples/hello/agents:/app/agents:ro
+    environment:
+      KTSU_RUNTIME_URL: http://runtime:8082
+      KTSU_OWN_URL: http://orchestrator:8080
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ktsu
+
+  runtime:
+    build: .
+    command: ["start", "runtime"]
+    volumes:
+      - ./examples/hello/agents:/app/agents:ro
+    environment:
+      KTSU_ORCHESTRATOR_URL: http://orchestrator:8080
+      KTSU_GATEWAY_URL: http://gateway:8081
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ktsu
+
+networks:
+  ktsu:

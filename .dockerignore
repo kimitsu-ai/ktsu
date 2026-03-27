@@ -1,0 +1,16 @@
+.git
+.gitignore
+*.md
+docs/
+LICENSE
+kimitsu
+corrected-workflow.yaml
+install-go.sh
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
