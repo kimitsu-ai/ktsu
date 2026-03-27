@@ -11,7 +11,7 @@ Run the full stack with the included hello-world example:
 echo 'ANTHROPIC_API_KEY=sk-ant-...' >> .env
 
 # Start all services
-docker compose up --build
+make docker-up
 ```
 
 This launches the gateway, orchestrator, and runtime with the `examples/hello/` project mounted. Once healthy, invoke the workflow:
@@ -29,7 +29,7 @@ The host port is configurable via `KTSU_PORT` in `.env` (default: `8080`).
 Run the full stack with a local LLM — no external accounts or API keys needed:
 
 ```sh
-docker compose -f docker-compose.local.yaml up --build
+make docker-up-local
 ```
 
 This uses [Ollama](https://ollama.com) with `qwen2.5:0.5b` (~397MB). The model is pulled automatically on first run.
@@ -42,9 +42,12 @@ This uses [Ollama](https://ollama.com) with `qwen2.5:0.5b` (~397MB). The model i
 ## Build
 
 ```sh
-make build       # go build ./...
-make test        # go test ./...
-make lint        # go vet ./...
+make build          # go build ./...
+make test           # go test ./...
+make lint           # go vet ./...
+make docker-up      # docker compose (API key required)
+make docker-up-local # docker compose with local LLM
+make docker-down    # stop all containers
 ```
 
 ## Running services

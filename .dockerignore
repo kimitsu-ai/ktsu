@@ -4,8 +4,7 @@
 docs/
 LICENSE
 kimitsu
-corrected-workflow.yaml
-install-go.sh
+deploy/
 
 # IDE
 .vscode/

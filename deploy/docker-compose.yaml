@@ -1,36 +1,13 @@
 services:
-  ollama:
-    image: ollama/ollama
-    volumes:
-      - ollama-data:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks:
-      - ktsu
-
-  ollama-pull:
-    image: ollama/ollama
-    command: ["pull", "qwen2.5:0.5b"]
-    environment:
-      OLLAMA_HOST: http://ollama:11434
-    depends_on:
-      ollama:
-        condition: service_healthy
-    restart: "no"
-    networks:
-      - ktsu
-
   gateway:
-    build: .
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
     command: ["start", "gateway", "--config", "/app/gateway.yaml"]
     volumes:
-      - ./examples/hello/gateway.local.yaml:/app/gateway.yaml:ro
-    depends_on:
-      ollama-pull:
-        condition: service_completed_successfully
+      - ../examples/hello/gateway.yaml:/app/gateway.yaml:ro
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/health"]
       interval: 5s
@@ -40,7 +17,9 @@ services:
       - ktsu
 
   orchestrator:
-    build: .
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
     command:
       - start
       - orchestrator
@@ -51,8 +30,8 @@ services:
     ports:
       - "${KTSU_PORT:-8080}:8080"
     volumes:
-      - ./examples/hello/workflows:/app/workflows:ro
-      - ./examples/hello/agents:/app/agents:ro
+      - ../examples/hello/workflows:/app/workflows:ro
+      - ../examples/hello/agents:/app/agents:ro
     environment:
       KTSU_RUNTIME_URL: http://runtime:8082
       KTSU_OWN_URL: http://orchestrator:8080
@@ -68,10 +47,12 @@ services:
       - ktsu
 
   runtime:
-    build: .
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
     command: ["start", "runtime"]
     volumes:
-      - ./examples/hello/agents:/app/agents:ro
+      - ../examples/hello/agents:/app/agents:ro
     environment:
       KTSU_ORCHESTRATOR_URL: http://orchestrator:8080
       KTSU_GATEWAY_URL: http://gateway:8081
@@ -87,9 +68,6 @@ services:
       retries: 5
     networks:
       - ktsu
-
-volumes:
-  ollama-data:
 
 networks:
   ktsu:
