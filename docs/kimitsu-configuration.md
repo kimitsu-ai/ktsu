@@ -198,7 +198,7 @@ providers:
   - name: <string>     # logical name — referenced by models as "name/model-id"
     type: <string>     # anthropic | openai | openai-compat
     config:
-      api_key_env: <ENV_VAR_NAME>   # environment variable holding the API key
+      api_key: "env:<VAR_NAME>"    # API key — env: prefix resolves from environment
 
 model_groups:
   - name: <string>     # group name agents declare in their model: field
@@ -219,12 +219,12 @@ providers:
   - name: anthropic
     type: anthropic
     config:
-      api_key_env: ANTHROPIC_API_KEY
+      api_key: "env:ANTHROPIC_API_KEY"
 
   - name: openai
     type: openai
     config:
-      api_key_env: OPENAI_API_KEY
+      api_key: "env:OPENAI_API_KEY"
 
 model_groups:
   - name: economy

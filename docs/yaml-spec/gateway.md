@@ -11,12 +11,12 @@ providers:
   - name: anthropic              # logical name — used as prefix in model references
     type: anthropic              # anthropic | openai | openai-compat
     config:
-      api_key_env: ANTHROPIC_API_KEY  # env var holding the API key
+      api_key: "env:ANTHROPIC_API_KEY"  # env var holding the API key
 
   - name: openai
     type: openai
     config:
-      api_key_env: OPENAI_API_KEY
+      api_key: "env:OPENAI_API_KEY"
 
 model_groups:
   - name: economy                # group name — agents declare this in their model: field
@@ -52,7 +52,7 @@ model_groups:
 | `providers` | array | yes | List of LLM providers |
 | `providers[].name` | string | yes | Logical name — used as prefix in model references (`name/model-id`) |
 | `providers[].type` | string | yes | `anthropic` \| `openai` \| `openai-compat` |
-| `providers[].config.api_key_env` | string | yes | Env var holding the API key |
+| `providers[].config.api_key` | string | yes | API key — use `env:VAR_NAME` to read from environment |
 
 ## Model Group Fields
 

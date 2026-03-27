@@ -15,7 +15,7 @@ providers:
   - name: anthropic
     type: anthropic              # anthropic | openai | openai-compat
     config:
-      api_key_env: ANTHROPIC_API_KEY
+      api_key: "env:ANTHROPIC_API_KEY"
 state:
   driver: sqlite                 # sqlite | postgres
   dsn: /tmp/myproject/kimitsu.db # SQLite: file path | Postgres: connection string or env:VAR
@@ -30,7 +30,7 @@ state:
 | `providers` | array | no | LLM provider credentials for this environment |
 | `providers[].name` | string | yes | Logical name — matches provider names in `gateway.yaml` |
 | `providers[].type` | string | yes | `anthropic` \| `openai` \| `openai-compat` |
-| `providers[].config` | object | yes | Provider-specific config (e.g. `api_key_env`) |
+| `providers[].config` | object | yes | Provider-specific config (e.g. `api_key: "env:VAR"`) |
 | `state.driver` | string | yes | `sqlite` \| `postgres` |
 | `state.dsn` | string | yes | SQLite: file path; Postgres: connection string or `env:VAR` |
 

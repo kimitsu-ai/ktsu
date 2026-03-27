@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/kimitsu-ai/ktsu/internal/config"
 	"github.com/kimitsu-ai/ktsu/internal/gateway/providers"
@@ -80,26 +81,36 @@ func buildProvider(pc config.ProviderConfig) (providers.Provider, error) {
 		if baseURL == "" {
 			return nil, fmt.Errorf("missing base_url")
 		}
-		apiKey := pc.Config["api_key_env"]
-		if apiKey == "" {
-			return nil, fmt.Errorf("missing api_key_env")
-		}
-		key := os.Getenv(apiKey)
-		if key == "" {
-			return nil, fmt.Errorf("env var %q is not set", apiKey)
+		key, err := resolveAPIKey(pc)
+		if err != nil {
+			return nil, err
 		}
 		return openai.New(baseURL, key), nil
 	case "anthropic":
-		apiKeyEnv := pc.Config["api_key_env"]
-		if apiKeyEnv == "" {
-			return nil, fmt.Errorf("missing api_key_env")
-		}
-		key := os.Getenv(apiKeyEnv)
-		if key == "" {
-			return nil, fmt.Errorf("env var %q is not set", apiKeyEnv)
+		key, err := resolveAPIKey(pc)
+		if err != nil {
+			return nil, err
 		}
 		return anthropic.New("", key), nil
 	default:
 		return nil, fmt.Errorf("unknown provider type %q", pc.Type)
 	}
+}
+
+// resolveAPIKey reads the api_key field from a provider config.
+// Values prefixed with "env:" are resolved from environment variables.
+func resolveAPIKey(pc config.ProviderConfig) (string, error) {
+	raw := pc.Config["api_key"]
+	if raw == "" {
+		return "", fmt.Errorf("missing api_key")
+	}
+	if strings.HasPrefix(raw, "env:") {
+		envVar := strings.TrimPrefix(raw, "env:")
+		key := os.Getenv(envVar)
+		if key == "" {
+			return "", fmt.Errorf("env var %q is not set", envVar)
+		}
+		return key, nil
+	}
+	return raw, nil
 }
