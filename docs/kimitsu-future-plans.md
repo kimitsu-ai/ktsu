@@ -8,13 +8,18 @@
 The following components are implemented and tested:
 
 **Orchestrator**
-- `POST /invoke/{workflow}` — validates input schema, generates run_id, starts DAG execution
+- `POST /invoke/{workflow}` — validates required input fields (HTTP 422 on missing), generates run_id, starts DAG execution
+- `GET /runs/{run_id}` — returns current run status and step summary
+- `GET /envelope/{run_id}` — returns full run envelope with per-step outputs and aggregated metrics
 - DAG resolution and step dispatch (agent, transform, webhook)
 - Air-Lock output validation with agent retry
 - Reserved output field processing (`ktsu_*`)
-- Webhook step execution with JMESPath body mapping and `env:` URL resolution
+- Webhook step execution with JMESPath body mapping, `env:` URL and body value resolution, and condition evaluation
 - Transform step execution (merge, sort, filter, map, flatten, deduplicate)
+- Agent fanout (`for_each`) — bounded concurrency, `max_items` cap, `item`/`item_index` injection, metrics aggregation
+- Per-run timeout via `model_policy.timeout_s`
 - Agent Runtime dispatch (HTTP POST with callback)
+- Token and cost metrics collected per step and aggregated into run totals
 - Heartbeat monitoring with stale step detection
 - State store (runs, steps, kv_store, blob_store, log_entries, skill_calls)
 
@@ -47,17 +52,8 @@ These are small, targeted additions to the existing system. Each is self-contain
 ### Persistent State Store Migration (SQLite → PostgreSQL)
 The state store driver is already abstracted. Wire up the PostgreSQL driver and write migration tooling (`kimitsu db migrate`). SQLite remains the default for dev.
 
-### Per-Invocation Timeout
-Add `timeout_s` to workflow `model_policy`. Orchestrator sets a deadline on the run context. If the deadline fires, all running agent steps are marked `failed: run_timeout`. Pending steps are marked `skipped: run_timeout`. This prevents zombie runs from consuming the state store indefinitely.
-
-### `env:` URL Resolution in Webhook Bodies
-Webhook body values currently support JMESPath against step outputs. Extend value resolution to support `env:VAR_NAME` literals for injecting environment-specific constants (e.g. tenant IDs, API versions) without requiring them to flow through the pipeline as step data.
-
 ### `kimitsu invoke` CLI Command
-Add `kimitsu invoke <workflow> --input '{"key":"value"}'` as a development convenience. Wraps `curl -X POST /invoke/{workflow}`. Optional `--wait` flag that polls the run until completion and prints the final envelope.
-
-### Run Status Endpoint
-`GET /runs/{run_id}` — returns current run status and step summary. Required for the `kimitsu invoke --wait` implementation and useful for debugging.
+Add `kimitsu invoke <workflow> --input '{"key":"value"}'` as a development convenience. Wraps `curl -X POST /invoke/{workflow}`. Optional `--wait` flag that polls `GET /runs/{run_id}` until completion and prints the final envelope.
 
 ### `kimitsu validate` Full Graph Check
 The current `kimitsu validate` only checks env config. Extend it to run the full boot-time graph validation (DAG cycle check, IO type-checking, allowlist validation) without starting any services. Useful in CI.

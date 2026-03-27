@@ -132,6 +132,7 @@ model_policy:
 | `agent` | Path or built-in reference with pinned version |
 | `transform` | Inline transform declaration |
 | `webhook` | Inline webhook declaration — URL, method, body mapping, timeout |
+| `for_each` | Fanout spec — see Pipeline Primitives. Fields: `from` (JMESPath to an array), `max_items` (optional cap), `concurrency` (optional parallel limit). Agent-only. |
 | `condition` | JMESPath expression evaluated against step outputs at runtime. If falsy, the step is marked `skipped`. Valid on webhook steps. |
 | `depends_on` | Array of step IDs this step waits for (not needed for transform steps — derived from inputs) |
 | `consolidation` | Fan-in strategy: `array` \| `merge` \| `first` |
@@ -140,107 +141,48 @@ model_policy:
 
 ### Step Failure Behaviour
 
-Failure tolerance is declared on the consuming agent via `inputs[].optional`, not on the pipeline step. There is no `on_fail` or `allow_failed` field on pipeline steps.
+If any step fails, the run fails immediately. There is no `on_fail`, `allow_failed`, or continue-on-failure option on pipeline steps. All downstream steps are skipped when a step fails.
 
-### Consolidation Strategies
+### Consolidation
 
-| Strategy | Behaviour |
-|---|---|
-| `array` | Wrap all upstream outputs as a list under their step labels. **Default. Always safe.** |
-| `merge` | Deep-merge all upstream outputs into a single object. Use only when outputs are additive and keys cannot conflict. |
-| `first` | Take the first step to complete. For race/fallback patterns. |
+The `consolidation` field is accepted on pipeline steps but is not yet enforced at runtime. Do not rely on it for current behaviour.
 
 ---
 
 ## Environment Config Reference
 
-Environment configs overlay workflow defaults without touching workflow or agent files. The active env is selected at invocation time: `ktsu run --env environments/staging.env.yaml`.
+Environment configs are selected at startup with `--env environments/dev.env.yaml`. They declare the state store backend and any environment-specific variable overrides.
 
-### Override Resolution Hierarchy (highest to lowest priority)
+### Format
 
-1. CLI flags (`--force-group`, `--budget`)
-2. `environments/*.env.yaml`
-3. `workflows/*.workflow.yaml`
-4. `agents/*.agent.yaml`
+```yaml
+name: <string>         # environment name — dev, staging, production, etc.
+variables:             # key-value pairs injected as environment variables
+  KEY: value
+state:
+  driver: sqlite       # sqlite | postgres
+  dsn: <string>        # SQLite: file path — Postgres: connection string or env:VAR
+```
 
 ### Dev Environment
 
 ```yaml
-kind: env
-environment: dev
-
-model_policy:
-  force_group:     local
-  cost_budget_usd: 0.00
-
-runtime:
-  agent_runtime_instances: 1
-  heartbeat_interval_s: 5
-  heartbeat_timeout_s:  30
-
-state_store:
-  backend: sqlite
-  path:    "./data/ktsu.db"
-
-secrets:
-  source: dotenv
-  file:   ".env.dev"
-```
-
-### Staging Environment
-
-```yaml
-kind: env
-environment: staging
-
-model_policy:
-  cost_budget_usd: 0.25
-  group_map:
-    frontier: standard
-
-runtime:
-  agent_runtime_instances: 2
-  heartbeat_interval_s: 5
-  heartbeat_timeout_s:  15
-
-state_store:
-  backend: postgres
-  connection: "env:DATABASE_URL"
-  pool_size: 5
-
-secrets:
-  source: aws_secrets_manager
-  prefix: "ktsu/staging/"
+name: dev
+variables:
+  OUTPUT_WEBHOOK_URL: http://localhost:9999/receive
+state:
+  driver: sqlite
+  dsn: /tmp/myproject/kimitsu.db
 ```
 
 ### Production Environment
 
 ```yaml
-kind: env
-environment: production
-
-model_policy:
-  cost_budget_usd: 5.00
-
-runtime:
-  agent_runtime_instances: 5
-  llm_gateway_instances:   2
-  heartbeat_interval_s: 5
-  heartbeat_timeout_s:  15
-
-state_store:
-  backend: postgres
-  connection: "env:DATABASE_URL"
-  pool_size: 20
-
-secrets:
-  source: aws_secrets_manager
-  prefix: "ktsu/production/"
-
-logging:
-  level:            info
-  drain:            "https://logs.internal/kimitsu"
-  include_envelope: true
+name: production
+variables: {}
+state:
+  driver: sqlite
+  dsn: /var/data/kimitsu.db
 ```
 
 ---
@@ -249,139 +191,93 @@ logging:
 
 `gateway.yaml` is the project-level registry for all LLM providers and model groups. Agents reference groups by name — they have no knowledge of what providers or models back them.
 
-### Provider Registry
+### Format
 
 ```yaml
 providers:
-  anthropic:
-    type:      anthropic
-    base_url:  "https://api.anthropic.com/v1"
-    auth:      "env:ANTHROPIC_API_KEY"
-    timeout_s: 30
+  - name: <string>     # logical name — referenced by models as "name/model-id"
+    type: <string>     # anthropic | openai | openai-compat
+    config:
+      api_key_env: <ENV_VAR_NAME>   # environment variable holding the API key
 
-  openai:
-    type:      openai
-    base_url:  "https://api.openai.com/v1"
-    auth:      "env:OPENAI_API_KEY"
-    timeout_s: 30
-
-  gemini:
-    type:      gemini
-    base_url:  "https://generativelanguage.googleapis.com"
-    auth:      "env:GEMINI_API_KEY"
-    timeout_s: 30
-
-  local-ollama:
-    type:      ollama
-    base_url:  "http://host.docker.internal:11434"
-    auth:      none
-    timeout_s: 120
-
-  local-vllm:
-    type:      openai-compat
-    base_url:  "http://vllm.internal:8000/v1"
-    auth:      "env:VLLM_TOKEN"
-    timeout_s: 60
+model_groups:
+  - name: <string>     # group name agents declare in their model: field
+    models:            # list of "provider-name/model-id" strings
+      - <provider-name>/<model-id>
+    strategy: <string> # round_robin | cost_optimized (default: round_robin)
+    default_temperature: <float>   # optional
+    pricing:           # optional — for cost tracking
+      - model: <model-id>
+        input_per_million: <float>
+        output_per_million: <float>
 ```
 
-Supported provider types: `anthropic`, `openai`, `openai-compat`, `ollama`, `gemini`, `cohere`.
-
-### Model Groups
+### Full Example
 
 ```yaml
-groups:
-  economy:
+providers:
+  - name: anthropic
+    type: anthropic
+    config:
+      api_key_env: ANTHROPIC_API_KEY
+
+  - name: openai
+    type: openai
+    config:
+      api_key_env: OPENAI_API_KEY
+
+model_groups:
+  - name: economy
     models:
-      - provider: anthropic
-        model:    "claude-haiku-4-5"
+      - anthropic/claude-haiku-4-5-20251001
+    strategy: round_robin
 
-  standard:
+  - name: standard
     models:
-      - provider: anthropic
-        model:    "claude-sonnet-4-6"
+      - anthropic/claude-sonnet-4-6
+    strategy: round_robin
 
-  frontier:
+  - name: frontier
     models:
-      - provider: anthropic
-        model:    "claude-opus-4-6"
+      - anthropic/claude-opus-4-6
+    strategy: round_robin
 
-  local:
+  - name: vision
     models:
-      - provider: local-ollama
-        model:    "llama3.2:8b"
-
-  local-with-fallback:
-    routing: fallback
-    models:
-      - provider: local-ollama
-        model:    "llama3.2:8b"
-      - provider: anthropic
-        model:    "claude-haiku-4-5"
-
-  legal:
-    models:
-      - provider: anthropic
-        model:    "claude-opus-4-6"
-    restrictions:
-      allow_from: [legal-review]
-
-  vision:
-    routing: round-robin
-    models:
-      - provider: openai
-        model:    "gpt-4o"
-      - provider: gemini
-        model:    "gemini-2.0-flash"
-```
-
-### Routing Strategies
-
-| Strategy | Behaviour |
-|---|---|
-| `single` | One model. Default when `models` has one entry. |
-| `fallback` | Try in order. Move to next on timeout, error, or rate limit. |
-| `round-robin` | Distribute calls evenly across all models in the group. |
-| `least-latency` | Route to the fastest based on rolling p50 latency. |
-
-### Group Restrictions
-
-`restrictions.allow_from` locks a group to specific `step_id` values. Any other step attempting to use the group is rejected and the step fails.
-
-```yaml
-  legal:
-    models:
-      - provider: anthropic
-        model:    "claude-opus-4-6"
-    restrictions:
-      allow_from: [legal-review, compliance-check]
+      - openai/gpt-4o
+    strategy: round_robin
 ```
 
 ### Agent Model Declaration
 
+In an agent file, `model:` is a string referencing a group name:
+
 ```yaml
-model:
-  group:      standard
-  max_tokens: 1024
+model: standard
 ```
 
-That is the complete agent model declaration. The agent declares intent — which group it needs and how many tokens — and the gateway owns everything else.
+In a workflow pipeline step, `model:` is an optional override with group and max_tokens:
+
+```yaml
+model:
+  group: economy
+  max_tokens: 512
+```
+
+The agent file's `model:` field names the default group. The pipeline step's `model:` block overrides it. The gateway owns everything else — provider selection, routing strategy, and credentials.
 
 ### `group_map` — Environment Remapping
 
 ```yaml
-# staging.env.yaml
+# In model_policy on a workflow or via environment:
 model_policy:
   cost_budget_usd: 0.25
   group_map:
-    frontier: standard    # frontier agents use standard in staging
-
-# dev.env.yaml
-model_policy:
-  force_group:     local  # all agents use local regardless of declaration
-  cost_budget_usd: 0.00
+    frontier: standard    # frontier agents use standard in this context
+  force_group: local      # overrides ALL group declarations (useful for dev)
 ```
 
-`force_group` overrides all group declarations. `group_map` selectively remaps named groups. Both are env-file-only — they never appear in workflow or agent files.
+`force_group` overrides all group declarations. `group_map` selectively remaps named groups. Both appear in `model_policy` — never directly in agent files.
 
 ---
 

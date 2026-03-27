@@ -33,13 +33,13 @@
 
 14. **All secrets are indirected.** Credentials are always `env:VAR_NAME`. Secrets never appear in YAML files. LLM provider keys live only in the LLM Gateway.
 
-15. **Failure is explicit.** A step either runs or it does not. Failure tolerance is declared on the consumer via `optional`, never implicit.
+15. **Failure is explicit.** A step either completes or it fails the run. There is no continue-on-failure, no `optional` dependency, and no partial-failure semantics. If a step fails, the run fails immediately and all downstream steps are skipped.
 
-16. **Version everything.** Tool servers, agents, inlets, outlets, and workflows are all independently semver-versioned. The lockfile freezes the full resolved tree.
+16. **Version everything.** Tool servers, agents, and workflows are all independently semver-versioned. The lockfile freezes the full resolved tree.
 
 17. **Environment config never touches workflow files.** Dev/staging/prod differences live entirely in `environments/*.env.yaml`.
 
-18. **Inlets and outlets are declarative mappings, never agents.** Boundary steps use JMESPath field extraction with no reasoning loop. There is no LLM invocation at the pipeline boundary.
+18. **Workflow input is validated before the run is created.** The orchestrator checks `input.schema.required` fields against the invoke payload. Missing required fields return HTTP 422 and no run is created.
 
 19. **The envelope is orchestrator-written, agent-readable.** The orchestrator assembles the envelope from the state store. Agents read it via `ktsu/envelope`. No agent can modify run context.
 
@@ -53,7 +53,7 @@
 
 24. **The Agent Runtime heartbeats, the orchestrator decides.** Runtime containers report liveness; the orchestrator detects failures and takes action. No step runs without supervision.
 
-25. **There are exactly four pipeline primitives.** Inlet, transform, agent, outlet. No other step types exist. If logic requires LLM reasoning, it is an agent. If it is deterministic data shaping, it is a transform. If it sits at the boundary, it is an inlet or outlet.
+25. **There are exactly three pipeline primitives.** Transform, agent, webhook. No other step types exist. If logic requires LLM reasoning, it is an agent. If it is deterministic data shaping, it is a transform. If it needs to call an external HTTP endpoint, it is a webhook.
 
 26. **Reserved output fields are an orchestrator contract, not a data convention.** Fields prefixed `ktsu_` are evaluated by the orchestrator before Air-Lock runs. Their behavior is fixed and cannot be overridden by agents or workflow configuration. Unknown `ktsu_` fields are a boot error.
 
@@ -63,13 +63,13 @@
 
 29. **Built-in agents follow the same rules as user-defined agents.** They appear in the DAG, consume model budget, go through Air-Lock, and are independently versioned. The `ktsu/` namespace signals first-party origin, not special treatment by the runtime.
 
-30. **All inlets on a multi-inlet step must produce identical output schemas.** The downstream DAG sees one typed payload regardless of which inlet fired. Schema mismatches across inlets on the same step are a boot error.
+30. **Webhook conditions are evaluated by the orchestrator, never by agents.** A `condition` expression on a webhook step is JMESPath evaluated against step outputs. If it evaluates falsy, the webhook is marked `skipped` — never `failed`. A run where all webhooks either complete or are conditionally skipped is a successful run.
 
-31. **Outlet conditions are evaluated by the orchestrator against the envelope, never by agents.** A `condition` expression on an outlet step is JMESPath. If it evaluates falsy, the outlet is marked `skipped` — never `failed`. A run where all outlets either complete or are conditionally skipped is a successful run.
+31. **Fanout output is always `{"results": [...]}`.** A `for_each` agent step collects all item invocation outputs in original array order and wraps them in a `results` array. Downstream steps reference individual results via JMESPath against this array. If any item invocation fails, the entire step fails.
 
-32. **Workflow-to-workflow causal links are explicit and opt-in.** `parent_run_id` is only written to the `runs` table when the receiving inlet declares `trigger.type: workflow` and the payload contains a valid `parent_run_id`. No other inlet type establishes this link. The sending outlet must explicitly map `envelope.run_id` into the payload — the link is never automatic.
+32. **Fanout metrics are additive.** Token usage and cost across all fanout invocations are summed and recorded on the step as a single aggregate, exactly as if a single agent had run.
 
-33. **Each workflow run owns its own cost budget and envelope.** A child workflow triggered by a parent outlet gets its own `run_id`, its own `cost_budget_usd`, and its own envelope. Cost does not roll up from child to parent. The `parent_run_id` column is the only cross-run link.
+33. **Each workflow run owns its own cost budget and envelope.** Child workflows triggered via webhook get their own `run_id`, their own `cost_budget_usd`, and their own envelope. Cost does not roll up between runs.
 
 ---
 

@@ -404,9 +404,9 @@ state_store:
 | `running` | Dispatched and actively heartbeating (agent steps) or executing (orchestrator-run steps) |
 | `ok` | Completed successfully, output validated by Air-Lock |
 | `failed` | Failed — skill error, Air-Lock rejection after retries, timeout, heartbeat timeout, or reserved field condition |
-| `skipped` | Never ran — upstream dependency failed and input was not declared `optional` |
+| `skipped` | Never ran — upstream step was skipped via `ktsu_skip_reason`, or webhook condition evaluated false |
 
-`skipped` propagates like `failed`. A step downstream of a skipped step also skips unless it declares that input as `optional: true`.
+When a step is skipped, downstream steps that depend on it are also skipped. If a step fails, the run fails immediately and all remaining steps are skipped.
 
 ### The Envelope
 
@@ -528,26 +528,13 @@ networks:
 
 ### Rules
 
-- **Default on failure is halt.** If a step fails and the downstream agent does not declare that input as `optional: true`, the downstream step is halted.
-- **Failure tolerance is declared on the consumer.** The `optional` field on an agent's `inputs` entry is the only mechanism for tolerating upstream failure.
-- **Transform steps and webhook steps never tolerate upstream failure.** They have no `optional` flag — any failed upstream halts them immediately.
-- **Parallel branches run independently.** A sibling branch failure never halts another branch mid-execution.
-- **`optional` is local and shallow.** It applies only to the direct upstream steps named in the agent's `inputs`.
-- **Failure tolerance is never transitive.**
+- **Failure halts the run immediately.** If any step fails, the run is marked `failed` and all remaining steps are skipped. There is no `optional`, `allow_failed`, or continue-on-failure.
+- **Skipped steps propagate.** A step whose only upstream dependency is skipped is also skipped. A skipped run is not a failed run.
+- **Parallel branches run independently.** A sibling branch failure halts the run, but any branch already executing completes its current step before the run is torn down.
 - **`cost_budget_usd` fails forward, not backward.** When the budget is hit, pending steps are marked `skipped: budget_exceeded`. Running work completes — nothing new starts.
 - **Air-Lock failures are retryable on agent steps.** The orchestrator sends the error back to the Agent Runtime for correction, up to `retry.max` times.
 - **Tool failures are fatal to the agent.** If any tool call fails within an agent's execution, the agent step fails.
 - **Reserved output field conditions are evaluated before Air-Lock.** If `ktsu_injection_attempt: true` is set, the run fails immediately — Air-Lock is not reached.
-
-### Failure in Parallel Branches
-
-```yaml
-inputs:
-  - from: legal-review
-    optional: true        # consolidator handles null — step continues
-  - from: risk-review
-    optional: false       # risk-review failure halts consolidator
-```
 
 ---
 

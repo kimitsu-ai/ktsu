@@ -40,104 +40,64 @@ Local tool server files and built-in servers (`ktsu/*`) are never listed in `ser
 
 ## Local Tool Server Files
 
-Local tool server files live in `servers/` and are referenced directly by path from agent files. They declare where the server lives, how to authenticate, and the typed interface contract for each tool the server exposes.
+Local tool server files live in `servers/` and are referenced directly by path from agent files. They declare where the MCP server lives and how to authenticate against it. The server itself is an independent MCP process that Kimitsu does not manage or start — it must be running and reachable at the declared URL.
 
 ### Fields
 
 ```yaml
-kind: tool-server
-name        # identity
-version     # semver
-description # human-readable
-server      # MCP server URL
-auth        # authentication — always env:VAR_NAME
-egress      # true if the server makes outbound calls
-stateful    # true if the server causes external side effects
-access      # optional — allowlist of permitted tool names
-tools       # list of tools with typed interface contracts
-changelog
+name: <string>         # identity used in logs and error messages
+description: <string>  # human-readable (optional)
+url: <string>          # base URL of the MCP server
+auth: <string>         # bearer token or env:VAR_NAME — omit if no auth required
 ```
 
-### Single-Tool Example
+### Example
 
 ```yaml
-kind: tool-server
-name: "wiki-search"
-version: "2.1.0"
-description: "Search the internal wiki by keyword. Returns ranked results."
-
-server: "https://mcp.internal/wiki"
-auth:   "env:WIKI_TOKEN"
-
-egress:   true
-stateful: false
-
-tools:
-  - name: wiki-search
-    description: "Search the wiki by keyword."
-    input:
-      query:       { type: string,  required: true }
-      max_results: { type: integer, default: 5 }
-    output:
-      results: { type: array, items: { type: string } }
-      total:   { type: integer }
-
-changelog:
-  "2.1.0": "Added max_results param. Improved ranking."
-  "2.0.0": "Breaking: output is now array not string."
-  "1.0.0": "Initial release."
+name: wiki-search
+description: Search the internal wiki by keyword.
+url: "https://mcp.internal/wiki"
+auth: "env:WIKI_TOKEN"
 ```
 
-### Multi-Tool Example
-
 ```yaml
-kind: tool-server
-name: "crm"
-version: "1.0.0"
-description: "CRM read and write operations."
+name: github
+description: GitHub API via MCP.
+url: "http://localhost:3001"
+auth: "env:GITHUB_TOKEN"
+```
 
-server: "https://api.crm.internal/mcp"
-auth:   "env:CRM_KEY"
-
-egress:   true
-stateful: true
-
-access:
-  allowlist:
-    - "crm-lookup"
-    - "crm-read-*"
-
-tools:
-  - name: crm-lookup
-    description: "Look up a customer record by ID."
-    input:
-      customer_id: { type: string, required: true }
-    output:
-      name: { type: string }
-      tier: { type: string }
-
-  - name: crm-update
-    description: "Update a customer record field."
-    input:
-      customer_id: { type: string, required: true }
-      field:       { type: string, required: true }
-      value:       { type: string, required: true }
-    output:
-      success: { type: boolean }
-
-changelog:
-  "1.0.0": "Initial release."
+A server file with no auth:
+```yaml
+name: public-search
+url: "http://search.internal:8080"
 ```
 
 ### How Agents Reference Tool Servers
 
+Tool servers are declared in the agent file under `servers:`. Each entry provides a path to the `.server.yaml` file and an `access.allowlist` controlling which tools the agent may call on that server.
+
 ```yaml
-tools:
-  - sentiment-scorer                      # marketplace — resolved via servers.yaml
-  - crm                                   # marketplace — resolved via servers.yaml
-  - "./servers/wiki-search.server.yaml"   # local — resolved by path
-  - ktsu/kv                                # built-in — always available
+servers:
+  - name: wiki-search
+    path: servers/wiki-search.server.yaml   # relative to project root
+    access:
+      allowlist:
+        - wiki-search          # exact tool name
+  - name: crm
+    path: servers/crm.server.yaml
+    access:
+      allowlist:
+        - crm-lookup           # exact name
+        - crm-read-*           # prefix wildcard
+  - name: kv
+    path: servers/kv.server.yaml
+    access:
+      allowlist:
+        - "*"                  # all tools this server exposes
 ```
+
+The `allowlist` is enforced by the Agent Runtime — the agent only ever sees tools it is permitted to call. If a tool is not on the allowlist, the Agent Runtime blocks the call and informs the agent of what tools are available.
 
 ---
 
@@ -149,9 +109,9 @@ Built-in tool servers are first-party MCP servers shipped as standalone Docker i
 
 | Server | Tools | Description |
 |---|---|---|
-| `ktsu/format@1.0.0` | `format` | Format data as JSON, markdown, CSV |
-| `ktsu/validate@1.0.0` | `validate` | Validate data against a JSON schema |
-| `ktsu/transform@1.0.0` | `transform` | Map / filter / reduce over structured data |
+| `ktsu/format@1.0.0` | `format_json`, `format_yaml`, `format_template` | Format data as JSON, YAML, or Go template |
+| `ktsu/validate@1.0.0` | `validate_schema`, `validate_json` | Validate data against a JSON Schema or check JSON syntax |
+| `ktsu/transform@1.0.0` | `transform_jmespath`, `transform_map`, `transform_filter` | JMESPath operations over structured data |
 
 ### Restricted — Pipeline Agents Only
 
@@ -159,11 +119,11 @@ Only pipeline agents (not sub-agents) may declare these. The orchestrator does n
 
 | Server | Tools | Description |
 |---|---|---|
-| `ktsu/kv@1.0.0` | `kv-get`, `kv-set`, `kv-delete`, `kv-list` | Key-value storage scoped to agent namespace |
-| `ktsu/blob@1.0.0` | `blob-put`, `blob-get`, `blob-delete` | Binary / file storage |
-| `ktsu/log@1.0.0` | `log-append` | Append-only structured run log |
-| `ktsu/memory@1.0.0` | `memory-store`, `memory-search` | Semantic vector memory (similarity search) |
-| `ktsu/envelope@1.0.0` | `envelope-get-inlet`, `envelope-get-run` | Read run context and trigger metadata (read-only) |
+| `ktsu/kv@1.0.0` | `kv_get`, `kv_set`, `kv_delete` | Key-value storage scoped to agent namespace |
+| `ktsu/blob@1.0.0` | `blob_get`, `blob_put`, `blob_delete`, `blob_list` | Binary / file storage |
+| `ktsu/log@1.0.0` | `log_write`, `log_read`, `log_tail` | Structured run log |
+| `ktsu/memory@1.0.0` | `memory_store`, `memory_retrieve`, `memory_search`, `memory_forget` | Semantic vector memory (similarity search) |
+| `ktsu/envelope@1.0.0` | `envelope_get`, `envelope_set`, `envelope_append` | Read and write run envelope fields |
 
 **Why `ktsu/envelope` is restricted:** Although envelope reads have no side effects, they expose trigger context that may contain PII or sensitive routing information. Restricting access to pipeline agents prevents sub-agents from leaking this context into downstream tool calls or marketplace tool servers.
 
@@ -298,47 +258,19 @@ Each tool is exposed as a named MCP tool with typed inputs — the server never 
 
 ```yaml
 # servers/cli.server.yaml
-kind: tool-server
-name: "cli"
-version: "1.0.0"
-description: "Standard Unix CLI tools."
+name: cli
+description: Standard Unix CLI tools.
+url: "http://ktsu-cli:8080"
+```
 
-server: "http://ktsu-cli:8080"
-auth:   none
-egress: false
-stateful: false
+Then in your agent, reference it with an allowlist for just the tools you need:
 
-access:
-  allowlist:
-    - "jq"
-    - "date"
-    - "wc"
-
-tools:
-  - name: jq
-    description: "Filter and transform a JSON string using a jq expression."
-    input:
-      json:   { type: string, required: true }
-      filter: { type: string, required: true }
-    output:
-      result: { type: string }
-      error:  { type: string }
-
-  - name: date
-    description: "Format or compute a date."
-    input:
-      format: { type: string, required: true }
-      input:  { type: string }           # ISO 8601 — defaults to now if omitted
-    output:
-      result: { type: string }
-
-  - name: wc
-    description: "Count lines, words, or bytes in a string."
-    input:
-      input: { type: string, required: true }
-      mode:  { type: string, enum: [lines, words, bytes], default: lines }
-    output:
-      count: { type: integer }
+```yaml
+servers:
+  - name: cli
+    path: servers/cli.server.yaml
+    access:
+      allowlist: [jq, date, wc]
 ```
 
 And in Docker Compose:
@@ -363,60 +295,13 @@ RUN apt-get update && apt-get install -y \
     pandoc
 ```
 
-Then declare a local tool server file pointing at your custom image and listing the additional tools:
+Then declare a local tool server file pointing at your custom image:
 
 ```yaml
 # servers/cli-custom.server.yaml
-kind: tool-server
-name: "cli-custom"
-version: "1.0.0"
-description: "Extended CLI tools — image and document processing."
-
-server: "http://cli-custom:8080"
-auth:   none
-egress: false
-stateful: false
-
-access:
-  allowlist:
-    - "imagemagick-convert"
-    - "ghostscript-compress"
-    - "pandoc-convert"
-
-tools:
-  - name: imagemagick-convert
-    description: "Convert or resize an image."
-    input:
-      input_path:  { type: string, required: true }
-      output_path: { type: string, required: true }
-      resize:      { type: string }          # e.g. "800x600"
-      format:      { type: string }          # e.g. "png", "jpg"
-    output:
-      success:     { type: boolean }
-      output_path: { type: string }
-
-  - name: ghostscript-compress
-    description: "Compress a PDF using Ghostscript."
-    input:
-      input_path:  { type: string, required: true }
-      output_path: { type: string, required: true }
-      quality:     { type: string, enum: [screen, ebook, printer, prepress], default: ebook }
-    output:
-      success:       { type: boolean }
-      size_before:   { type: integer }
-      size_after:    { type: integer }
-
-  - name: pandoc-convert
-    description: "Convert a document between formats using Pandoc."
-    input:
-      input:        { type: string, required: true }
-      from_format:  { type: string, required: true }
-      to_format:    { type: string, required: true }
-    output:
-      result: { type: string }
-
-changelog:
-  "1.0.0": "Initial release."
+name: cli-custom
+description: Extended CLI tools — image and document processing.
+url: "http://cli-custom:8080"
 ```
 
 And in Docker Compose:
