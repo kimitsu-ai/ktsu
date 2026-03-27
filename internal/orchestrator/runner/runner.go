@@ -154,6 +154,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			}
 
 			if execErr != nil {
+				stepRec.Metrics = stepMetrics
 				return failRun(stepRec, execErr.Error())
 			}
 
@@ -248,7 +249,7 @@ func (r *Runner) executeFanout(ctx context.Context, step *config.PipelineStep, s
 		searchCtx[k] = v
 	}
 
-	raw, err := jmespath.Search(spec.From, searchCtx)
+	raw, err := jmespath.Search(sanitizeExpr(spec.From), searchCtx)
 	if err != nil {
 		return nil, types.StepMetrics{}, fmt.Errorf("for_each from %q: %w", spec.From, err)
 	}
@@ -304,17 +305,37 @@ func (r *Runner) executeFanout(ctx context.Context, step *config.PipelineStep, s
 
 	outputs := make([]interface{}, len(items))
 	var totals types.StepMetrics
+	var failCount int
+	var firstErr error
 	for i, res := range results {
-		if res.err != nil {
-			return nil, types.StepMetrics{}, fmt.Errorf("fanout item %d: %w", i, res.err)
-		}
-		outputs[i] = res.output
 		totals.TokensIn += res.metrics.TokensIn
 		totals.TokensOut += res.metrics.TokensOut
 		totals.CostUSD += res.metrics.CostUSD
 		totals.LLMCalls += res.metrics.LLMCalls
 		totals.ToolCalls += res.metrics.ToolCalls
+		if res.err != nil {
+			failCount++
+			if firstErr == nil {
+				firstErr = fmt.Errorf("fanout item %d: %w", i, res.err)
+			}
+			outputs[i] = map[string]interface{}{
+				"ktsu_error": res.err.Error(),
+				"item_index": float64(i),
+			}
+		} else {
+			outputs[i] = res.output
+		}
 	}
+
+	maxFailures := spec.MaxFailures
+	if maxFailures == 0 && firstErr != nil {
+		// Default: fail on first error (preserves existing behavior).
+		return nil, totals, firstErr
+	}
+	if maxFailures > 0 && failCount > maxFailures {
+		return nil, totals, fmt.Errorf("fanout: %d items failed (max_failures: %d)", failCount, maxFailures)
+	}
+	// maxFailures == -1 (unlimited) or failCount within threshold: succeed.
 
 	return map[string]interface{}{"results": outputs}, totals, nil
 }
@@ -330,7 +351,7 @@ func (r *Runner) executeWebhook(ctx context.Context, step *config.PipelineStep, 
 		for k, v := range stepOutputs {
 			envelopeCtx[k] = v
 		}
-		result, err := jmespath.Search(step.Condition, envelopeCtx)
+		result, err := jmespath.Search(sanitizeExpr(step.Condition), envelopeCtx)
 		if err != nil || isFalsy(result) {
 			return map[string]interface{}{"skipped": true, "reason": "condition_false"}, nil
 		}
@@ -366,7 +387,7 @@ func (r *Runner) executeWebhook(ctx context.Context, step *config.PipelineStep, 
 			}
 			continue
 		}
-		val, err := jmespath.Search(jmesExpr, outCtx)
+		val, err := jmespath.Search(sanitizeExpr(jmesExpr), outCtx)
 		if err != nil {
 			return nil, fmt.Errorf("jmespath webhook body %q: %w", jmesExpr, err)
 		}
@@ -566,7 +587,7 @@ func applyFilter(currentData interface{}, expr string) (interface{}, error) {
 		}
 	}
 
-	result, err := jmespath.Search("[?"+expr+"]", items)
+	result, err := jmespath.Search("[?"+sanitizeExpr(expr)+"]", items)
 	if err != nil {
 		return nil, fmt.Errorf("jmespath filter [?%s]: %w", expr, err)
 	}
@@ -599,7 +620,7 @@ func applySort(currentData interface{}, field string, order string) (interface{}
 
 // extractField extracts a field value from an item using JMESPath.
 func extractField(item interface{}, field string) interface{} {
-	val, err := jmespath.Search(field, item)
+	val, err := jmespath.Search(sanitizeExpr(field), item)
 	if err != nil {
 		return nil
 	}
@@ -655,7 +676,7 @@ func applyMap(currentData interface{}, expr string) (interface{}, error) {
 
 	result := make([]interface{}, 0, len(items))
 	for _, item := range items {
-		val, err := jmespath.Search(expr, item)
+		val, err := jmespath.Search(sanitizeExpr(expr), item)
 		if err != nil {
 			return nil, fmt.Errorf("jmespath map %q: %w", expr, err)
 		}
