@@ -3,9 +3,11 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -995,5 +997,182 @@ func TestRunner_condition_hyphenatedStepRef(t *testing.T) {
 
 	if !fired {
 		t.Error("expected webhook to fire when condition search-hn.success is true")
+	}
+}
+
+// TestRunner_fanout_defaultFailFast verifies that with max_failures=0 (default),
+// a single item failure fails the step. Metrics from all items are still collected.
+func TestRunner_fanout_defaultFailFast(t *testing.T) {
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, &failingDispatcher{
+		failStepIDs:   map[string]bool{"process.1": true},
+		failErr:       fmt.Errorf("max_turns_exceeded"),
+		successOutput: map[string]interface{}{"name": "ok"},
+	})
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "process",
+		Agent: "agents/foo.agent.yaml",
+		ForEach: &config.ForEachSpec{
+			From: "input.items",
+		},
+	})
+
+	input := map[string]interface{}{
+		"items": []interface{}{"a", "b", "c"},
+	}
+
+	ctx := context.Background()
+	err := r.Execute(ctx, "test-workflow", "run-fanout-fail", wf, input)
+	if err == nil {
+		t.Fatal("expected Execute to fail when max_failures=0 and an item fails")
+	}
+
+	step, _ := store.GetStep(ctx, "run-fanout-fail", "process")
+	if step.Status != types.StepStatusFailed {
+		t.Errorf("expected step failed, got %s", step.Status)
+	}
+	// Metrics should include contributions from all items (failed + successful).
+	if step.Metrics.TokensIn == 0 {
+		t.Error("expected non-zero TokensIn from metrics aggregation")
+	}
+}
+
+// TestRunner_fanout_maxFailures_tolerateOne verifies that with max_failures=1,
+// one item failure is tolerated. The results array contains an error marker.
+func TestRunner_fanout_maxFailures_tolerateOne(t *testing.T) {
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, &failingDispatcher{
+		failStepIDs:   map[string]bool{"process.1": true},
+		failErr:       fmt.Errorf("max_turns_exceeded"),
+		successOutput: map[string]interface{}{"name": "ok"},
+	})
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "process",
+		Agent: "agents/foo.agent.yaml",
+		ForEach: &config.ForEachSpec{
+			From:        "input.items",
+			MaxFailures: 1,
+		},
+	})
+
+	input := map[string]interface{}{
+		"items": []interface{}{"a", "b", "c"},
+	}
+
+	ctx := context.Background()
+	err := r.Execute(ctx, "test-workflow", "run-fanout-tol1", wf, input)
+	if err != nil {
+		t.Fatalf("expected Execute to succeed with max_failures=1 and 1 failure, got: %v", err)
+	}
+
+	step, _ := store.GetStep(ctx, "run-fanout-tol1", "process")
+	if step.Status != types.StepStatusComplete {
+		t.Errorf("expected complete, got %s", step.Status)
+	}
+
+	results, ok := step.Output["results"].([]interface{})
+	if !ok {
+		t.Fatalf("expected results array, got %T", step.Output["results"])
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	// Index 0 and 2 should be successful outputs.
+	r0, _ := results[0].(map[string]interface{})
+	if r0["name"] != "ok" {
+		t.Errorf("expected results[0] to be success, got %v", results[0])
+	}
+
+	// Index 1 should be an error marker.
+	r1, _ := results[1].(map[string]interface{})
+	if r1["ktsu_error"] == nil {
+		t.Errorf("expected results[1] to have ktsu_error, got %v", results[1])
+	}
+	if r1["item_index"] != float64(1) {
+		t.Errorf("expected item_index=1, got %v", r1["item_index"])
+	}
+}
+
+// TestRunner_fanout_maxFailures_exceedThreshold verifies that exceeding
+// max_failures causes the step to fail.
+func TestRunner_fanout_maxFailures_exceedThreshold(t *testing.T) {
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, &failingDispatcher{
+		failStepIDs:   map[string]bool{"process.0": true, "process.2": true},
+		failErr:       fmt.Errorf("max_turns_exceeded"),
+		successOutput: map[string]interface{}{"name": "ok"},
+	})
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "process",
+		Agent: "agents/foo.agent.yaml",
+		ForEach: &config.ForEachSpec{
+			From:        "input.items",
+			MaxFailures: 1,
+		},
+	})
+
+	input := map[string]interface{}{
+		"items": []interface{}{"a", "b", "c"},
+	}
+
+	ctx := context.Background()
+	err := r.Execute(ctx, "test-workflow", "run-fanout-exceed", wf, input)
+	if err == nil {
+		t.Fatal("expected Execute to fail when failures exceed max_failures")
+	}
+
+	if !strings.Contains(err.Error(), "2 items failed") {
+		t.Errorf("expected error to mention failure count, got: %s", err.Error())
+	}
+}
+
+// TestRunner_fanout_maxFailures_unlimited verifies max_failures=-1
+// tolerates all failures.
+func TestRunner_fanout_maxFailures_unlimited(t *testing.T) {
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, &failingDispatcher{
+		failStepIDs:   map[string]bool{"process.0": true, "process.1": true, "process.2": true},
+		failErr:       fmt.Errorf("max_turns_exceeded"),
+		successOutput: map[string]interface{}{"name": "ok"},
+	})
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "process",
+		Agent: "agents/foo.agent.yaml",
+		ForEach: &config.ForEachSpec{
+			From:        "input.items",
+			MaxFailures: -1,
+		},
+	})
+
+	input := map[string]interface{}{
+		"items": []interface{}{"a", "b", "c"},
+	}
+
+	ctx := context.Background()
+	err := r.Execute(ctx, "test-workflow", "run-fanout-unlimited", wf, input)
+	if err != nil {
+		t.Fatalf("expected Execute to succeed with max_failures=-1, got: %v", err)
+	}
+
+	step, _ := store.GetStep(ctx, "run-fanout-unlimited", "process")
+	if step.Status != types.StepStatusComplete {
+		t.Errorf("expected complete, got %s", step.Status)
+	}
+
+	results, ok := step.Output["results"].([]interface{})
+	if !ok {
+		t.Fatalf("expected results array, got %T", step.Output["results"])
+	}
+	// All 3 items should be error markers.
+	for i, r := range results {
+		rm, _ := r.(map[string]interface{})
+		if rm["ktsu_error"] == nil {
+			t.Errorf("expected results[%d] to be error marker, got %v", i, r)
+		}
 	}
 }
