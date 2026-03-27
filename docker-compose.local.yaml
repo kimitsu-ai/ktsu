@@ -1,0 +1,95 @@
+services:
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ktsu
+
+  ollama-pull:
+    image: ollama/ollama
+    command: ["pull", "qwen2.5:0.5b"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - ktsu
+
+  gateway:
+    build: .
+    command: ["start", "gateway", "--config", "/app/gateway.yaml"]
+    volumes:
+      - ./examples/hello/gateway.local.yaml:/app/gateway.yaml:ro
+    depends_on:
+      ollama-pull:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ktsu
+
+  orchestrator:
+    build: .
+    command:
+      - start
+      - orchestrator
+      - --workflow-dir
+      - /app/workflows
+      - --project-dir
+      - /app
+    ports:
+      - "${KTSU_PORT:-8080}:8080"
+    volumes:
+      - ./examples/hello/workflows:/app/workflows:ro
+      - ./examples/hello/agents:/app/agents:ro
+    environment:
+      KTSU_RUNTIME_URL: http://runtime:8082
+      KTSU_OWN_URL: http://orchestrator:8080
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ktsu
+
+  runtime:
+    build: .
+    command: ["start", "runtime"]
+    volumes:
+      - ./examples/hello/agents:/app/agents:ro
+    environment:
+      KTSU_ORCHESTRATOR_URL: http://orchestrator:8080
+      KTSU_GATEWAY_URL: http://gateway:8081
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ktsu
+
+volumes:
+  ollama-data:
+
+networks:
+  ktsu:

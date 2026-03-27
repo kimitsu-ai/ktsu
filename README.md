@@ -2,9 +2,42 @@
 
 Go monorepo for the Kimitsu agentic pipeline framework. Kimitsu treats the **tool** as the atomic unit — agents are compositions of tool servers with a prompt. All component boundaries are HTTP contracts.
 
+## Quick start (Docker)
+
+Run the full stack with the included hello-world example:
+
+```sh
+# Set your Anthropic API key
+echo 'ANTHROPIC_API_KEY=sk-ant-...' >> .env
+
+# Start all services
+docker compose up --build
+```
+
+This launches the gateway, orchestrator, and runtime with the `examples/hello/` project mounted. Once healthy, invoke the workflow:
+
+```sh
+curl -s -X POST http://localhost:${KTSU_PORT:-8080}/invoke/hello \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "World"}'
+```
+
+The host port is configurable via `KTSU_PORT` in `.env` (default: `8080`).
+
+### Self-contained (no API key)
+
+Run the full stack with a local LLM — no external accounts or API keys needed:
+
+```sh
+docker compose -f docker-compose.local.yaml up --build
+```
+
+This uses [Ollama](https://ollama.com) with `qwen2.5:0.5b` (~397MB). The model is pulled automatically on first run.
+
 ## Prerequisites
 
-- Go 1.24+
+- Go 1.24+ (for local development)
+- Docker & Docker Compose (for containerized usage)
 
 ## Build
 

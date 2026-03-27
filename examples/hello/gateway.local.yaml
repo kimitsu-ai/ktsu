@@ -1,0 +1,12 @@
+providers:
+  - name: ollama
+    type: openai
+    config:
+      base_url: http://ollama:11434/v1
+      api_key: unused
+
+model_groups:
+  - name: standard
+    models:
+      - ollama/qwen2.5:0.5b
+    strategy: round_robin
