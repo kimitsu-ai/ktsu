@@ -320,7 +320,7 @@ func (r *Runner) executeFanout(ctx context.Context, step *config.PipelineStep, s
 			}
 			outputs[i] = map[string]interface{}{
 				"ktsu_error": res.err.Error(),
-				"item_index": float64(i),
+				"item_index": i,
 			}
 		} else {
 			outputs[i] = res.output

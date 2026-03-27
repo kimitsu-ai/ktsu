@@ -1091,7 +1091,7 @@ func TestRunner_fanout_maxFailures_tolerateOne(t *testing.T) {
 	if r1["ktsu_error"] == nil {
 		t.Errorf("expected results[1] to have ktsu_error, got %v", results[1])
 	}
-	if r1["item_index"] != float64(1) {
+	if r1["item_index"] != 1 {
 		t.Errorf("expected item_index=1, got %v", r1["item_index"])
 	}
 }
