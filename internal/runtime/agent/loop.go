@@ -161,6 +161,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 			return nil, metrics, err
 		}
 
+		metrics.LLMCalls++
 		metrics.TokensIn += gwResp.TokensIn
 		metrics.TokensOut += gwResp.TokensOut
 		metrics.CostUSD += gwResp.CostUSD

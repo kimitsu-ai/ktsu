@@ -1,11 +1,13 @@
 package mcp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // ToolDefinition is a single tool exposed by an MCP server.
@@ -38,7 +40,8 @@ func New(httpClient *http.Client) *Client {
 
 // DiscoverTools calls tools/list on url and returns only tools whose name
 // appears in allowlist. An empty allowlist returns an empty slice.
-func (c *Client) DiscoverTools(ctx context.Context, url string, allowlist []string) ([]ToolDefinition, error) {
+// authToken, if non-empty, is sent as a Bearer token in the Authorization header.
+func (c *Client) DiscoverTools(ctx context.Context, url, authToken string, allowlist []string) ([]ToolDefinition, error) {
 	if len(allowlist) == 0 {
 		return nil, nil
 	}
@@ -48,7 +51,7 @@ func (c *Client) DiscoverTools(ctx context.Context, url string, allowlist []stri
 		permitted[name] = struct{}{}
 	}
 
-	resp, err := c.rpc(ctx, url, "tools/list", nil)
+	resp, err := c.rpc(ctx, url, authToken, "tools/list", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -71,12 +74,13 @@ func (c *Client) DiscoverTools(ctx context.Context, url string, allowlist []stri
 
 // CallTool invokes the named tool on url with the given arguments.
 // It does not enforce the allowlist — callers must check before calling.
-func (c *Client) CallTool(ctx context.Context, url, name string, arguments map[string]any) (ToolCallResult, error) {
+// authToken, if non-empty, is sent as a Bearer token in the Authorization header.
+func (c *Client) CallTool(ctx context.Context, url, authToken, name string, arguments map[string]any) (ToolCallResult, error) {
 	params := map[string]any{
 		"name":      name,
 		"arguments": arguments,
 	}
-	resp, err := c.rpc(ctx, url, "tools/call", params)
+	resp, err := c.rpc(ctx, url, authToken, "tools/call", params)
 	if err != nil {
 		return ToolCallResult{}, err
 	}
@@ -89,7 +93,8 @@ func (c *Client) CallTool(ctx context.Context, url, name string, arguments map[s
 }
 
 // rpc sends a JSON-RPC 2.0 request and returns the raw result bytes.
-func (c *Client) rpc(ctx context.Context, url, method string, params any) (json.RawMessage, error) {
+// authToken, if non-empty, is sent as Authorization: Bearer <token>.
+func (c *Client) rpc(ctx context.Context, url, authToken, method string, params any) (json.RawMessage, error) {
 	payload := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  method,
@@ -109,6 +114,10 @@ func (c *Client) rpc(ctx context.Context, url, method string, params any) (json.
 		return nil, fmt.Errorf("create rpc request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -120,6 +129,31 @@ func (c *Client) rpc(ctx context.Context, url, method string, params any) (json.
 		return nil, fmt.Errorf("rpc %s: server returned %d", method, resp.StatusCode)
 	}
 
+	// Some MCP servers (e.g. GitHub's) respond with SSE (text/event-stream) even
+	// for simple request/response calls.  Extract the first "data:" line.
+	var rawJSON []byte
+	ct := resp.Header.Get("Content-Type")
+	if strings.Contains(ct, "text/event-stream") {
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 512*1024), 4*1024*1024) // up to 4 MiB per line
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "data:") {
+				rawJSON = []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+				break
+			}
+		}
+		if len(rawJSON) == 0 {
+			return nil, fmt.Errorf("rpc %s: no data line in SSE response", method)
+		}
+	} else {
+		var buf bytes.Buffer
+		if _, err := buf.ReadFrom(resp.Body); err != nil {
+			return nil, fmt.Errorf("rpc %s: read response: %w", method, err)
+		}
+		rawJSON = buf.Bytes()
+	}
+
 	var envelope struct {
 		Result json.RawMessage `json:"result"`
 		Error  *struct {
@@ -127,7 +161,7 @@ func (c *Client) rpc(ctx context.Context, url, method string, params any) (json.
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+	if err := json.Unmarshal(rawJSON, &envelope); err != nil {
 		return nil, fmt.Errorf("decode rpc response: %w", err)
 	}
 	if envelope.Error != nil {

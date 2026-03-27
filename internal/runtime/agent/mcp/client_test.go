@@ -37,7 +37,7 @@ func TestDiscoverTools_filtersAllowlist(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient()
-	tools, err := c.DiscoverTools(context.Background(), srv.URL, []string{"kv-get", "kv-set"})
+	tools, err := c.DiscoverTools(context.Background(), srv.URL, "", []string{"kv-get", "kv-set"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestDiscoverTools_filtersAllowlist(t *testing.T) {
 func TestDiscoverTools_emptyAllowlist(t *testing.T) {
 	// No HTTP call should be made; returns empty slice immediately.
 	c := newClient()
-	tools, err := c.DiscoverTools(context.Background(), "http://unreachable", []string{})
+	tools, err := c.DiscoverTools(context.Background(), "http://unreachable", "", []string{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestDiscoverTools_serverError(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient()
-	_, err := c.DiscoverTools(context.Background(), srv.URL, []string{"kv-get"})
+	_, err := c.DiscoverTools(context.Background(), srv.URL, "", []string{"kv-get"})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -92,7 +92,7 @@ func TestCallTool_success(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient()
-	result, err := c.CallTool(context.Background(), srv.URL, "kv-get", map[string]any{"key": "user:123"})
+	result, err := c.CallTool(context.Background(), srv.URL, "", "kv-get", map[string]any{"key": "user:123"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestCallTool_rpcError(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient()
-	_, err := c.CallTool(context.Background(), srv.URL, "missing-tool", nil)
+	_, err := c.CallTool(context.Background(), srv.URL, "", "missing-tool", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

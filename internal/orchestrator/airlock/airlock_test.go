@@ -149,3 +149,49 @@ func TestValidate_rejectsUnknownKtsuPrefixedField(t *testing.T) {
 		t.Error("expected error for unknown ktsu_ prefixed field in user output")
 	}
 }
+
+// ValidateInput tests
+
+func TestValidateInput_nilSchema(t *testing.T) {
+	err := ValidateInput(map[string]interface{}{"x": 1}, nil)
+	if err != nil {
+		t.Errorf("expected no error for nil schema, got %v", err)
+	}
+}
+
+func TestValidateInput_noRequiredField(t *testing.T) {
+	schema := map[string]interface{}{"type": "object"}
+	err := ValidateInput(map[string]interface{}{}, schema)
+	if err != nil {
+		t.Errorf("expected no error when schema has no required, got %v", err)
+	}
+}
+
+func TestValidateInput_allRequiredPresent(t *testing.T) {
+	schema := map[string]interface{}{
+		"required": []interface{}{"message", "user_id"},
+	}
+	input := map[string]interface{}{"message": "hello", "user_id": "u1"}
+	if err := ValidateInput(input, schema); err != nil {
+		t.Errorf("expected no error when all required fields present, got %v", err)
+	}
+}
+
+func TestValidateInput_missingRequiredField(t *testing.T) {
+	schema := map[string]interface{}{
+		"required": []interface{}{"message", "user_id"},
+	}
+	input := map[string]interface{}{"message": "hello"}
+	if err := ValidateInput(input, schema); err == nil {
+		t.Error("expected error when required field missing, got nil")
+	}
+}
+
+func TestValidateInput_emptyInput(t *testing.T) {
+	schema := map[string]interface{}{
+		"required": []interface{}{"message"},
+	}
+	if err := ValidateInput(map[string]interface{}{}, schema); err == nil {
+		t.Error("expected error for empty input when required field declared")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,11 +28,34 @@ type mockDispatcher struct {
 	outputs map[string]map[string]interface{}
 }
 
-func (m *mockDispatcher) Dispatch(_ context.Context, _, stepID string, _ map[string]interface{}) (map[string]interface{}, error) {
+func (m *mockDispatcher) Dispatch(_ context.Context, _, stepID string, _ *config.PipelineStep, _ map[string]interface{}) (map[string]interface{}, types.StepMetrics, error) {
 	if out, ok := m.outputs[stepID]; ok {
-		return out, nil
+		return out, types.StepMetrics{}, nil
 	}
-	return map[string]interface{}{"stubbed": true}, nil
+	return map[string]interface{}{"stubbed": true}, types.StepMetrics{}, nil
+}
+
+// capturingDispatcher records every Dispatch call for fanout inspection.
+type capturingDispatcher struct {
+	mu      sync.Mutex
+	calls   []capturedCall
+	outputs map[string]interface{} // returned for every call
+}
+
+type capturedCall struct {
+	stepID string
+	input  map[string]interface{}
+}
+
+func (c *capturingDispatcher) Dispatch(_ context.Context, _, stepID string, _ *config.PipelineStep, input map[string]interface{}) (map[string]interface{}, types.StepMetrics, error) {
+	c.mu.Lock()
+	c.calls = append(c.calls, capturedCall{stepID: stepID, input: input})
+	c.mu.Unlock()
+	out := map[string]interface{}{"processed": true}
+	for k, v := range c.outputs {
+		out[k] = v
+	}
+	return out, types.StepMetrics{TokensIn: 10, TokensOut: 5}, nil
 }
 
 // TestRunner_workflowInput verifies the workflow input is available to pipeline steps.
@@ -630,5 +654,191 @@ func TestRunner_webhookStep_envBodyValue(t *testing.T) {
 	}
 	if payload["tenant_id"] != "tenant-xyz" {
 		t.Errorf("want tenant_id=tenant-xyz, got %v", payload["tenant_id"])
+	}
+}
+
+// TestRunner_fanout_basic verifies each item in the array is dispatched once.
+func TestRunner_fanout_basic(t *testing.T) {
+	d := &capturingDispatcher{}
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, d)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "process",
+		Agent: "agents/processor.agent.yaml",
+		ForEach: &config.ForEachSpec{
+			From: "input.items",
+		},
+	})
+
+	input := map[string]interface{}{
+		"items": []interface{}{"a", "b", "c"},
+	}
+
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-workflow", "run-fanout", wf, input); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if len(d.calls) != 3 {
+		t.Fatalf("expected 3 dispatches, got %d", len(d.calls))
+	}
+
+	step, err := store.GetStep(ctx, "run-fanout", "process")
+	if err != nil {
+		t.Fatalf("GetStep failed: %v", err)
+	}
+	if step.Status != types.StepStatusComplete {
+		t.Errorf("expected complete, got %s", step.Status)
+	}
+	results, ok := step.Output["results"].([]interface{})
+	if !ok {
+		t.Fatalf("expected results array, got %T: %v", step.Output["results"], step.Output)
+	}
+	if len(results) != 3 {
+		t.Errorf("expected 3 results, got %d", len(results))
+	}
+}
+
+// TestRunner_fanout_maxItems verifies MaxItems caps the number of dispatches.
+func TestRunner_fanout_maxItems(t *testing.T) {
+	d := &capturingDispatcher{}
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, d)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "process",
+		Agent: "agents/processor.agent.yaml",
+		ForEach: &config.ForEachSpec{
+			From:     "input.items",
+			MaxItems: 2,
+		},
+	})
+
+	input := map[string]interface{}{
+		"items": []interface{}{"a", "b", "c", "d", "e"},
+	}
+
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-workflow", "run-fanout-max", wf, input); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if len(d.calls) != 2 {
+		t.Errorf("expected 2 dispatches (MaxItems=2), got %d", len(d.calls))
+	}
+
+	step, _ := store.GetStep(ctx, "run-fanout-max", "process")
+	results := step.Output["results"].([]interface{})
+	if len(results) != 2 {
+		t.Errorf("expected 2 results, got %d", len(results))
+	}
+}
+
+// TestRunner_fanout_itemAndIndex verifies item and item_index are injected into each dispatch.
+func TestRunner_fanout_itemAndIndex(t *testing.T) {
+	d := &capturingDispatcher{}
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, d)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "process",
+		Agent: "agents/processor.agent.yaml",
+		ForEach: &config.ForEachSpec{
+			From: "input.items",
+		},
+	})
+
+	input := map[string]interface{}{
+		"items": []interface{}{"first", "second"},
+	}
+
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-workflow", "run-fanout-idx", wf, input); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	indexes := make(map[int]bool)
+	for i, call := range d.calls {
+		if call.input["item"] == nil {
+			t.Errorf("call %d: expected 'item' in input", i)
+		}
+		idx, ok := call.input["item_index"].(int)
+		if !ok {
+			t.Errorf("call %d: item_index not an int: %T %v", i, call.input["item_index"], call.input["item_index"])
+			continue
+		}
+		indexes[idx] = true
+	}
+	for _, want := range []int{0, 1} {
+		if !indexes[want] {
+			t.Errorf("expected item_index %d to appear in dispatches", want)
+		}
+	}
+}
+
+// TestRunner_fanout_emptyArray verifies an empty input array produces empty results without error.
+func TestRunner_fanout_emptyArray(t *testing.T) {
+	d := &capturingDispatcher{}
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, d)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "process",
+		Agent: "agents/processor.agent.yaml",
+		ForEach: &config.ForEachSpec{
+			From: "input.items",
+		},
+	})
+
+	input := map[string]interface{}{
+		"items": []interface{}{},
+	}
+
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-workflow", "run-fanout-empty", wf, input); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if len(d.calls) != 0 {
+		t.Errorf("expected 0 dispatches for empty array, got %d", len(d.calls))
+	}
+
+	step, _ := store.GetStep(ctx, "run-fanout-empty", "process")
+	results := step.Output["results"].([]interface{})
+	if len(results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+// TestRunner_fanout_metricsAggregated verifies token metrics are summed across all fanout invocations.
+func TestRunner_fanout_metricsAggregated(t *testing.T) {
+	d := &capturingDispatcher{} // returns TokensIn:10, TokensOut:5 per call
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, d)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "process",
+		Agent: "agents/processor.agent.yaml",
+		ForEach: &config.ForEachSpec{
+			From: "input.items",
+		},
+	})
+
+	input := map[string]interface{}{
+		"items": []interface{}{"a", "b", "c"},
+	}
+
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-workflow", "run-fanout-metrics", wf, input); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	step, _ := store.GetStep(ctx, "run-fanout-metrics", "process")
+	if step.Metrics.TokensIn != 30 {
+		t.Errorf("expected tokens_in=30 (3x10), got %d", step.Metrics.TokensIn)
+	}
+	if step.Metrics.TokensOut != 15 {
+		t.Errorf("expected tokens_out=15 (3x5), got %d", step.Metrics.TokensOut)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	jmespath "github.com/jmespath/go-jmespath"
@@ -23,7 +24,7 @@ import (
 
 // AgentDispatcher dispatches an agent invocation to the runtime and waits for the result.
 type AgentDispatcher interface {
-	Dispatch(ctx context.Context, runID, stepID string, req map[string]interface{}) (map[string]interface{}, error)
+	Dispatch(ctx context.Context, runID, stepID string, step *config.PipelineStep, input map[string]interface{}) (map[string]interface{}, types.StepMetrics, error)
 }
 
 // Runner executes workflow pipelines.
@@ -136,6 +137,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 
 			// Execute step
 			var rawOutput map[string]interface{}
+			var stepMetrics types.StepMetrics
 			var execErr error
 
 			switch stepType {
@@ -144,7 +146,11 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			case types.StepTypeWebhook:
 				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs)
 			case types.StepTypeAgent:
-				rawOutput, execErr = r.executeAgent(ctx, step, stepOutputs, runID)
+				if step.ForEach != nil {
+					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID)
+				} else {
+					rawOutput, stepMetrics, execErr = r.executeAgent(ctx, step, stepOutputs, runID)
+				}
 			}
 
 			if execErr != nil {
@@ -194,6 +200,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			now := time.Now()
 			stepRec.Status = types.StepStatusComplete
 			stepRec.Output = cleanOutput
+			stepRec.Metrics = stepMetrics
 			stepRec.EndedAt = &now
 			if err := r.store.UpdateStep(ctx, stepRec); err != nil {
 				return fmt.Errorf("update step %s: %w", step.ID, err)
@@ -211,9 +218,9 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 
 // executeAgent dispatches an agent step to the runtime and waits for the result.
 // If no dispatcher is configured, the step is stubbed with {"stubbed": true}.
-func (r *Runner) executeAgent(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, runID string) (map[string]interface{}, error) {
+func (r *Runner) executeAgent(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, runID string) (map[string]interface{}, types.StepMetrics, error) {
 	if r.dispatcher == nil {
-		return map[string]interface{}{"stubbed": true}, nil
+		return map[string]interface{}{"stubbed": true}, types.StepMetrics{}, nil
 	}
 
 	// Assemble inputs from upstream step outputs.
@@ -222,7 +229,94 @@ func (r *Runner) executeAgent(ctx context.Context, step *config.PipelineStep, st
 		input[id] = out
 	}
 
-	return r.dispatcher.Dispatch(ctx, runID, step.ID, input)
+	return r.dispatcher.Dispatch(ctx, runID, step.ID, step, input)
+}
+
+// executeFanout iterates an agent step over an array resolved from ForEach.From,
+// dispatching each item concurrently up to ForEach.Concurrency goroutines.
+// Returns {"results": [...]} with each item's output in order.
+func (r *Runner) executeFanout(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, runID string) (map[string]interface{}, types.StepMetrics, error) {
+	if r.dispatcher == nil {
+		return map[string]interface{}{"results": []interface{}{}}, types.StepMetrics{}, nil
+	}
+
+	spec := step.ForEach
+
+	// Build JMESPath search context from accumulated step outputs.
+	searchCtx := make(map[string]interface{})
+	for k, v := range stepOutputs {
+		searchCtx[k] = v
+	}
+
+	raw, err := jmespath.Search(spec.From, searchCtx)
+	if err != nil {
+		return nil, types.StepMetrics{}, fmt.Errorf("for_each from %q: %w", spec.From, err)
+	}
+	items, ok := raw.([]interface{})
+	if !ok {
+		return nil, types.StepMetrics{}, fmt.Errorf("for_each from %q: expected array, got %T", spec.From, raw)
+	}
+
+	if spec.MaxItems > 0 && len(items) > spec.MaxItems {
+		items = items[:spec.MaxItems]
+	}
+
+	if len(items) == 0 {
+		return map[string]interface{}{"results": []interface{}{}}, types.StepMetrics{}, nil
+	}
+
+	concurrency := spec.Concurrency
+	if concurrency <= 0 || concurrency > len(items) {
+		concurrency = len(items)
+	}
+
+	type fanoutResult struct {
+		output  map[string]interface{}
+		metrics types.StepMetrics
+		err     error
+	}
+
+	results := make([]fanoutResult, len(items))
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	for i, item := range items {
+		wg.Add(1)
+		go func(idx int, itm interface{}) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			itemInput := make(map[string]interface{})
+			for k, v := range stepOutputs {
+				itemInput[k] = v
+			}
+			itemInput["item"] = itm
+			itemInput["item_index"] = idx
+
+			subStepID := fmt.Sprintf("%s.%d", step.ID, idx)
+			out, m, dispErr := r.dispatcher.Dispatch(ctx, runID, subStepID, step, itemInput)
+			results[idx] = fanoutResult{output: out, metrics: m, err: dispErr}
+		}(i, item)
+	}
+
+	wg.Wait()
+
+	outputs := make([]interface{}, len(items))
+	var totals types.StepMetrics
+	for i, res := range results {
+		if res.err != nil {
+			return nil, types.StepMetrics{}, fmt.Errorf("fanout item %d: %w", i, res.err)
+		}
+		outputs[i] = res.output
+		totals.TokensIn += res.metrics.TokensIn
+		totals.TokensOut += res.metrics.TokensOut
+		totals.CostUSD += res.metrics.CostUSD
+		totals.LLMCalls += res.metrics.LLMCalls
+		totals.ToolCalls += res.metrics.ToolCalls
+	}
+
+	return map[string]interface{}{"results": outputs}, totals, nil
 }
 
 // executeWebhook executes a webhook step: evaluates the condition, builds the body

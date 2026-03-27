@@ -50,4 +50,5 @@ type Step struct {
 	EndedAt   *time.Time             `json:"ended_at,omitempty"`
 	Error     string                 `json:"error,omitempty"`
 	Output    map[string]interface{} `json:"output,omitempty"`
+	Metrics   StepMetrics            `json:"metrics,omitempty"`
 }

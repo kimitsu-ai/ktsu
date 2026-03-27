@@ -273,7 +273,7 @@ func TestRuntimeDispatcher_Dispatch_returns202AndDelivery(t *testing.T) {
 	resultCh := make(chan map[string]any, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		out, err := d.Dispatch(context.Background(), "run-8", "step-8", nil, map[string]any{"input": "data"})
+		out, _, err := d.Dispatch(context.Background(), "run-8", "step-8", nil, map[string]any{"input": "data"})
 		resultCh <- out
 		errCh <- err
 	}()
@@ -330,7 +330,7 @@ func TestRuntimeDispatcher_Dispatch_agentFailure(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := d.Dispatch(context.Background(), "run-9", "step-9", nil, nil)
+		_, _, err := d.Dispatch(context.Background(), "run-9", "step-9", nil, nil)
 		errCh <- err
 	}()
 
@@ -423,7 +423,7 @@ func TestRuntimeDispatcher_Dispatch_runtimeNon202(t *testing.T) {
 		pendingCallbacks: pendingCallbacks,
 	}
 
-	_, err := d.Dispatch(context.Background(), "run-10", "step-10", nil, nil)
+	_, _, err := d.Dispatch(context.Background(), "run-10", "step-10", nil, nil)
 	if err == nil {
 		t.Fatal("want error for non-202, got nil")
 	}
@@ -458,7 +458,7 @@ func TestRuntimeDispatcher_Dispatch_missingOutputSchema(t *testing.T) {
 	}
 
 	step := &config.PipelineStep{ID: "fetch", Agent: "no-schema.agent.yaml"}
-	_, err := d.Dispatch(context.Background(), "run-schema", "fetch", step, nil)
+	_, _, err := d.Dispatch(context.Background(), "run-schema", "fetch", step, nil)
 	if err == nil {
 		t.Fatal("expected error for agent missing output schema, got nil")
 	}
@@ -491,7 +491,7 @@ func TestRuntimeDispatcher_Dispatch_contextCancellation(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := d.Dispatch(ctx, "run-11", "step-11", nil, nil)
+		_, _, err := d.Dispatch(ctx, "run-11", "step-11", nil, nil)
 		errCh <- err
 	}()
 

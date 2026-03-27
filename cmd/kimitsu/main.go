@@ -103,7 +103,7 @@ func startCmd() *cobra.Command {
 }
 
 func startOrchestratorCmd() *cobra.Command {
-	var envPath, workflowDir, host string
+	var envPath, workflowDir, host, runtimeURL, ownURL, projectDir string
 	var port int
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
@@ -123,6 +123,9 @@ func startOrchestratorCmd() *cobra.Command {
 				WorkflowDir: workflowDir,
 				Host:        host,
 				Port:        port,
+				RuntimeURL:  runtimeURL,
+				OwnURL:      ownURL,
+				ProjectDir:  projectDir,
 			})
 			log.Printf("starting %s", o)
 			return o.Start(signalCtx())
@@ -132,6 +135,15 @@ func startOrchestratorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "./workflows", "path to workflow directory")
 	cmd.Flags().StringVar(&host, "host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "host interface to bind (env: KTSU_ORCHESTRATOR_HOST)")
 	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_ORCHESTRATOR_PORT", 8080), "port to listen on (env: KTSU_ORCHESTRATOR_PORT)")
+	cmd.Flags().StringVar(&runtimeURL, "runtime-url",
+		envOr("KTSU_RUNTIME_URL", ""),
+		"agent runtime URL (env: KTSU_RUNTIME_URL)")
+	cmd.Flags().StringVar(&ownURL, "own-url",
+		envOr("KTSU_OWN_URL", ""),
+		"orchestrator's own URL for callbacks (env: KTSU_OWN_URL)")
+	cmd.Flags().StringVar(&projectDir, "project-dir",
+		envOr("KTSU_PROJECT_DIR", "."),
+		"project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
 	return cmd
 }
 

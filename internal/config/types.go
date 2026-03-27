@@ -23,6 +23,7 @@ type PipelineStep struct {
 	Agent               string                 `yaml:"agent,omitempty"`
 	Transform           *TransformSpec         `yaml:"transform,omitempty"`
 	Webhook             *WebhookSpec           `yaml:"webhook,omitempty"`
+	ForEach             *ForEachSpec           `yaml:"for_each,omitempty"`
 	DependsOn           []string               `yaml:"depends_on,omitempty"`
 	Condition           string                 `yaml:"condition,omitempty"`
 	ConfidenceThreshold float64                `yaml:"confidence_threshold,omitempty"`
@@ -30,6 +31,14 @@ type PipelineStep struct {
 	Model               *ModelSpec             `yaml:"model,omitempty"`
 	Consolidation       string                 `yaml:"consolidation,omitempty"`
 	Output              *OutputSpec            `yaml:"output,omitempty"`
+}
+
+// ForEachSpec configures fanout iteration for an agent step.
+// The agent is invoked once per item in the array resolved from From.
+type ForEachSpec struct {
+	From        string `yaml:"from"`
+	MaxItems    int    `yaml:"max_items,omitempty"`
+	Concurrency int    `yaml:"concurrency,omitempty"`
 }
 
 // WebhookSpec declares an HTTP webhook call made by the orchestrator when this step runs.

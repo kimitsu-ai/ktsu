@@ -45,5 +45,6 @@ type Metrics struct {
 	TokensOut     int     `json:"tokens_out"`
 	CostUSD       float64 `json:"cost_usd"`
 	DurationMS    int64   `json:"duration_ms"`
+	LLMCalls      int     `json:"llm_calls"`
 	ToolCalls     int     `json:"tool_calls"`
 }

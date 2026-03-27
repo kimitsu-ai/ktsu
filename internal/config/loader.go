@@ -56,6 +56,18 @@ func LoadGateway(path string) (*GatewayConfig, error) {
 	return &cfg, nil
 }
 
+func LoadToolServer(path string) (*ToolServerConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read tool server: %w", err)
+	}
+	var cfg ToolServerConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse tool server: %w", err)
+	}
+	return &cfg, nil
+}
+
 func LoadServerManifest(path string) (*ServerManifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

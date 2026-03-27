@@ -21,6 +21,7 @@ import (
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/runner"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
 	"github.com/kimitsu-ai/ktsu/internal/runtime/agent"
+	"github.com/kimitsu-ai/ktsu/pkg/types"
 )
 
 // defaultProjectDir returns "." when projectDir is empty.
@@ -96,6 +97,11 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	wf, err := config.LoadWorkflow(wfPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("workflow not found: %s", workflow), http.StatusNotFound)
+		return
+	}
+
+	if err := airlock.ValidateInput(input, wf.Input.Schema); err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -230,7 +236,7 @@ type runtimeDispatcher struct {
 	pendingCallbacks map[stepCallbackKey]chan agent.CallbackPayload
 }
 
-func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, step *config.PipelineStep, input map[string]interface{}) (map[string]interface{}, error) {
+func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, step *config.PipelineStep, input map[string]interface{}) (map[string]interface{}, types.StepMetrics, error) {
 	callbackURL := d.ownURL + "/runs/" + runID + "/steps/" + stepID + "/complete"
 
 	// Register a channel before sending to avoid a race with a fast callback.
@@ -256,11 +262,12 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		outputSchema map[string]any
 	)
 
+	var zero types.StepMetrics
 	if step != nil && step.Agent != "" {
 		agentPath := filepath.Join(d.projectDir, config.StripVersion(step.Agent))
 		agentCfg, err := config.LoadAgent(agentPath)
 		if err != nil {
-			return nil, fmt.Errorf("load agent %s: %w", step.Agent, err)
+			return nil, zero, fmt.Errorf("load agent %s: %w", step.Agent, err)
 		}
 		agentName = agentCfg.Name
 		system = agentCfg.System
@@ -269,14 +276,14 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			maxTurns = agentCfg.MaxTurns
 		}
 		if agentCfg.Output == nil || len(agentCfg.Output.Schema) == 0 {
-			return nil, fmt.Errorf("agent %s has no output schema defined", agentCfg.Name)
+			return nil, zero, fmt.Errorf("agent %s has no output schema defined", agentCfg.Name)
 		}
 		outputSchema = agentCfg.Output.Schema
 		for _, srv := range agentCfg.Servers {
 			serverPath := filepath.Join(d.projectDir, srv.Path)
 			serverCfg, err := config.LoadToolServer(serverPath)
 			if err != nil {
-				return nil, fmt.Errorf("load server %s: %w", srv.Path, err)
+				return nil, zero, fmt.Errorf("load server %s: %w", srv.Path, err)
 			}
 			authToken := serverCfg.Auth
 			if strings.HasPrefix(authToken, "env:") {
@@ -315,33 +322,42 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("marshal invoke request: %w", err)
+		return nil, zero, fmt.Errorf("marshal invoke request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, d.runtimeURL+"/invoke", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("create runtime request: %w", err)
+		return nil, zero, fmt.Errorf("create runtime request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("dispatch to runtime: %w", err)
+		return nil, zero, fmt.Errorf("dispatch to runtime: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusAccepted {
-		return nil, fmt.Errorf("runtime returned %d", resp.StatusCode)
+		return nil, zero, fmt.Errorf("runtime returned %d", resp.StatusCode)
 	}
 
 	// Wait for the callback.
 	select {
 	case payload := <-ch:
 		if payload.Status == "failed" {
-			return nil, fmt.Errorf("agent step failed: %s", payload.Error)
+			return nil, zero, fmt.Errorf("agent step failed: %s", payload.Error)
 		}
-		return payload.Output, nil
+		m := payload.Metrics
+		metrics := types.StepMetrics{
+			DurationMS: m.DurationMS,
+			TokensIn:   m.TokensIn,
+			TokensOut:  m.TokensOut,
+			CostUSD:    m.CostUSD,
+			LLMCalls:   m.LLMCalls,
+			ToolCalls:  m.ToolCalls,
+		}
+		return payload.Output, metrics, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, zero, ctx.Err()
 	}
 }

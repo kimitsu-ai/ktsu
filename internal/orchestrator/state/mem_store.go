@@ -52,6 +52,7 @@ func copyStep(s *types.Step) *types.Step {
 			cp.Output[k] = v
 		}
 	}
+	cp.Metrics = s.Metrics
 	return &cp
 }
 
@@ -189,9 +190,9 @@ func (m *MemStore) GetEnvelope(_ context.Context, runID string) (*types.Envelope
 			output = make(map[string]interface{})
 		}
 
-		var durationMS int64
+		metrics := step.Metrics
 		if step.StartedAt != nil && step.EndedAt != nil {
-			durationMS = step.EndedAt.Sub(*step.StartedAt).Milliseconds()
+			metrics.DurationMS = step.EndedAt.Sub(*step.StartedAt).Milliseconds()
 		}
 
 		var ts time.Time
@@ -201,9 +202,16 @@ func (m *MemStore) GetEnvelope(_ context.Context, runID string) (*types.Envelope
 
 		env.Steps[step.ID] = types.StepOutput{
 			Output:    output,
-			Metrics:   types.StepMetrics{DurationMS: durationMS},
+			Metrics:   metrics,
 			Timestamp: ts,
 		}
+
+		env.Totals.DurationMS += metrics.DurationMS
+		env.Totals.TokensIn += metrics.TokensIn
+		env.Totals.TokensOut += metrics.TokensOut
+		env.Totals.CostUSD += metrics.CostUSD
+		env.Totals.LLMCalls += metrics.LLMCalls
+		env.Totals.ToolCalls += metrics.ToolCalls
 	}
 
 	return env, nil
