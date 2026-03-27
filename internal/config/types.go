@@ -39,6 +39,7 @@ type ForEachSpec struct {
 	From        string `yaml:"from"`
 	MaxItems    int    `yaml:"max_items,omitempty"`
 	Concurrency int    `yaml:"concurrency,omitempty"`
+	MaxFailures int    `yaml:"max_failures,omitempty"` // 0=fail-fast (default), -1=unlimited, N=tolerate up to N
 }
 
 // WebhookSpec declares an HTTP webhook call made by the orchestrator when this step runs.
@@ -144,10 +145,8 @@ type ServerManifest struct {
 
 // ToolServerConfig represents a tool server definition
 type ToolServerConfig struct {
-	Name        string            `yaml:"name"`
-	Description string            `yaml:"description"`
-	URL         string            `yaml:"url"`
-	Auth        string            `yaml:"auth,omitempty"` // bearer token or "env:VAR_NAME"
-	Image       string            `yaml:"image"`
-	Env         map[string]string `yaml:"env"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	URL         string `yaml:"url"`
+	Auth        string `yaml:"auth,omitempty"` // bearer token or "env:VAR_NAME"
 }
