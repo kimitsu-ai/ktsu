@@ -12,12 +12,14 @@ lint:
 run-orchestrator:
 	go run ./cmd/kimitsu start orchestrator
 
+COMPOSE_ENV := $(if $(wildcard .env),--env-file .env,)
+
 docker-up:
-	docker compose -f deploy/docker-compose.yaml up --build
+	docker compose -f deploy/docker-compose.yaml $(COMPOSE_ENV) up --build
 
 docker-up-local:
-	docker compose -f deploy/docker-compose.local.yaml up --build
+	docker compose -f deploy/docker-compose.local.yaml $(COMPOSE_ENV) up --build
 
 docker-down:
-	docker compose -f deploy/docker-compose.yaml down
-	docker compose -f deploy/docker-compose.local.yaml down
+	docker compose -f deploy/docker-compose.yaml $(COMPOSE_ENV) down
+	docker compose -f deploy/docker-compose.local.yaml $(COMPOSE_ENV) down

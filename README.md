@@ -14,12 +14,28 @@ echo 'ANTHROPIC_API_KEY=sk-ant-...' >> .env
 make docker-up
 ```
 
-This launches the gateway, orchestrator, and runtime with the `examples/hello/` project mounted. Once healthy, invoke the workflow:
+This launches the gateway, orchestrator, and runtime with the `examples/hello/` project mounted. Verify all services are healthy:
+
+```sh
+# Check each service (should return {"status":"ok"})
+curl -s http://localhost:8081/health   # gateway
+curl -s http://localhost:8080/health   # orchestrator
+curl -s http://localhost:8082/health   # runtime
+```
+
+Once healthy, invoke the workflow:
 
 ```sh
 curl -s -X POST http://localhost:${KTSU_PORT:-8080}/invoke/hello \
   -H 'Content-Type: application/json' \
   -d '{"name": "World"}'
+# => {"run_id":"run_a1b2c3...","status":"accepted"}
+```
+
+The invoke endpoint returns immediately with a `run_id`. Poll the run to check progress:
+
+```sh
+curl -s http://localhost:${KTSU_PORT:-8080}/runs/<run_id>
 ```
 
 The host port is configurable via `KTSU_PORT` in `.env` (default: `8080`).
