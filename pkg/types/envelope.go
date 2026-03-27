@@ -6,14 +6,24 @@ import "time"
 type Envelope struct {
 	RunID    string                `json:"run_id"`
 	Workflow string                `json:"workflow"`
-	Steps    map[string]StepOutput `json:"steps"`
+	Status   string                `json:"status,omitempty"`
+	Error    string                `json:"error,omitempty"`
+	Steps    []StepEntry `json:"steps"`
 	Totals   RunTotals             `json:"totals"`
+}
+
+// StepEntry is a single step result with its ID, preserving pipeline order.
+type StepEntry struct {
+	ID string `json:"id"`
+	StepOutput
 }
 
 type StepOutput struct {
 	Output    map[string]interface{} `json:"output"`
 	Metrics   StepMetrics            `json:"metrics"`
 	Timestamp time.Time              `json:"timestamp"`
+	Status    string                 `json:"status,omitempty"`
+	Error     string                 `json:"error,omitempty"`
 }
 
 // InletContext is the input provided to the inlet step

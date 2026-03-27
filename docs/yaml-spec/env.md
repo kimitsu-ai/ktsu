@@ -7,11 +7,15 @@
 ## Annotated Example
 
 ```yaml
-kind: env
 name: dev                        # environment name — dev | staging | production | etc.
 variables:                       # key-value pairs injected as environment variables
   OUTPUT_WEBHOOK_URL: http://localhost:9999/receive
   SOME_API_KEY: "env:REAL_KEY_FROM_SHELL"  # can reference the shell environment
+providers:
+  - name: anthropic
+    type: anthropic              # anthropic | openai | openai-compat
+    config:
+      api_key_env: ANTHROPIC_API_KEY
 state:
   driver: sqlite                 # sqlite | postgres
   dsn: /tmp/myproject/kimitsu.db # SQLite: file path | Postgres: connection string or env:VAR
@@ -21,9 +25,12 @@ state:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `kind` | string | yes | Must be `env` |
 | `name` | string | yes | Environment name (e.g. `dev`, `staging`, `production`) |
 | `variables` | object | no | Key-value pairs injected as environment variables at startup |
+| `providers` | array | no | LLM provider credentials for this environment |
+| `providers[].name` | string | yes | Logical name — matches provider names in `gateway.yaml` |
+| `providers[].type` | string | yes | `anthropic` \| `openai` \| `openai-compat` |
+| `providers[].config` | object | yes | Provider-specific config (e.g. `api_key_env`) |
 | `state.driver` | string | yes | `sqlite` \| `postgres` |
 | `state.dsn` | string | yes | SQLite: file path; Postgres: connection string or `env:VAR` |
 

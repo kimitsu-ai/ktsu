@@ -158,8 +158,9 @@ func (m *MemStore) ListSteps(_ context.Context, runID string) ([]*types.Step, er
 	return out, nil
 }
 
-// GetEnvelope builds a *types.Envelope on-the-fly from all completed or skipped
-// steps for the given run. Returns an error if the run does not exist.
+// GetEnvelope builds a *types.Envelope on-the-fly from all finished steps
+// (completed, skipped, or failed) for the given run. Returns an error if the
+// run does not exist.
 func (m *MemStore) GetEnvelope(_ context.Context, runID string) (*types.Envelope, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -172,11 +173,13 @@ func (m *MemStore) GetEnvelope(_ context.Context, runID string) (*types.Envelope
 	env := &types.Envelope{
 		RunID:    runID,
 		Workflow: run.WorkflowName,
-		Steps:    make(map[string]types.StepOutput),
+		Status:   string(run.Status),
+		Error:    run.Error,
+		Steps:    nil,
 	}
 
 	for _, step := range m.steps[runID] {
-		if step.Status != types.StepStatusComplete && step.Status != types.StepStatusSkipped {
+		if step.Status == types.StepStatusRunning || step.Status == types.StepStatusPending {
 			continue
 		}
 
@@ -200,11 +203,16 @@ func (m *MemStore) GetEnvelope(_ context.Context, runID string) (*types.Envelope
 			ts = *step.EndedAt
 		}
 
-		env.Steps[step.ID] = types.StepOutput{
-			Output:    output,
-			Metrics:   metrics,
-			Timestamp: ts,
-		}
+		env.Steps = append(env.Steps, types.StepEntry{
+			ID: step.ID,
+			StepOutput: types.StepOutput{
+				Output:    output,
+				Metrics:   metrics,
+				Timestamp: ts,
+				Status:    string(step.Status),
+				Error:     step.Error,
+			},
+		})
 
 		env.Totals.DurationMS += metrics.DurationMS
 		env.Totals.TokensIn += metrics.TokensIn

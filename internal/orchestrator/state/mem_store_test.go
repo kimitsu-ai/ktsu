@@ -309,12 +309,22 @@ func TestMemStore_GetEnvelope_buildsFromSteps(t *testing.T) {
 		t.Errorf("env.Workflow = %q, want %q", env.Workflow, "test-workflow")
 	}
 
-	if _, ok := env.Steps["step-pending"]; ok {
+	// Helper to find a step entry by ID.
+	findStep := func(id string) *types.StepEntry {
+		for i := range env.Steps {
+			if env.Steps[i].ID == id {
+				return &env.Steps[i]
+			}
+		}
+		return nil
+	}
+
+	if s := findStep("step-pending"); s != nil {
 		t.Error("envelope should not include pending step")
 	}
 
-	so, ok := env.Steps["step-complete"]
-	if !ok {
+	so := findStep("step-complete")
+	if so == nil {
 		t.Fatal("envelope missing complete step")
 	}
 	if so.Output["key"] != "value" {

@@ -30,12 +30,13 @@ type ToolServerSpec struct {
 
 // CallbackPayload is the result POSTed to callback_url when the loop finishes.
 type CallbackPayload struct {
-	RunID   string         `json:"run_id"`
-	StepID  string         `json:"step_id"`
-	Status  string         `json:"status"` // "ok" | "failed"
-	Output  map[string]any `json:"output"`
-	Error   string         `json:"error"`
-	Metrics Metrics        `json:"metrics"`
+	RunID     string         `json:"run_id"`
+	StepID    string         `json:"step_id"`
+	Status    string         `json:"status"` // "ok" | "failed"
+	Output    map[string]any `json:"output"`
+	Error     string         `json:"error"`
+	RawOutput string         `json:"raw_output,omitempty"` // last LLM content when output validation failed
+	Metrics   Metrics        `json:"metrics"`
 }
 
 // Metrics holds accumulated execution statistics for a completed invocation.

@@ -14,6 +14,7 @@ import (
 )
 
 const forcedConclusionMessage = "You have reached the maximum number of tool calls. Provide your final answer now without requesting any additional tools."
+const jsonCorrectionMessage = "Your response was not valid JSON. Please respond with only a valid JSON object and nothing else."
 
 // gatewayRequest is the JSON body sent to POST {gateway}/invoke.
 type gatewayRequest struct {
@@ -87,13 +88,14 @@ func (l *Loop) Run(ctx context.Context, req InvokeRequest) CallbackPayload {
 		StepID: req.StepID,
 	}
 
-	output, metrics, err := l.run(ctx, req)
+	output, rawOutput, metrics, err := l.run(ctx, req)
 	metrics.DurationMS = time.Since(start).Milliseconds()
 	payload.Metrics = metrics
 
 	if err != nil {
 		payload.Status = "failed"
 		payload.Error = err.Error()
+		payload.RawOutput = rawOutput
 	} else {
 		payload.Status = "ok"
 		payload.Output = output
@@ -101,7 +103,7 @@ func (l *Loop) Run(ctx context.Context, req InvokeRequest) CallbackPayload {
 	return payload
 }
 
-func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metrics, error) {
+func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, string, Metrics, error) {
 	var metrics Metrics
 
 	// --- Tool discovery ---
@@ -116,7 +118,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 	for _, srv := range req.ToolServers {
 		discovered, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.AuthToken, srv.Allowlist)
 		if err != nil {
-			return nil, metrics, fmt.Errorf("discover tools from %s: %w", srv.Name, err)
+			return nil, "", metrics, fmt.Errorf("discover tools from %s: %w", srv.Name, err)
 		}
 		for _, t := range discovered {
 			toolByName[t.Name] = serverRef{url: srv.URL, authToken: srv.AuthToken}
@@ -131,7 +133,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 	// --- Initial messages ---
 	inputJSON, err := json.Marshal(req.Input)
 	if err != nil {
-		return nil, metrics, fmt.Errorf("marshal input: %w", err)
+		return nil, "", metrics, fmt.Errorf("marshal input: %w", err)
 	}
 	systemPrompt := req.System
 	if len(req.OutputSchema) > 0 {
@@ -150,15 +152,20 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 		maxTurns = 10 // sensible default
 	}
 
+	var lastInvalidContent string
+
 	// --- Turn loop ---
 	for turn := 1; turn <= maxTurns; turn++ {
+		// On the last turn, drop tools so the LLM must produce a text response.
+		turnTools := tools
 		if turn == maxTurns {
 			messages = append(messages, Message{Role: "user", Content: forcedConclusionMessage})
+			turnTools = nil
 		}
 
-		gwResp, err := l.callGateway(ctx, req, messages, tools)
+		gwResp, err := l.callGateway(ctx, req, messages, turnTools)
 		if err != nil {
-			return nil, metrics, err
+			return nil, "", metrics, err
 		}
 
 		metrics.LLMCalls++
@@ -173,13 +180,13 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 			for _, tc := range gwResp.ToolCalls {
 				sref, ok := toolByName[tc.Name]
 				if !ok {
-					return nil, metrics, fmt.Errorf("tool_not_permitted: %s", tc.Name)
+					return nil, "", metrics, fmt.Errorf("tool_not_permitted: %s", tc.Name)
 				}
 				argsJSON, _ := json.Marshal(tc.Arguments)
 				log.Printf("[agent] run=%s step=%s tool=%s args=%s", req.RunID, req.StepID, tc.Name, argsJSON)
 				result, err := l.mcpClient.CallTool(ctx, sref.url, sref.authToken, tc.Name, tc.Arguments)
 				if err != nil {
-					return nil, metrics, fmt.Errorf("tool call %s: %w", tc.Name, err)
+					return nil, "", metrics, fmt.Errorf("tool call %s: %w", tc.Name, err)
 				}
 				metrics.ToolCalls++
 
@@ -210,12 +217,35 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, Metr
 		// No tool calls — parse content as final JSON output.
 		output, err := parseOutput(gwResp.Content)
 		if err != nil {
-			return nil, metrics, fmt.Errorf("parse output: %w", err)
+			// LLM returned non-JSON; ask it to correct its output and retry.
+			lastInvalidContent = gwResp.Content
+			messages = append(messages, Message{Role: "assistant", Content: gwResp.Content})
+			messages = append(messages, Message{Role: "user", Content: jsonCorrectionMessage})
+			continue
 		}
-		return output, metrics, nil
+		return output, "", metrics, nil
 	}
 
-	return nil, metrics, fmt.Errorf("max_turns_exceeded")
+	// Free JSON correction: if the loop exhausted all turns but the last
+	// response was invalid JSON, give the LLM one more toolless chance to
+	// fix its formatting. This avoids a common footgun where tool-using
+	// agents spend all turns on tools and then fail on a trivial parse error.
+	if lastInvalidContent != "" {
+		gwResp, err := l.callGateway(ctx, req, messages, nil)
+		if err != nil {
+			return nil, lastInvalidContent, metrics, fmt.Errorf("max_turns_exceeded")
+		}
+		metrics.LLMCalls++
+		metrics.TokensIn += gwResp.TokensIn
+		metrics.TokensOut += gwResp.TokensOut
+		metrics.CostUSD += gwResp.CostUSD
+
+		if output, err := parseOutput(gwResp.Content); err == nil {
+			return output, "", metrics, nil
+		}
+	}
+
+	return nil, lastInvalidContent, metrics, fmt.Errorf("max_turns_exceeded")
 }
 
 // callGateway POSTs to the gateway /invoke and returns the parsed response.

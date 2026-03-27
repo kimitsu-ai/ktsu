@@ -7,26 +7,20 @@
 ## Annotated Example
 
 ```yaml
-kind: tool-server
 name: wiki-search                # identity — used in logs and error messages
 description: "..."               # optional
 url: "https://mcp.internal/wiki" # base URL of the MCP server
 auth: "env:WIKI_TOKEN"           # bearer token or env:VAR_NAME; omit if no auth required
-stateful: false                  # true if server causes external side effects (write, mutate, send)
-egress: false                    # true if server makes outbound calls to external services
 ```
 
 ## Fields
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `kind` | string | yes | Must be `tool-server` |
 | `name` | string | yes | Identity — used in logs and error messages |
 | `description` | string | no | Human-readable |
 | `url` | string | yes | Base URL of the MCP server |
 | `auth` | string | no | Bearer token or `env:VAR_NAME`; omit if no auth required |
-| `stateful` | boolean | no | `true` if the server causes external side effects; default: `false` |
-| `egress` | boolean | no | `true` if the server makes outbound calls to external services; default: `false` |
 
 ## Built-in Tool Servers
 
@@ -54,5 +48,4 @@ Declared in agent files as `ktsu/<name>@<version>` — no `.server.yaml` file re
 ## Notes
 
 - Local server files are referenced in agent files by path: `path: servers/wiki-search.server.yaml`
-- Marketplace servers are declared in `servers.yaml` and referenced in agent files by name only
-- `stateful` and `egress` are trust signals for operators and marketplace review — not enforced at the network layer
+- Additional servers can be declared in `servers.yaml` and referenced in agent files by name only

@@ -100,26 +100,79 @@ func TestLoop_gatewayError(t *testing.T) {
 	}
 }
 
-func TestLoop_invalidJSONOutput(t *testing.T) {
-	gw := fakeGateway(t, []map[string]any{
-		{
-			"content":        "This is plain text, not JSON.",
+func TestLoop_invalidJSONOutputExhausesTurns(t *testing.T) {
+	// Gateway always returns plain text; loop should exhaust max turns.
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"content":        "I cannot produce JSON right now.",
 			"model_resolved": "anthropic/claude-sonnet-4-6",
 			"tokens_in":      50,
 			"tokens_out":     10,
 			"cost_usd":       0.0001,
-		},
-	})
+		})
+	}))
+	defer gw.Close()
+
+	req := baseReq()
+	req.MaxTurns = 3
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "failed" {
+		t.Fatalf("expected status failed, got %s", payload.Status)
+	}
+	if !strings.Contains(payload.Error, "max_turns_exceeded") {
+		t.Errorf("expected max_turns_exceeded error, got: %s", payload.Error)
+	}
+	if !strings.Contains(payload.RawOutput, "I cannot produce JSON") {
+		t.Errorf("expected raw_output to contain last invalid LLM response, got: %s", payload.RawOutput)
+	}
+}
+
+func TestLoop_jsonRetrySucceeds(t *testing.T) {
+	// First response is plain text; second response is valid JSON.
+	var capturedBodies []map[string]any
+	idx := 0
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		capturedBodies = append(capturedBodies, body)
+
+		w.Header().Set("Content-Type", "application/json")
+		content := "I found the answer is 42."
+		if idx > 0 {
+			content = `{"answer":42}`
+		}
+		idx++
+		json.NewEncoder(w).Encode(map[string]any{
+			"content":        content,
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      50,
+			"tokens_out":     10,
+			"cost_usd":       0.0001,
+		})
+	}))
 	defer gw.Close()
 
 	loop := agent.NewLoop(gw.URL, mcpClient())
 	payload := loop.Run(context.Background(), baseReq())
 
-	if payload.Status != "failed" {
-		t.Fatalf("expected status failed, got %s", payload.Status)
+	if payload.Status != "ok" {
+		t.Fatalf("expected ok after retry, got %s: %s", payload.Status, payload.Error)
 	}
-	if !strings.Contains(payload.Error, "not valid JSON") {
-		t.Errorf("expected JSON parse error, got: %s", payload.Error)
+	if payload.Output["answer"] != float64(42) {
+		t.Errorf("unexpected output: %v", payload.Output)
+	}
+	if len(capturedBodies) != 2 {
+		t.Errorf("expected 2 gateway calls, got %d", len(capturedBodies))
+	}
+	// Second call should include the correction message asking for valid JSON.
+	msgs, _ := capturedBodies[1]["messages"].([]any)
+	lastMsg, _ := msgs[len(msgs)-1].(map[string]any)
+	if !strings.Contains(lastMsg["content"].(string), "not valid JSON") {
+		t.Errorf("expected correction message in retry, got: %v", lastMsg["content"])
 	}
 }
 
@@ -159,6 +212,12 @@ func TestLoop_forcedConclusionMessage(t *testing.T) {
 	lastMsg, _ := msgs[len(msgs)-1].(map[string]any)
 	if !strings.Contains(lastMsg["content"].(string), "maximum number of tool calls") {
 		t.Errorf("expected forced-conclusion message, got: %v", lastMsg["content"])
+	}
+
+	// Tools must be omitted on the forced-conclusion turn so the LLM cannot make tool calls.
+	tools, _ := capturedBodies[0]["tools"].([]any)
+	if len(tools) != 0 {
+		t.Errorf("expected no tools on forced-conclusion turn, got %d", len(tools))
 	}
 }
 
@@ -332,6 +391,73 @@ func TestLoop_maxTurnsExceeded(t *testing.T) {
 	}
 	if !strings.Contains(payload.Error, "max_turns_exceeded") {
 		t.Errorf("expected max_turns_exceeded error, got: %s", payload.Error)
+	}
+}
+
+func TestLoop_freeJSONCorrectionAfterMaxTurns(t *testing.T) {
+	// Agent uses all turns on tool calls, then the forced-conclusion turn
+	// produces invalid JSON. The free correction turn should rescue it.
+	mcpSrv := fakeMCPServer(t, "kv-get", `"val"`)
+	defer mcpSrv.Close()
+
+	callCount := 0
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		switch callCount {
+		case 1: // Turn 1: tool call
+			json.NewEncoder(w).Encode(map[string]any{
+				"content":        "",
+				"model_resolved": "anthropic/claude-sonnet-4-6",
+				"tokens_in":      100,
+				"tokens_out":     20,
+				"cost_usd":       0.001,
+				"tool_calls": []map[string]any{
+					{"id": "tc1", "name": "kv-get", "arguments": map[string]any{"key": "x"}},
+				},
+			})
+		case 2: // Turn 2 (max_turns): forced conclusion, but bad JSON
+			json.NewEncoder(w).Encode(map[string]any{
+				"content":        "Here is the result: {\"status\":\"ok\"}",
+				"model_resolved": "anthropic/claude-sonnet-4-6",
+				"tokens_in":      50,
+				"tokens_out":     10,
+				"cost_usd":       0.0005,
+			})
+		case 3: // Free correction turn: valid JSON
+			json.NewEncoder(w).Encode(map[string]any{
+				"content":        `{"status":"ok"}`,
+				"model_resolved": "anthropic/claude-sonnet-4-6",
+				"tokens_in":      30,
+				"tokens_out":     8,
+				"cost_usd":       0.0003,
+			})
+		default:
+			t.Errorf("unexpected gateway call %d", callCount)
+		}
+	}))
+	defer gw.Close()
+
+	req := baseReq()
+	req.MaxTurns = 2
+	req.ToolServers = []agent.ToolServerSpec{
+		{Name: "kv", URL: mcpSrv.URL, Allowlist: []string{"kv-get"}},
+	}
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "ok" {
+		t.Fatalf("expected ok after free correction, got %s: %s", payload.Status, payload.Error)
+	}
+	if payload.Output["status"] != "ok" {
+		t.Errorf("unexpected output: %v", payload.Output)
+	}
+	if callCount != 3 {
+		t.Errorf("expected 3 gateway calls (tool turn + forced conclusion + free correction), got %d", callCount)
+	}
+	if payload.Metrics.LLMCalls != 3 {
+		t.Errorf("expected 3 LLM calls, got %d", payload.Metrics.LLMCalls)
 	}
 }
 

@@ -49,6 +49,7 @@ pipeline:
       from: triage.tickets       # JMESPath against accumulated step outputs — must resolve to an array
       max_items: 20              # optional — truncates array before fanout
       concurrency: 4             # optional — max parallel invocations (default: unbounded)
+      max_failures: -1           # optional — 0=fail-fast (default), N=tolerate N, -1=unlimited
     # Each invocation receives the full step envelope plus two extra keys:
     #   item        — the current array element
     #   item_index  — zero-based integer index

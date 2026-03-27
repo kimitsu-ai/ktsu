@@ -13,9 +13,9 @@ description: "..."               # optional
 model: standard                  # model group name from gateway.yaml
 max_turns: 10                    # max reasoning turns before forced conclusion; default: 10
 system: |
-  You are a triage agent. The full pipeline envelope is provided as JSON input.
-  Reference upstream step outputs as inputs.<step-id>.<field>.
-  Workflow input fields are under inputs.input.<field>.
+  You are a triage agent. The full pipeline envelope is provided as JSON in the first user message.
+  Reference upstream step outputs as <step-id>.<field> (e.g. parse.intent).
+  Workflow input fields are under input.<field> (e.g. input.message).
 
 servers:                         # omit entirely for a toolless agent
   - name: wiki-search            # logical name — used in logs
@@ -25,11 +25,9 @@ servers:                         # omit entirely for a toolless agent
         - wiki-search            # exact tool name
         - crm-read-*             # prefix wildcard — any tool starting with "crm-read-"
         - "*"                    # all tools this server exposes
-      allowlist_env: KTSU_WIKI_ALLOWLIST  # optional — env var (comma-separated) overrides allowlist if set
 
-agents:                          # sub-agents this agent may invoke (optional)
-  - name: summarizer             # logical name
-    path: agents/summarizer.agent.yaml  # relative to project root
+sub_agents:                      # sub-agents this agent may invoke (optional)
+  - agents/summarizer.agent.yaml # path relative to project root
 
 output:
   schema:                        # JSON Schema — Air-Lock validated before downstream steps read it
@@ -51,15 +49,12 @@ output:
 | `description` | string | no | Human-readable description |
 | `model` | string | yes | Model group name from `gateway.yaml` |
 | `max_turns` | number | no | Max reasoning turns before forced conclusion; default: 10 |
-| `system` | string | yes | System prompt; reference upstream outputs as `inputs.<step-id>.<field>` |
+| `system` | string | yes | System prompt; reference upstream outputs as `<step-id>.<field>` and workflow input as `input.<field>` |
 | `servers` | array | no | Tool servers this agent may call; omit for toolless agent |
 | `servers[].name` | string | yes | Logical name — used in logs |
 | `servers[].path` | string | yes | Path to `.server.yaml` file, relative to project root |
 | `servers[].access.allowlist` | string[] | yes | Permitted tools: exact name, `prefix-*`, or `*` |
-| `servers[].access.allowlist_env` | string | no | Env var (comma-separated) that overrides `allowlist` if set |
-| `agents` | array | no | Sub-agents this agent may invoke |
-| `agents[].name` | string | yes | Logical name |
-| `agents[].path` | string | yes | Path to `.agent.yaml` file, relative to project root |
+| `sub_agents` | string[] | no | Paths to `.agent.yaml` files this agent may invoke, relative to project root |
 | `output.schema` | JSON Schema | yes | Air-Lock validated before downstream steps can read this agent's output |
 
 ## Reserved Output Fields (`ktsu_` prefix)
@@ -102,9 +97,37 @@ Any `ktsu_` field not in this list is a boot error.
 
 Output always includes `ktsu_injection_attempt`, `ktsu_confidence`, `ktsu_low_quality`, and `ktsu_flags` in addition to declared `extract` fields.
 
+## Input Envelope
+
+Every agent receives the full pipeline state as a JSON object in its **first user message**. The runtime assembles this envelope by collecting all outputs produced so far, keyed by step ID, and adds `"input"` for the original workflow input:
+
+```json
+{
+  "input":  { "message": "...", "user_id": "..." },
+  "parse":  { "intent": "billing" },
+  "triage": { "category": "billing", "priority": "high" }
+}
+```
+
+The messages sent to the LLM are therefore:
+
+```
+system  → <system prompt text>
+user    → <JSON envelope above>
+```
+
+**Referencing values in the system prompt:**
+
+| What you want | How to write it |
+|---|---|
+| Workflow input field `message` | `input.message` |
+| Output field `intent` from step `parse` | `parse.intent` |
+| Fan-out current item (inside `for_each` step) | `item` / `item_index` |
+
+These are just JSON path conventions for the LLM — use them in prose instructions inside `system`. For JMESPath expressions in `webhook.body` or transform ops, the same keys apply (e.g. `input.message`, `triage.category`).
+
 ## Notes
 
 - A toolless agent (no `servers` block) has no tools to exploit — recommended as the first pipeline step when handling raw user input.
 - Allowlist wildcards: `*` (all tools), `prefix-*` (prefix match). Mid-string wildcards are a boot error.
-- Sub-agents cannot access servers not granted to their parent, and cannot have a wider allowlist than the parent for shared servers. Both conditions are caught at boot.
-- Sub-agents do not appear in the pipeline DAG and their cost rolls up to the parent step.
+- Sub-agents are referenced by file path only (no logical name). They do not appear in the pipeline DAG and their cost rolls up to the parent step.

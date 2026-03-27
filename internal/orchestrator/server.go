@@ -344,9 +344,6 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 	// Wait for the callback.
 	select {
 	case payload := <-ch:
-		if payload.Status == "failed" {
-			return nil, zero, fmt.Errorf("agent step failed: %s", payload.Error)
-		}
 		m := payload.Metrics
 		metrics := types.StepMetrics{
 			DurationMS: m.DurationMS,
@@ -355,6 +352,9 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			CostUSD:    m.CostUSD,
 			LLMCalls:   m.LLMCalls,
 			ToolCalls:  m.ToolCalls,
+		}
+		if payload.Status == "failed" {
+			return nil, metrics, fmt.Errorf("agent step failed: %s", payload.Error)
 		}
 		return payload.Output, metrics, nil
 	case <-ctx.Done():
