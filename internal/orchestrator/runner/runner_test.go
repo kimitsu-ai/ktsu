@@ -58,6 +58,21 @@ func (c *capturingDispatcher) Dispatch(_ context.Context, _, stepID string, _ *c
 	return out, types.StepMetrics{TokensIn: 10, TokensOut: 5}, nil
 }
 
+// failingDispatcher fails dispatch calls whose stepID matches any entry in failStepIDs.
+// All other calls return successOutput.
+type failingDispatcher struct {
+	failStepIDs   map[string]bool
+	failErr       error
+	successOutput map[string]interface{}
+}
+
+func (f *failingDispatcher) Dispatch(_ context.Context, _, stepID string, _ *config.PipelineStep, _ map[string]interface{}) (map[string]interface{}, types.StepMetrics, error) {
+	if f.failStepIDs[stepID] {
+		return nil, types.StepMetrics{TokensIn: 5, TokensOut: 2, CostUSD: 0.0001, LLMCalls: 1}, f.failErr
+	}
+	return f.successOutput, types.StepMetrics{TokensIn: 10, TokensOut: 5, CostUSD: 0.001, LLMCalls: 1}, nil
+}
+
 // TestRunner_workflowInput verifies the workflow input is available to pipeline steps.
 func TestRunner_workflowInput(t *testing.T) {
 	store := state.NewMemStore()
@@ -840,5 +855,145 @@ func TestRunner_fanout_metricsAggregated(t *testing.T) {
 	}
 	if step.Metrics.TokensOut != 15 {
 		t.Errorf("expected tokens_out=15 (3x5), got %d", step.Metrics.TokensOut)
+	}
+}
+
+// TestRunner_fanout_hyphenatedStepID verifies that a for_each.from expression referencing a
+// step ID containing hyphens (e.g. "search-hn.repos") resolves without a SyntaxError.
+func TestRunner_fanout_hyphenatedStepID(t *testing.T) {
+	d := &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"search-hn": {
+				"repos": []interface{}{"repo-a", "repo-b"},
+			},
+		},
+	}
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, d)
+
+	wf := makeWorkflow(
+		config.PipelineStep{
+			ID:    "search-hn",
+			Agent: "agents/search-hn.agent.yaml",
+		},
+		config.PipelineStep{
+			ID:    "process",
+			Agent: "agents/process.agent.yaml",
+			ForEach: &config.ForEachSpec{
+				From: "search-hn.repos",
+			},
+			DependsOn: []string{"search-hn"},
+		},
+	)
+
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-workflow", "run-hyphen-fanout", wf, map[string]interface{}{}); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	step, err := store.GetStep(ctx, "run-hyphen-fanout", "process")
+	if err != nil {
+		t.Fatalf("GetStep failed: %v", err)
+	}
+	if step.Status != types.StepStatusComplete {
+		t.Errorf("expected complete, got %s", step.Status)
+	}
+	results, ok := step.Output["results"].([]interface{})
+	if !ok {
+		t.Fatalf("expected results array, got %T: %v", step.Output["results"], step.Output)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results, got %d", len(results))
+	}
+}
+
+// TestRunner_webhookBody_hyphenatedStepRef verifies that a webhook body value referencing a
+// hyphenated step ID (e.g. "repo-github.title") resolves correctly.
+func TestRunner_webhookBody_hyphenatedStepRef(t *testing.T) {
+	var received map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	d := &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"repo-github": {"title": "my-repo"},
+		},
+	}
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, d)
+
+	wf := makeWorkflow(
+		config.PipelineStep{
+			ID:    "repo-github",
+			Agent: "agents/repo-github.agent.yaml",
+		},
+		config.PipelineStep{
+			ID: "save",
+			Webhook: &config.WebhookSpec{
+				URL:    srv.URL,
+				Method: "POST",
+				Body: map[string]interface{}{
+					"message": "repo-github.title",
+				},
+			},
+			DependsOn: []string{"repo-github"},
+		},
+	)
+
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-workflow", "run-hyphen-webhook", wf, map[string]interface{}{}); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if received["message"] != "my-repo" {
+		t.Errorf("expected message=my-repo, got %v", received["message"])
+	}
+}
+
+// TestRunner_condition_hyphenatedStepRef verifies that a step condition referencing a
+// hyphenated step ID does not produce a SyntaxError and evaluates correctly.
+func TestRunner_condition_hyphenatedStepRef(t *testing.T) {
+	fired := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fired = true
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	d := &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"search-hn": {"success": true},
+		},
+	}
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, d)
+
+	wf := makeWorkflow(
+		config.PipelineStep{
+			ID:    "search-hn",
+			Agent: "agents/search-hn.agent.yaml",
+		},
+		config.PipelineStep{
+			ID:        "notify",
+			Condition: "search-hn.success",
+			Webhook: &config.WebhookSpec{
+				URL:    srv.URL,
+				Method: "POST",
+			},
+			DependsOn: []string{"search-hn"},
+		},
+	)
+
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-workflow", "run-hyphen-cond", wf, map[string]interface{}{}); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if !fired {
+		t.Error("expected webhook to fire when condition search-hn.success is true")
 	}
 }
