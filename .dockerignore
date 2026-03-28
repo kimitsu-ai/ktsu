@@ -3,7 +3,7 @@
 *.md
 docs/
 LICENSE
-ktsu
+# No-op (previously ktsu)
 deploy/
 
 # IDE
