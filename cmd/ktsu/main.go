@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -283,9 +285,20 @@ func invokeCmd() *cobra.Command {
 func validateCmd() *cobra.Command {
 	var envPath, workflowDir string
 	cmd := &cobra.Command{
-		Use:   "validate",
+		Use:   "validate [project-dir]",
 		Short: "Validate Kimitsu configuration files",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			projectDir := "."
+			if len(args) > 0 {
+				projectDir = args[0]
+			}
+
+			var showGraph bool
+			if g, err := cmd.Flags().GetBool("graph"); err == nil {
+				showGraph = g
+			}
+
 			if envPath != "" {
 				if _, err := config.LoadEnv(envPath); err != nil {
 					return fmt.Errorf("invalid env config: %w", err)
@@ -293,56 +306,98 @@ func validateCmd() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "env config OK: %s\n", envPath)
 			}
 
+			if workflowDir == "" {
+				workflowDir = filepath.Join(projectDir, "workflows")
+			}
+
 			if workflowDir != "" {
-				if err := validateWorkflows(cmd, workflowDir); err != nil {
+				results, err := validateWorkflows(cmd, workflowDir, projectDir)
+
+				if showGraph {
+					// Only output the Mermaid graphs
+					for _, res := range results {
+						fmt.Fprintf(cmd.OutOrStdout(), "%%%% Mermaid Graph for %s\n", res.File)
+						fmt.Fprintln(cmd.OutOrStdout(), generateMermaidGraph(res, projectDir))
+					}
+				} else {
+					// Collect all external refs and add project-wide configs
+					summary := buildProjectSummary(projectDir, results)
+
+					// Print grouped summary
+					printProjectSummary(cmd.OutOrStdout(), projectDir, summary)
+				}
+
+				if err != nil {
 					return err
 				}
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "validation complete")
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&envPath, "env", "", "path to environment config")
 	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "", "directory of *.workflow.yaml files to validate")
+	cmd.Flags().Bool("graph", false, "output Mermaid graph of workflows")
 	return cmd
 }
 
+// ValidationResult holds the outcome of validating a single workflow file.
+type ValidationResult struct {
+	File         string
+	Errors       []string
+	Workflow     *config.WorkflowConfig
+	ExternalRefs map[string]ExternalRef
+}
+
+type ExternalRef struct {
+	Path   string
+	Kind   string   // "agent", "server"
+	Errors []string // Errors specifically for this file
+	Deps   []string // paths of dependencies
+}
+
 // validateWorkflows loads every *.workflow.yaml in dir and runs DAG cycle detection and
-// depends_on reference checks. Returns a combined error if any workflow is invalid.
-func validateWorkflows(cmd *cobra.Command, dir string) error {
+// depends_on reference checks. Returns a slice of results and an error if validation fails.
+func validateWorkflows(cmd *cobra.Command, dir, projectDir string) ([]ValidationResult, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*.workflow.yaml"))
 	if err != nil {
-		return fmt.Errorf("glob workflows: %w", err)
+		return nil, fmt.Errorf("glob workflows: %w", err)
 	}
 	if len(files) == 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "no workflow files found in %s\n", dir)
-		return nil
+		return nil, nil
 	}
 
-	var errs []string
+	var results []ValidationResult
+	var allErrs []string
 	for _, file := range files {
 		wf, err := config.LoadWorkflow(file)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: load error: %v", file, err))
+			errStr := fmt.Sprintf("%s: load error: %v", file, err)
+			allErrs = append(allErrs, errStr)
+			results = append(results, ValidationResult{File: file, Errors: []string{errStr}})
 			continue
 		}
-		fileErrs := checkWorkflow(file, wf)
-		if len(fileErrs) == 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "OK: %s\n", file)
+		res := checkWorkflow(file, wf, projectDir)
+		if len(res.Errors) != 0 {
+			allErrs = append(allErrs, res.Errors...)
 		}
-		errs = append(errs, fileErrs...)
+		results = append(results, res)
 	}
 
-	if len(errs) > 0 {
-		return errors.New(strings.Join(errs, "\n"))
+	if len(allErrs) > 0 {
+		return results, errors.New(strings.Join(allErrs, "\n"))
 	}
-	return nil
+	return results, nil
 }
 
 // checkWorkflow validates a single workflow: depends_on references and DAG cycle detection.
-func checkWorkflow(file string, wf *config.WorkflowConfig) []string {
-	var errs []string
+func checkWorkflow(file string, wf *config.WorkflowConfig, projectDir string) ValidationResult {
+	res := ValidationResult{
+		File:         file,
+		Workflow:     wf,
+		ExternalRefs: make(map[string]ExternalRef),
+	}
 
 	// Build step ID set
 	stepIDs := make(map[string]bool, len(wf.Pipeline))
@@ -354,8 +409,16 @@ func checkWorkflow(file string, wf *config.WorkflowConfig) []string {
 	for _, step := range wf.Pipeline {
 		for _, dep := range step.DependsOn {
 			if !stepIDs[dep] {
-				errs = append(errs, fmt.Sprintf("%s: step %q depends on unknown step %q", file, step.ID, dep))
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: step %q depends on unknown step %q", file, step.ID, dep))
 			}
+		}
+
+		// Check external agent references
+		if step.Agent != "" {
+			agentPath := config.StripVersion(step.Agent)
+			// Resolve relative to project root, matching orchestrator behavior.
+			absPath := filepath.Join(projectDir, agentPath)
+			validateExternalRef(&res, absPath, "agent")
 		}
 	}
 
@@ -365,10 +428,269 @@ func checkWorkflow(file string, wf *config.WorkflowConfig) []string {
 		nodes[i] = dag.Node{ID: step.ID, Depends: step.DependsOn}
 	}
 	if _, err := dag.Resolve(nodes); err != nil {
-		errs = append(errs, fmt.Sprintf("%s: %v", file, err))
+		res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", file, err))
 	}
 
-	return errs
+	return res
+}
+
+const (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorCyan   = "\033[36m"
+	colorBold   = "\033[1m"
+)
+
+func useColor(out io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if f, ok := out.(*os.File); ok {
+		stat, err := f.Stat()
+		if err != nil {
+			return false
+		}
+		return (stat.Mode() & os.ModeCharDevice) != 0
+	}
+	return false
+}
+
+func validateExternalRef(res *ValidationResult, path, kind string) {
+	if _, ok := res.ExternalRefs[path]; ok {
+		return
+	}
+
+	ext := ExternalRef{Path: path, Kind: kind}
+	switch kind {
+	case "agent":
+		agentCfg, err := config.LoadAgent(path)
+		if err != nil {
+			ext.Errors = append(ext.Errors, err.Error())
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", path, err))
+		} else {
+			// Check for servers
+			for _, srv := range agentCfg.Servers {
+				if srv.Path != "" {
+					serverPath := filepath.Join(filepath.Dir(path), srv.Path)
+					ext.Deps = append(ext.Deps, serverPath)
+					validateExternalRef(res, serverPath, "server")
+				}
+			}
+			// Check for sub-agents
+			for _, sub := range agentCfg.SubAgents {
+				subPath := filepath.Join(filepath.Dir(path), config.StripVersion(sub))
+				ext.Deps = append(ext.Deps, subPath)
+				validateExternalRef(res, subPath, "agent")
+			}
+		}
+	case "server":
+		_, err := config.LoadToolServer(path)
+		if err != nil {
+			// Try as manifest
+			_, err2 := config.LoadServerManifest(path)
+			if err2 != nil {
+				ext.Errors = append(ext.Errors, err.Error())
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", path, err))
+			}
+		}
+	}
+	res.ExternalRefs[path] = ext
+}
+
+type fileStatus struct {
+	path   string
+	errors []string
+}
+
+type projectSummary struct {
+	workflows []fileStatus
+	agents    []fileStatus
+	servers   []fileStatus
+	systems   []fileStatus
+}
+
+func buildProjectSummary(projectDir string, workflowResults []ValidationResult) projectSummary {
+	var s projectSummary
+	uniqueAgents := make(map[string][]string)
+	uniqueServers := make(map[string][]string)
+
+	for _, res := range workflowResults {
+		s.workflows = append(s.workflows, fileStatus{path: res.File, errors: res.Errors})
+		for _, ext := range res.ExternalRefs {
+			if ext.Kind == "agent" {
+				uniqueAgents[ext.Path] = ext.Errors
+			} else if ext.Kind == "server" {
+				uniqueServers[ext.Path] = ext.Errors
+			}
+		}
+	}
+
+	for path, errs := range uniqueAgents {
+		s.agents = append(s.agents, fileStatus{path: path, errors: errs})
+	}
+	for path, errs := range uniqueServers {
+		s.servers = append(s.servers, fileStatus{path: path, errors: errs})
+	}
+
+	// Explicitly check for project-wide configs
+	checkSystemFile := func(name string, loadFn func(string) (any, error)) {
+		path := filepath.Join(projectDir, name)
+		if _, err := os.Stat(path); err == nil {
+			var errs []string
+			if _, err := loadFn(path); err != nil {
+				errs = append(errs, err.Error())
+			}
+			s.systems = append(s.systems, fileStatus{path: path, errors: errs})
+		}
+	}
+
+	checkSystemFile("gateway.yaml", func(p string) (any, error) { return config.LoadGateway(p) })
+	checkSystemFile("servers.yaml", func(p string) (any, error) { return config.LoadServerManifest(p) })
+
+	// Sort for consistent output
+	sortStatus := func(list []fileStatus) {
+		sort.Slice(list, func(i, j int) bool { return list[i].path < list[j].path })
+	}
+	sortStatus(s.workflows)
+	sortStatus(s.agents)
+	sortStatus(s.servers)
+	sortStatus(s.systems)
+
+	return s
+}
+
+func printProjectSummary(out io.Writer, projectDir string, s projectSummary) {
+	useCol := useColor(out)
+	colorize := func(color, text string) string {
+		if !useCol {
+			return text
+		}
+		return color + text + colorReset
+	}
+
+	fmt.Fprintf(out, "\n%s\n", colorize(colorBold+colorCyan, "Project Validation ("+projectDir+"):"))
+
+	total, valid := 0, 0
+	printGroup := func(name string, list []fileStatus) {
+		if len(list) == 0 {
+			return
+		}
+		fmt.Fprintf(out, "\n%s\n", colorize(colorBold, name+":"))
+		for _, f := range list {
+			total++
+			rel, err := filepath.Rel(projectDir, f.path)
+			if err != nil {
+				rel = f.path
+			}
+			if len(f.errors) == 0 {
+				fmt.Fprintf(out, "  %s %s\n", colorize(colorGreen, "OKAY"), rel)
+				valid++
+			} else {
+				fmt.Fprintf(out, "  %s %s\n", colorize(colorRed, "FAIL"), rel)
+				for _, e := range f.errors {
+					fmt.Fprintf(out, "    - %s\n", colorize(colorYellow, e))
+				}
+			}
+		}
+	}
+
+	printGroup("Workflows", s.workflows)
+	printGroup("Agents", s.agents)
+	printGroup("Servers", s.servers)
+	printGroup("Systems", s.systems)
+
+	summaryText := fmt.Sprintf("\nSummary: %d total, %d valid, %d invalid\n", total, valid, total-valid)
+	fmt.Fprint(out, colorize(colorBold, summaryText))
+}
+
+func generateMermaidGraph(res ValidationResult, projectDir string) string {
+	if res.Workflow == nil {
+		return "%% (workflow failed to load, cannot generate graph)"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("graph TD\n")
+
+	// Helper for safe Mermaid IDs
+	safeID := func(p string) string {
+		// Replace common path separators and dots with underscores
+		id := strings.ReplaceAll(p, "/", "_")
+		id = strings.ReplaceAll(id, "\\", "_")
+		id = strings.ReplaceAll(id, ".", "_")
+		id = strings.ReplaceAll(id, "-", "_")
+		id = strings.ReplaceAll(id, ":", "_")
+		return id
+	}
+
+	// Find steps with errors
+	errorSteps := make(map[string]bool)
+	for _, errStr := range res.Errors {
+		for _, step := range res.Workflow.Pipeline {
+			if strings.Contains(errStr, fmt.Sprintf("%q", step.ID)) || strings.Contains(errStr, "node "+step.ID) {
+				errorSteps[step.ID] = true
+			}
+		}
+	}
+
+	// workflow steps
+	for _, step := range res.Workflow.Pipeline {
+		kind := "unknown"
+		if step.Agent != "" {
+			kind = "agent"
+		} else if step.Transform != nil {
+			kind = "transform"
+		} else if step.Webhook != nil {
+			kind = "webhook"
+		}
+
+		label := fmt.Sprintf("%s [%s]", step.ID, kind)
+		if errorSteps[step.ID] {
+			sb.WriteString(fmt.Sprintf("  %s[\"%s\"]:::failed\n", step.ID, label))
+		} else {
+			sb.WriteString(fmt.Sprintf("  %s[\"%s\"]\n", step.ID, label))
+		}
+		for _, dep := range step.DependsOn {
+			sb.WriteString(fmt.Sprintf("  %s --> %s\n", dep, step.ID))
+		}
+
+		if step.Agent != "" {
+			agentPath := config.StripVersion(step.Agent)
+			absPath := filepath.Join(projectDir, agentPath)
+			sb.WriteString(fmt.Sprintf("  %s --> %s\n", step.ID, safeID(absPath)))
+		}
+	}
+
+	// External files
+	for path, ext := range res.ExternalRefs {
+		id := safeID(path)
+		// Display relative to workspace root if possible, or just the basename
+		// For simplicity, let's use the path as provided in the config if it's relative.
+		// Wait, we used absPath in validateExternalRef. Let's try to make it prettier.
+		// Actually, let's just use the path as the user defined it if we can find it.
+		// For now, let's use the full relative path from the current directory.
+		cwd, _ := os.Getwd()
+		rel, err := filepath.Rel(cwd, path)
+		if err != nil {
+			rel = path
+		}
+
+		label := fmt.Sprintf("%s [%s-file]", rel, ext.Kind)
+		if len(ext.Errors) > 0 {
+			sb.WriteString(fmt.Sprintf("  %s[\"%s\"]:::failed\n", id, label))
+		} else {
+			sb.WriteString(fmt.Sprintf("  %s[\"%s\"]:::file\n", id, label))
+		}
+
+		for _, dep := range ext.Deps {
+			sb.WriteString(fmt.Sprintf("  %s --> %s\n", id, safeID(dep)))
+		}
+	}
+
+	sb.WriteString("\n  classDef failed fill:#f96,stroke:#333,stroke-width:2px;\n")
+	sb.WriteString("  classDef file fill:#e1f5fe,stroke:#01579b,stroke-width:2px;\n")
+	return sb.String()
 }
 
 func lockCmd() *cobra.Command {
