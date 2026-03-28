@@ -23,7 +23,14 @@ curl -s http://localhost:8080/health   # orchestrator
 curl -s http://localhost:8082/health   # runtime
 ```
 
-Once healthy, invoke the workflow:
+Once healthy, invoke the workflow with the ktsu CLI:
+
+```sh
+# Wait for the workflow to complete and print the result
+./ktsu invoke hello --input "{\"name\": \"Kyle\"}" --wait
+```
+
+Or with curl:
 
 ```sh
 curl -s -X POST http://localhost:${KTSU_PORT:-8080}/invoke/hello \
