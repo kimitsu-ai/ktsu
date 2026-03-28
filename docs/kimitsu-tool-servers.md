@@ -40,14 +40,14 @@ Local tool server files and built-in servers (`ktsu/*`) are never listed in `ser
 
 ## Local Tool Server Files
 
-Local tool server files live in `servers/` and are referenced directly by path from agent files. They declare where the MCP server lives and how to authenticate against it. The server itself is an independent MCP process that Kimitsu does not manage or start — it must be running and reachable at the declared URL.
+Local tool server files live in `servers/` and are referenced directly by path from agent files. They declare where the MCP server lives and how to authenticate against it. The server itself is an independent MCP process that Kimitsu does not manage or start — it must be running and reachable at the declared URL via HTTP/SSE. Kimitsu does not support the `stdio` transport.
 
 ### Fields
 
 ```yaml
 name: <string>         # identity used in logs and error messages
 description: <string>  # human-readable (optional)
-url: <string>          # base URL of the MCP server
+url: <string>          # base URL of the MCP server (HTTP/SSE)
 auth: <string>         # bearer token or env:VAR_NAME — omit if no auth required
 ```
 
@@ -227,7 +227,7 @@ The allowlist narrows the callable surface. Container-level constraints (no netw
 
 ## `ktsu/cli` — CLI Tool Server
 
-`ktsu/cli` is a built-in tool server that wraps standard Unix CLI tools as typed MCP tools. Agents call CLI utilities the same way they call any other tool — over HTTP via MCP, same protocol, same mental model.
+`ktsu/cli` is a built-in tool server that wraps standard Unix CLI tools as typed MCP tools. Agents call CLI utilities the same way they call any other tool — over HTTP/SSE via MCP, same protocol, same mental model.
 
 ### Why a Server, Not Direct Invocation
 

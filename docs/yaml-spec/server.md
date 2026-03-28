@@ -1,6 +1,6 @@
 # server.yaml (tool-server)
 
-**What it does:** Points to a local MCP tool server — declares its URL, auth, and trust flags. The server itself is an independent MCP process; Kimitsu does not start or manage it.
+**What it does:** Points to a local MCP tool server — declares its URL, auth, and trust flags. The server itself is an independent MCP process reachable over HTTP/SSE; Kimitsu does not start or manage it. Kiimitsu does not support the `stdio` transport.
 
 **Filename convention:** `servers/*.server.yaml`
 
@@ -9,7 +9,7 @@
 ```yaml
 name: wiki-search                # identity — used in logs and error messages
 description: "..."               # optional
-url: "https://mcp.internal/wiki" # base URL of the MCP server
+url: "https://mcp.internal/wiki" # base URL of the MCP server (HTTP/SSE)
 auth: "env:WIKI_TOKEN"           # bearer token or env:VAR_NAME; omit if no auth required
 ```
 
@@ -19,7 +19,7 @@ auth: "env:WIKI_TOKEN"           # bearer token or env:VAR_NAME; omit if no auth
 |---|---|---|---|
 | `name` | string | yes | Identity — used in logs and error messages |
 | `description` | string | no | Human-readable |
-| `url` | string | yes | Base URL of the MCP server |
+| `url` | string | yes | Base URL of the MCP server (HTTP/SSE) |
 | `auth` | string | no | Bearer token or `env:VAR_NAME`; omit if no auth required |
 
 ## Built-in Tool Servers

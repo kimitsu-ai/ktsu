@@ -45,7 +45,7 @@ This is a deliberate architectural commitment, not a side effect of the HTTP cho
 - The orchestrator's HTTP API (invocation dispatch, heartbeat endpoint, Air-Lock, state writes) is a first-class documented contract.
 - The Agent Runtime invocation payload format is a spec. What the orchestrator sends defines what any conforming orchestrator must send.
 - The LLM Gateway HTTP contract is a replaceable surface — a team that needs to swap in a different proxy can do so. The Kimitsu LLM Gateway is a first-party implementation of that contract, not a wrapper around any external library. It was designed with third-party gateway projects as reference points, but carries no runtime dependency on them.
-- Tool servers are already fully independent — MCP over HTTP, no Kimitsu coupling whatsoever.
+- Tool servers are already fully independent — MCP over HTTP/SSE, no Kimitsu coupling whatsoever.
 
 The Kimitsu implementations are **reference implementations**. They are the defaults, they are supported, and they are what most teams will run. But a team that needs to replace the orchestrator with a Temporal-backed implementation, or the LLM Gateway with an internal proxy, or the Agent Runtime with a serverless function executor, should be able to do so without forking Kimitsu or losing compatibility with the YAML pipeline definitions.
 
@@ -110,7 +110,7 @@ When validation fails on an agent step, the Air-Lock returns the validation erro
 
 ### MCP as the Singular Interface
 
-Every tool server presents as an MCP server to agents over HTTP. Agents call tools by sending MCP tool call requests to the server's endpoint. Built-in tool servers (provided by Kimitsu) follow the same interface — they are just well-known MCP servers with stable URLs on the internal network. There is no translation layer and no proprietary protocol. Everything is debuggable with curl.
+Every tool server presents as an MCP server to agents over HTTP/SSE. Agents call tools by sending MCP tool call requests to the server's endpoint. Built-in tool servers (provided by Kimitsu) follow the same interface — they are just well-known MCP servers with stable URLs on the internal network. Kimitsu does not support the `stdio` transport — everything is over HTTP/SSE. There is no translation layer and no proprietary protocol. Everything is debuggable with curl.
 
 ### Reserved Output Fields
 
@@ -126,7 +126,7 @@ Any agent may include reserved `ktsu_` prefixed fields in its output schema. The
 
 **Tool as the atomic unit.** Every other framework treats the agent as the atom. Kimitsu treats the tool as the atom — agents are compositions of tool servers with a prompt.
 
-**MCP as the only interface.** Tool servers are MCP servers. Kimitsu does not wrap, host, or manage user-provided tool servers. Agents call them directly over HTTP. There is one protocol and one mental model.
+**MCP as the only interface.** Tool servers are MCP servers. Kimitsu does not wrap, host, or manage user-provided tool servers. Agents call them directly over HTTP/SSE. There is one protocol and one mental model.
 
 **Three and only three pipeline primitives.** Transform, agent, webhook. No special cases, no escape hatches. If it needs reasoning, it is an agent. Everything else is deterministic.
 

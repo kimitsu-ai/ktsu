@@ -23,7 +23,7 @@
 
 9. **The orchestrator makes zero LLM calls.** It is a deterministic kernel. All intelligence lives in the Agent Runtime.
 
-10. **Every tool interface is MCP over HTTP.** There is one protocol. Everything is debuggable with curl.
+10. **Every tool interface is MCP over HTTP/SSE.** There is one protocol. Everything is debuggable with curl.
 
 11. **Every component boundary is a documented HTTP contract.** The orchestrator, Agent Runtime, and LLM Gateway expose their interfaces as first-class documented APIs, not implementation details. No component assumes it is talking to the Kimitsu implementation of any peer. The Kimitsu implementations are reference implementations — conforming replacements are valid. When in doubt, document the contract before writing the implementation.
 
@@ -43,7 +43,7 @@
 
 19. **The envelope is orchestrator-written, agent-readable.** The orchestrator assembles the envelope from the state store. Agents read it via `ktsu/envelope`. No agent can modify run context.
 
-20. **All inter-container communication is HTTP.** No Unix sockets, no shared volumes for IPC, no proprietary protocols.
+20. **All inter-container communication is HTTP.** This includes MCP over HTTP/SSE. No Unix sockets, no shared volumes for IPC, no proprietary protocols.
 
 21. **The LLM Gateway is the sole outbound path to LLM providers.** No other container holds LLM credentials or makes direct LLM calls.
 

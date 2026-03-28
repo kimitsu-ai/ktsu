@@ -39,7 +39,7 @@ An Kimitsu deployment consists of four container tiers running on a shared inter
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
          │
-         │ HTTP (MCP) — internal or external
+         │ MCP (HTTP/SSE) — internal or external
          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  User-Provided Tool Servers  (operator-managed)             │
@@ -112,7 +112,7 @@ User-provided tool servers are any MCP server the operator builds or operates. T
 
 ### LLM Gateway
 
-A long-running container that is the sole outbound path to LLM providers. No other container holds LLM API keys or makes direct calls to LLM providers. All LLM calls from agents route through the LLM Gateway via HTTP.
+A long-running container that is the sole outbound path to LLM providers. No other container holds LLM API keys or makes direct calls to LLM providers. All LLM calls from agents route through the LLM Gateway via HTTP. (Note: These are standard REST calls, not MCP).
 
 The LLM Gateway is a **first-party Kimitsu implementation** — it is not a wrapper around any third-party proxy library. This is a deliberate decision: the gateway is a critical security and cost boundary, its contract with the orchestrator is narrow and well-defined, and external dependencies at this layer would compromise the auditability and independence that the rest of the architecture is built on. Third-party gateway projects (LiteLLM and others) informed the design, but no runtime dependency on them exists.
 
@@ -389,7 +389,7 @@ state_store:
 2. Orchestrator POSTs the invocation payload to an Agent Runtime instance. The payload includes permitted tool server endpoints and the access policy (allowlist) for each server.
 3. Agent Runtime calls `tools/list` on each tool server and prunes the result against the server's allowlist. The agent's context is built from the pruned list only — the agent never sees tools it is not permitted to call.
 4. Agent Runtime adds the invocation to its active set and starts the reasoning cycle.
-5. Agent calls tool servers over HTTP (MCP) on the internal network. The Agent Runtime enforces the allowlist at call time as a second layer — a call to a tool not on the pruned list is blocked before it reaches the server and returns a structured `tool_not_permitted` error to the agent's reasoning loop.
+5. Agent calls tool servers over MCP (HTTP/SSE) on the internal network. The Agent Runtime enforces the allowlist at call time as a second layer — a call to a tool not on the pruned list is blocked before it reaches the server and returns a structured `tool_not_permitted` error to the agent's reasoning loop.
 6. Agent calls the LLM Gateway for reasoning. Gateway resolves the model, makes the outbound call, returns response with token metrics.
 7. Agent Runtime heartbeat timer (every 5s) reports this invocation as active. Orchestrator updates `last_heartbeat_at`.
 8. Agent assembles output. Agent Runtime POSTs result back to orchestrator, removes invocation from active set.

@@ -11,7 +11,7 @@ All Kimitsu files use a `kind` field to declare what they are.
 kind: agent       → agents/*.agent.yaml
 kind: workflow    → workflows/*.workflow.yaml
 kind: env         → environments/*.env.yaml
-kind: tool-server → servers/*.server.yaml
+kind: tool-server → servers/*.server.yaml (MCP HTTP/SSE)
 ```
 
 ### Standard Directory Layout
