@@ -54,10 +54,20 @@ This uses [Ollama](https://ollama.com) with `qwen2.5:0.5b` (~397MB). The model i
 
 ### Shell (macOS & Linux)
 
-Install the latest version of the `ktsu` CLI with a single command:
-
+**Public Installation:**
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kimitsu-ai/ktsu/main/install.sh | sh
+```
+
+**Stealth Mode (Private Repo):**
+If the repository is private, you can install using the GitHub CLI:
+```sh
+gh release download --repo kimitsu-ai/ktsu -p install.sh -O - | sh
+```
+Or with a `GITHUB_TOKEN`:
+```sh
+export GITHUB_TOKEN=your_token
+curl -H "Authorization: token $GITHUB_TOKEN" -fsSL https://raw.githubusercontent.com/kimitsu-ai/ktsu/main/install.sh | sh
 ```
 
 ### Homebrew (Coming Soon)
