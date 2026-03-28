@@ -14,10 +14,10 @@ run-orchestrator:
 
 COMPOSE_ENV := $(if $(wildcard .env),--env-file .env,)
 
-docker-up: build
+docker-up:
 	docker compose -f deploy/docker-compose.yaml $(COMPOSE_ENV) up --build
 
-docker-up-local: build
+docker-up-local:
 	docker compose -f deploy/docker-compose.local.yaml $(COMPOSE_ENV) up --build
 
 docker-down:
