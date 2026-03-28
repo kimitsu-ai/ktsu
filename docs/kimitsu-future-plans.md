@@ -35,7 +35,7 @@ The following components are implemented and tested:
 - Budget circuit breaker per run_id
 - `restrictions.allow_from` enforcement per group
 
-**Built-in Tool Servers** (standalone, started via `kimitsu start <name>`)
+**Built-in Tool Servers** (standalone, started via `ktsu start <name>`)
 - `ktsu/kv`, `ktsu/blob`, `ktsu/log`, `ktsu/memory`, `ktsu/envelope`
 - `ktsu/format`, `ktsu/validate`, `ktsu/transform`, `ktsu/cli`
 
@@ -50,13 +50,13 @@ The following components are implemented and tested:
 These are small, targeted additions to the existing system. Each is self-contained.
 
 ### Persistent State Store Migration (SQLite → PostgreSQL)
-The state store driver is already abstracted. Wire up the PostgreSQL driver and write migration tooling (`kimitsu db migrate`). SQLite remains the default for dev.
+The state store driver is already abstracted. Wire up the PostgreSQL driver and write migration tooling (`ktsu db migrate`). SQLite remains the default for dev.
 
-### `kimitsu invoke` CLI Command
-Add `kimitsu invoke <workflow> --input '{"key":"value"}'` as a development convenience. Wraps `curl -X POST /invoke/{workflow}`. Optional `--wait` flag that polls `GET /runs/{run_id}` until completion and prints the final envelope.
+### `ktsu invoke` CLI Command
+Add `ktsu invoke <workflow> --input '{"key":"value"}'` as a development convenience. Wraps `curl -X POST /invoke/{workflow}`. Optional `--wait` flag that polls `GET /runs/{run_id}` until completion and prints the final envelope.
 
-### `kimitsu validate` Full Graph Check
-The current `kimitsu validate` only checks env config. Extend it to run the full boot-time graph validation (DAG cycle check, IO type-checking, allowlist validation) without starting any services. Useful in CI.
+### `ktsu validate` Full Graph Check
+The current `ktsu validate` only checks env config. Extend it to run the full boot-time graph validation (DAG cycle check, IO type-checking, allowlist validation) without starting any services. Useful in CI.
 
 ---
 
@@ -71,7 +71,7 @@ Sub-agents are declared in the agent file but the runtime dispatch is not yet im
 The LLM Gateway currently buffers the full response before returning. Add streaming support: the gateway forwards chunks to the Agent Runtime as they arrive. The Agent Runtime assembles the stream for tool call detection but can begin yielding partial content earlier. This reduces time-to-first-token for agents with long outputs.
 
 ### `ktsu lock` Marketplace Resolution
-`kimitsu lock` is currently a stub. Implement marketplace resolution: read `servers.yaml`, fetch server manifests from the registry, pin resolved versions to `ktsu.lock.yaml`. The lockfile becomes the authoritative source for all server endpoints during boot.
+`ktsu lock` is currently a stub. Implement marketplace resolution: read `servers.yaml`, fetch server manifests from the registry, pin resolved versions to `ktsu.lock.yaml`. The lockfile becomes the authoritative source for all server endpoints during boot.
 
 ### Budget Enforcement at Gateway Level (Per-Group)
 Add optional `cost_budget_usd` to individual model groups in `gateway.yaml`. This allows a shared gateway to enforce spending caps per group regardless of per-run budgets. Useful for protecting expensive groups (frontier, legal) from runaway workflows.

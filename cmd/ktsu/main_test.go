@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// TestInvokeCmd_postsToOrchestrator verifies that kimitsu invoke sends a POST /invoke/{workflow}
+// TestInvokeCmd_postsToOrchestrator verifies that ktsu invoke sends a POST /invoke/{workflow}
 // with the provided JSON input and prints the returned run_id.
 func TestInvokeCmd_postsToOrchestrator(t *testing.T) {
 	var receivedPath string

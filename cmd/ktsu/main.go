@@ -44,7 +44,7 @@ func main() {
 
 func rootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "kimitsu",
+		Use:   "ktsu",
 		Short: "Kimitsu — agentic pipeline framework",
 	}
 	root.AddCommand(startCmd())
@@ -374,7 +374,7 @@ func checkWorkflow(file string, wf *config.WorkflowConfig) []string {
 func lockCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "lock",
-		Short: "Generate kimitsu.lock.yaml",
+		Short: "Generate ktsu.lock.yaml",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("lock: not implemented")
 			return nil
@@ -431,7 +431,7 @@ variables: {}
 providers: []
 state:
   driver: sqlite
-  dsn: kimitsu.db
+  dsn: ktsu.db
 `
 			gatewayTmpl := `providers: []
 model_groups: []

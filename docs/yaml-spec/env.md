@@ -18,7 +18,7 @@ providers:
       api_key: "env:ANTHROPIC_API_KEY"
 state:
   driver: sqlite                 # sqlite | postgres
-  dsn: /tmp/myproject/kimitsu.db # SQLite: file path | Postgres: connection string or env:VAR
+  dsn: /tmp/myproject/ktsu.db # SQLite: file path | Postgres: connection string or env:VAR
 ```
 
 ## Fields

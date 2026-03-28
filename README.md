@@ -50,6 +50,26 @@ make docker-up-local
 
 This uses [Ollama](https://ollama.com) with `qwen2.5:0.5b` (~397MB). The model is pulled automatically on first run.
 
+## Installation
+
+### Shell (macOS & Linux)
+
+Install the latest version of the `ktsu` CLI with a single command:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kimitsu-ai/ktsu/main/install.sh | sh
+```
+
+### Homebrew (Coming Soon)
+
+Once the tap is official, you can install via:
+`brew install kimitsu-ai/tap/ktsu`
+
+### Docker
+
+The official image is available on GitHub Container Registry:
+`docker pull ghcr.io/kimitsu-ai/ktsu:latest`
+
 ## Prerequisites
 
 - Go 1.24+ (for local development)
@@ -68,30 +88,30 @@ make docker-down    # stop all containers
 
 ## Running services
 
-Each service is a subcommand of the `kimitsu` binary.
+Each service is a subcommand of the `ktsu` binary.
 
 ### Core services
 
 | Service | Command | Default port |
 |---|---|---|
-| Orchestrator | `kimitsu start orchestrator` | 8080 |
-| LLM Gateway | `kimitsu start gateway` | 8081 |
-| Agent Runtime | `kimitsu start runtime` | 8082 |
+| Orchestrator | `ktsu start orchestrator` | 8080 |
+| LLM Gateway | `ktsu start gateway` | 8081 |
+| Agent Runtime | `ktsu start runtime` | 8082 |
 
 Every service accepts `--host` (bind interface, default `""` = all interfaces) and `--port`:
 
 ```sh
 # Orchestrator (control plane)
-go run ./cmd/kimitsu start orchestrator
+go run ./cmd/ktsu start orchestrator
 
 # With an environment config and custom address
-go run ./cmd/kimitsu start orchestrator --env environments/dev.env.yaml --host 0.0.0.0 --port 8080
+go run ./cmd/ktsu start orchestrator --env environments/dev.env.yaml --host 0.0.0.0 --port 8080
 
 # LLM Gateway
-go run ./cmd/kimitsu start gateway --config gateway.yaml --port 8081
+go run ./cmd/ktsu start gateway --config gateway.yaml --port 8081
 
 # Agent Runtime — point at the orchestrator and gateway
-go run ./cmd/kimitsu start runtime \
+go run ./cmd/ktsu start runtime \
   --orchestrator http://orchestrator.internal:8080 \
   --gateway http://llm-gateway.internal:8081
 ```
@@ -121,27 +141,27 @@ All service addresses and peer URLs can be set via `KTSU_*` environment variable
 # Container / multi-host example
 KTSU_ORCHESTRATOR_URL=http://orchestrator.internal:8080 \
 KTSU_GATEWAY_URL=http://llm-gateway.internal:8081 \
-  go run ./cmd/kimitsu start runtime
+  go run ./cmd/ktsu start runtime
 ```
 
 ### Built-in tool servers
 
 | Server | Command | Default port |
 |---|---|---|
-| kv | `kimitsu start kv` | 9100 |
-| blob | `kimitsu start blob` | 9101 |
-| log | `kimitsu start log` | 9102 |
-| memory | `kimitsu start memory` | 9103 |
-| envelope | `kimitsu start envelope` | 9104 |
-| format | `kimitsu start format` | 9105 |
-| validate | `kimitsu start validate` | 9106 |
-| transform | `kimitsu start transform` | 9107 |
-| cli | `kimitsu start cli` | 9108 |
+| kv | `ktsu start kv` | 9100 |
+| blob | `ktsu start blob` | 9101 |
+| log | `ktsu start log` | 9102 |
+| memory | `ktsu start memory` | 9103 |
+| envelope | `ktsu start envelope` | 9104 |
+| format | `ktsu start format` | 9105 |
+| validate | `ktsu start validate` | 9106 |
+| transform | `ktsu start transform` | 9107 |
+| cli | `ktsu start cli` | 9108 |
 
 All built-in servers accept `--host` and `--port`. Stateful built-ins also accept `--orchestrator` (reads `KTSU_ORCHESTRATOR_URL`):
 
 ```sh
-go run ./cmd/kimitsu start kv --host 0.0.0.0 --port 9100 --orchestrator http://orchestrator.internal:8080
+go run ./cmd/ktsu start kv --host 0.0.0.0 --port 9100 --orchestrator http://orchestrator.internal:8080
 ```
 
 Stateful built-ins (`kv`, `blob`, `log`, `memory`, `envelope`) register with the orchestrator on startup and require `--orchestrator` to be set. Stateless built-ins (`format`, `validate`, `transform`, `cli`) do not.
@@ -150,10 +170,10 @@ Stateful built-ins (`kv`, `blob`, `log`, `memory`, `envelope`) register with the
 
 ```sh
 # Validate configuration files
-kimitsu validate --env environments/dev.env.yaml
+ktsu validate --env environments/dev.env.yaml
 
-# Generate kimitsu.lock.yaml (not yet implemented)
-kimitsu lock
+# Generate ktsu.lock.yaml (not yet implemented)
+ktsu lock
 ```
 
 ## Health checks

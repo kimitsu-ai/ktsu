@@ -44,5 +44,5 @@ rss.lock.yaml
 environments/
 !environments/*.example.yaml
 .worktrees/
-kimitsu
+/ktsu
 install-go.sh

@@ -151,7 +151,7 @@ The `consolidation` field is accepted on pipeline steps but is not yet enforced 
 
 ## Environment Config Reference
 
-Environment configs are selected at startup with `--env environments/dev.env.yaml`. They declare the state store backend and any environment-specific variable overrides.
+Environment configs are selected at startup with `ktsu --env environments/dev.env.yaml`. They declare the state store backend and any environment-specific variable overrides.
 
 ### Format
 
@@ -172,7 +172,7 @@ variables:
   OUTPUT_WEBHOOK_URL: http://localhost:9999/receive
 state:
   driver: sqlite
-  dsn: /tmp/myproject/kimitsu.db
+  dsn: /tmp/myproject/ktsu.db
 ```
 
 ### Production Environment
@@ -182,7 +182,7 @@ name: production
 variables: {}
 state:
   driver: sqlite
-  dsn: /var/data/kimitsu.db
+  dsn: /var/data/ktsu.db
 ```
 
 ---

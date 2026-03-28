@@ -1,5 +1,6 @@
 services:
   gateway:
+    image: ghcr.io/kimitsu-ai/ktsu:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -17,6 +18,7 @@ services:
       - ktsu
 
   orchestrator:
+    image: ghcr.io/kimitsu-ai/ktsu:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -47,6 +49,7 @@ services:
       - ktsu
 
   runtime:
+    image: ghcr.io/kimitsu-ai/ktsu:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile

@@ -1,0 +1,59 @@
+# .goreleaser.yaml
+version: 2
+
+project_name: ktsu
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ktsu
+    main: ./cmd/ktsu
+    binary: ktsu
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: ktsu
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    files:
+      - README.md
+      - docs/**/*
+
+dockers:
+  - image_templates:
+      - "ghcr.io/kimitsu-ai/ktsu:{{ .Version }}"
+      - "ghcr.io/kimitsu-ai/ktsu:latest"
+    dockerfile: deploy/Dockerfile
+    build_flag_templates:
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+    use: buildx
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  name_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: kimitsu-ai
+    name: ktsu

@@ -110,7 +110,7 @@ When validation fails on an agent step, the Air-Lock returns the validation erro
 
 ### MCP as the Singular Interface
 
-Every tool server presents as an MCP server to agents over HTTP/SSE. Agents call tools by sending MCP tool call requests to the server's endpoint. Built-in tool servers (provided by Kimitsu) follow the same interface — they are just well-known MCP servers with stable URLs on the internal network. Kimitsu does not support the `stdio` transport — everything is over HTTP/SSE. There is no translation layer and no proprietary protocol. Everything is debuggable with curl.
+Every tool server presents as an MCP server to agents over HTTP/SSE. Agents call tools by sending MCP tool call requests to the server's endpoint. The server itself is an independent MCP process reachable over HTTP/SSE; Kimitsu does not start or manage it. Kimitsu does not support the `stdio` transport — everything is over HTTP/SSE. There is no translation layer and no proprietary protocol. Everything is debuggable with `ktsu` or curl.
 
 ### Reserved Output Fields
 

@@ -1,7 +1,7 @@
 .PHONY: build test lint run-orchestrator docker-up docker-up-local docker-down
 
 build:
-	go build ./...
+	go build -o ktsu ./cmd/ktsu
 
 test:
 	go test ./...
@@ -10,7 +10,7 @@ lint:
 	go vet ./...
 
 run-orchestrator:
-	go run ./cmd/kimitsu start orchestrator
+	go run ./cmd/ktsu start orchestrator
 
 COMPOSE_ENV := $(if $(wildcard .env),--env-file .env,)
 

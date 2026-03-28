@@ -323,7 +323,7 @@ Literal string values use JMESPath backtick syntax:
 
 ```yaml
 body:
-  source: "`kimitsu`"
+  source: "`ktsu`"
 ```
 
 ### URL Environment Variable Resolution

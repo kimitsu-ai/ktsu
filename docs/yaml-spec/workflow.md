@@ -83,7 +83,7 @@ pipeline:
       body:
         text:    "triage.summary"     # JMESPath against merged step outputs
         channel: "input.channel_id"   # workflow input fields are under "input"
-        source:  "`kimitsu`"          # literal string — JMESPath backtick syntax
+        source:  "`ktsu`"          # literal string — JMESPath backtick syntax
       timeout_s: 10                   # default: 30
     condition: "triage.category == 'billing'"  # JMESPath; if falsy → skipped (not failed)
     depends_on: [triage]

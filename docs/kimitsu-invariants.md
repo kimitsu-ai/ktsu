@@ -23,7 +23,7 @@
 
 9. **The orchestrator makes zero LLM calls.** It is a deterministic kernel. All intelligence lives in the Agent Runtime.
 
-10. **Every tool interface is MCP over HTTP/SSE.** There is one protocol. Everything is debuggable with curl.
+10. **Every tool interface is MCP over HTTP/SSE.** There is one protocol. Everything is debuggable with `ktsu` or curl.
 
 11. **Every component boundary is a documented HTTP contract.** The orchestrator, Agent Runtime, and LLM Gateway expose their interfaces as first-class documented APIs, not implementation details. No component assumes it is talking to the Kimitsu implementation of any peer. The Kimitsu implementations are reference implementations — conforming replacements are valid. When in doubt, document the contract before writing the implementation.
 
