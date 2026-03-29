@@ -237,9 +237,10 @@ func invokeCmd() *cobra.Command {
 	var orchestratorURL, inputJSON string
 	var wait bool
 	cmd := &cobra.Command{
-		Use:   "invoke <workflow>",
-		Short: "Invoke a workflow on the orchestrator",
-		Args:  cobra.ExactArgs(1),
+		Use:          "invoke <workflow>",
+		Short:        "Invoke a workflow on the orchestrator",
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			workflow := args[0]
 			resp, err := http.Post(orchestratorURL+"/invoke/"+workflow, "application/json", strings.NewReader(inputJSON))
@@ -247,13 +248,31 @@ func invokeCmd() *cobra.Command {
 				return fmt.Errorf("invoke: %w", err)
 			}
 			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+				var result map[string]interface{}
+				json.NewDecoder(resp.Body).Decode(&result)
+				if msg, ok := result["error"].(string); ok {
+					return fmt.Errorf("invoke: %s (status %d)", msg, resp.StatusCode)
+				}
+				return fmt.Errorf("invoke: orchestrator returned status %d", resp.StatusCode)
+			}
+
 			var result map[string]interface{}
-			json.NewDecoder(resp.Body).Decode(&result)
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return fmt.Errorf("invoke: decode response: %w", err)
+			}
+
 			runID, _ := result["run_id"].(string)
+			if runID == "" {
+				return fmt.Errorf("invoke: orchestrator did not return a run_id")
+			}
+
 			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", runID)
-			if !wait || runID == "" {
+			if !wait {
 				return nil
 			}
+
 			// Poll GET /runs/{run_id} until the run reaches a terminal status.
 			for {
 				time.Sleep(1 * time.Second)
@@ -261,8 +280,15 @@ func invokeCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("poll: %w", err)
 				}
+				if r.StatusCode != http.StatusOK {
+					r.Body.Close()
+					return fmt.Errorf("poll: status %d", r.StatusCode)
+				}
 				var status map[string]interface{}
-				json.NewDecoder(r.Body).Decode(&status)
+				if err := json.NewDecoder(r.Body).Decode(&status); err != nil {
+					r.Body.Close()
+					return fmt.Errorf("poll: decode: %w", err)
+				}
 				r.Body.Close()
 				run, _ := status["run"].(map[string]interface{})
 				s, _ := run["status"].(string)
