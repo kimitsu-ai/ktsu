@@ -289,10 +289,14 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			if strings.HasPrefix(authToken, "env:") {
 				authToken = os.Getenv(strings.TrimPrefix(authToken, "env:"))
 			}
+			var allowlist []string
+			for _, ta := range srv.Access.Allowlist {
+				allowlist = append(allowlist, ta.Name)
+			}
 			toolServers = append(toolServers, agent.ToolServerSpec{
 				Name:      serverCfg.Name,
 				URL:       serverCfg.URL,
-				Allowlist: srv.Access.Allowlist,
+				Allowlist: allowlist,
 				AuthToken: authToken,
 			})
 		}

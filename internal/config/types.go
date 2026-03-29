@@ -1,5 +1,11 @@
 package config
 
+import (
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
 // WorkflowConfig represents a workflow.yaml file (kind: workflow)
 type WorkflowConfig struct {
 	Kind        string         `yaml:"kind"`
@@ -95,8 +101,39 @@ type ServerRef struct {
 	Access AccessConfig `yaml:"access"`
 }
 
+// AccessConfig controls which tools an agent may call on a server.
 type AccessConfig struct {
-	Allowlist []string `yaml:"allowlist"`
+	Allowlist []ToolAccess `yaml:"allowlist"`
+}
+
+// ToolAccess is a single allowlist entry. It unmarshals from either a plain
+// YAML string ("tool-name") or an object with optional require_approval policy.
+type ToolAccess struct {
+	Name            string          `yaml:"name"`
+	RequireApproval *ApprovalPolicy `yaml:"require_approval,omitempty"`
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler so that a plain scalar like
+// "delete-*" is treated as ToolAccess{Name: "delete-*"}.
+func (t *ToolAccess) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		t.Name = value.Value
+		return nil
+	}
+	type toolAccessAlias ToolAccess
+	var alias toolAccessAlias
+	if err := value.Decode(&alias); err != nil {
+		return err
+	}
+	*t = ToolAccess(alias)
+	return nil
+}
+
+// ApprovalPolicy declares how the orchestrator should handle a required approval.
+type ApprovalPolicy struct {
+	OnReject        string        `yaml:"on_reject"`         // "fail" | "recover"
+	Timeout         time.Duration `yaml:"timeout,omitempty"` // 0 = no timeout
+	TimeoutBehavior string        `yaml:"timeout_behavior"`  // "fail" | "reject"
 }
 
 // EnvConfig represents environments/*.env.yaml
