@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -58,5 +59,28 @@ allowlist:
 	}
 	if entry.RequireApproval.TimeoutBehavior != "reject" {
 		t.Errorf("want reject, got %s", entry.RequireApproval.TimeoutBehavior)
+	}
+	if entry.RequireApproval.Timeout != 30*time.Minute {
+		t.Errorf("want 30m, got %v", entry.RequireApproval.Timeout)
+	}
+}
+
+func TestToolAccessUnmarshal_ObjectFormNoPolicy(t *testing.T) {
+	in := `
+allowlist:
+  - name: "read-*"
+`
+	var ac config.AccessConfig
+	if err := yaml.Unmarshal([]byte(in), &ac); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(ac.Allowlist) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(ac.Allowlist))
+	}
+	if ac.Allowlist[0].Name != "read-*" {
+		t.Errorf("want read-*, got %s", ac.Allowlist[0].Name)
+	}
+	if ac.Allowlist[0].RequireApproval != nil {
+		t.Error("want nil RequireApproval for object form with no require_approval block")
 	}
 }
