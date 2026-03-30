@@ -33,6 +33,12 @@ dockers:
       - "ghcr.io/kimitsu-ai/ktsu:{{ .Version }}"
       - "ghcr.io/kimitsu-ai/ktsu:latest"
     dockerfile: deploy/Dockerfile
+    extra_files:
+      - go.mod
+      - go.sum
+      - cmd/
+      - internal/
+      - pkg/
     build_flag_templates:
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
