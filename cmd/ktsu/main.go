@@ -22,11 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/kimitsu-ai/ktsu/internal/builtins"
-	blobpkg "github.com/kimitsu-ai/ktsu/internal/builtins/blob"
 	envelopepkg "github.com/kimitsu-ai/ktsu/internal/builtins/envelope"
-	kvpkg "github.com/kimitsu-ai/ktsu/internal/builtins/kv"
-	logpkg "github.com/kimitsu-ai/ktsu/internal/builtins/log"
-	memorypkg "github.com/kimitsu-ai/ktsu/internal/builtins/memory"
 	"github.com/kimitsu-ai/ktsu/internal/config"
 	"github.com/kimitsu-ai/ktsu/internal/gateway"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator"
@@ -88,10 +84,6 @@ func startCmd() *cobra.Command {
 	start.AddCommand(startOrchestratorCmd())
 	start.AddCommand(startRuntimeCmd())
 	start.AddCommand(startGatewayCmd())
-	start.AddCommand(startBuiltinCmd("kv", 9100, func() builtins.BuiltinServer { return kvpkg.New() }, true))
-	start.AddCommand(startBuiltinCmd("blob", 9101, func() builtins.BuiltinServer { return blobpkg.New() }, true))
-	start.AddCommand(startBuiltinCmd("log", 9102, func() builtins.BuiltinServer { return logpkg.New() }, true))
-	start.AddCommand(startBuiltinCmd("memory", 9103, func() builtins.BuiltinServer { return memorypkg.New() }, true))
 	start.AddCommand(startBuiltinCmd("envelope", 9104, func() builtins.BuiltinServer { return envelopepkg.New() }, true))
 	return start
 }
