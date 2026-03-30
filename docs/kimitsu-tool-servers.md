@@ -7,13 +7,14 @@
 
 Tool servers are the atomic unit of Kimitsu. Every capability an agent has comes from a tool server. An agent with no tools can only reason about its inputs and produce output — it cannot call external services, read from storage, or cause side effects.
 
-There are three tiers of tool server references:
+There are two tiers of tool server references:
 
 | Tier | Declared in | Referenced in agent as | Versioned by |
 |---|---|---|---|
 | Marketplace | `servers.yaml` | name only (`sentiment-scorer`) | `servers.yaml` |
-| Local | `servers/*.server.yaml` | path (`./servers/wiki-search.server.yaml`) | the file itself |
-| Built-in | shipped with Kimitsu | name only (`ktsu/kv`) | Kimitsu release |
+| Local | `servers/*.server.yaml` | path (`servers/kv.server.yaml`) | the file itself |
+
+Shipped tool servers (kv, blob, log, etc.) are local tool servers that happen to ship with the Kimitsu binary. They get `.server.yaml` files like any other local server.
 
 ---
 
@@ -34,7 +35,7 @@ servers:
     version: "2.0.0"
 ```
 
-Local tool server files and built-in servers (`ktsu/*`) are never listed in `servers.yaml`.
+Local tool server files (`servers/*.server.yaml`) are not listed in `servers.yaml` — they are referenced directly by path in agent files.
 
 ---
 
@@ -101,39 +102,31 @@ The `allowlist` is enforced by the Agent Runtime — the agent only ever sees to
 
 ---
 
-## Built-in Tool Servers
+## Shipped Tool Servers
 
-Built-in tool servers are first-party MCP servers shipped as standalone Docker images by Kimitsu. They run on the internal network with well-known service names. Stateful built-in servers write to the orchestrator's state store via the orchestrator's internal HTTP API — the orchestrator remains the single writer to the database.
+Kimitsu ships first-party MCP servers as part of the binary. They are configured with `.server.yaml` files and started with `ktsu start <name>`, exactly like any other local tool server.
 
-### Unrestricted — Available to All Agents
+Stateful shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's internal HTTP API. The orchestrator remains the single writer to the database. These servers require `ORCHESTRATOR_URL` at startup.
 
-| Server | Tools | Description |
-|---|---|---|
-| `ktsu/format@1.0.0` | `format_json`, `format_yaml`, `format_template` | Format data as JSON, YAML, or Go template |
-| `ktsu/validate@1.0.0` | `validate_schema`, `validate_json` | Validate data against a JSON Schema or check JSON syntax |
-| `ktsu/transform@1.0.0` | `transform_jmespath`, `transform_map`, `transform_filter` | JMESPath operations over structured data |
+Stateless shipped servers (format, validate, transform, cli) have no orchestrator dependency.
 
-### Restricted — Pipeline Agents Only
+### Shipped Servers
 
-Only pipeline agents (not sub-agents) may declare these. The orchestrator does not include these endpoints in sub-agent invocation payloads.
-
-| Server | Tools | Description |
-|---|---|---|
-| `ktsu/kv@1.0.0` | `kv_get`, `kv_set`, `kv_delete` | Key-value storage scoped to agent namespace |
-| `ktsu/blob@1.0.0` | `blob_get`, `blob_put`, `blob_delete`, `blob_list` | Binary / file storage |
-| `ktsu/log@1.0.0` | `log_write`, `log_read`, `log_tail` | Structured run log |
-| `ktsu/memory@1.0.0` | `memory_store`, `memory_retrieve`, `memory_search`, `memory_forget` | Semantic vector memory (similarity search) |
-| `ktsu/envelope@1.0.0` | `envelope_get`, `envelope_set`, `envelope_append` | Read and write run envelope fields |
-
-**Why `ktsu/envelope` is restricted:** Although envelope reads have no side effects, they expose trigger context that may contain PII or sensitive routing information. Restricting access to pipeline agents prevents sub-agents from leaking this context into downstream tool calls or marketplace tool servers.
+| Server | Default Port | Tools | Description |
+|---|---|---|---|
+| `kv` | 9100 | `kv_get`, `kv_set`, `kv_delete` | Key-value storage scoped to agent namespace |
+| `blob` | 9101 | `blob_get`, `blob_put`, `blob_delete`, `blob_list` | Binary/file storage |
+| `log` | 9102 | `log_write`, `log_read`, `log_tail` | Structured run log |
+| `memory` | 9103 | `memory_store`, `memory_retrieve`, `memory_search`, `memory_forget` | Semantic vector memory |
+| `envelope` | 9104 | `envelope_get`, `envelope_set`, `envelope_append` | Read and write run envelope fields |
+| `format` | 9105 | `format_json`, `format_yaml`, `format_template` | Format data |
+| `validate` | 9106 | `validate_schema`, `validate_json` | Validate against JSON Schema |
+| `transform` | 9107 | `transform_jmespath`, `transform_map`, `transform_filter` | JMESPath operations |
+| `cli` | 9108 | `jq`, `grep`, `sed`, `awk`, `date`, `wc`, `diff`, `sort`, `uniq`, `cut`, `base64` | Unix CLI tools as typed MCP tools |
 
 ### KV Scoping
 
 The orchestrator automatically namespaces KV keys under the calling agent's `step_id`. Two agents calling `kv-set` with the same key name do not collide.
-
-### Built-in Tool Server Versioning
-
-Built-in tool servers are versioned and shipped as independent images. When a new image ships `ktsu/kv@2.0.0`, existing workflows referencing `@1.0.0` continue to work during a deprecation window. After the deprecation window, the old version is removed and builds referencing it fail with a clear migration error.
 
 ---
 
@@ -141,18 +134,18 @@ Built-in tool servers are versioned and shipped as independent images. When a ne
 
 Kimitsu has two distinct access control mechanisms. They operate at different layers and serve different purposes.
 
-### Pipeline-Agent Restriction (Built-in Servers)
+### Pipeline-Agent Restriction (Stateful Servers)
 
-The `restricted` field on a built-in tool server controls which agent types may call it. It is enforced by the orchestrator when building invocation payloads.
+The `restricted` field on a tool server controls which agent types may call it. It is enforced by the orchestrator when building invocation payloads.
 
 | Level | Who can call | Used for |
 |---|---|---|
 | `restricted: false` | All agents including sub-agents | Pure, stateless tools. **Default.** |
 | `restricted: true` | Pipeline agents only | Storage, context, anything with side effects or sensitive data |
 
-Enforced at invocation time — the orchestrator only includes restricted tool server endpoints in pipeline agent invocation payloads, never in sub-agent payloads. Third-party tool servers cannot self-restrict; the `restricted` flag is only meaningful on built-in tool servers managed by Kimitsu.
+Enforced at invocation time — the orchestrator only includes restricted tool server endpoints in pipeline agent invocation payloads, never in sub-agent payloads.
 
-A sub-agent that could call `ktsu/kv` or `ktsu/envelope` would be able to cause side effects or read sensitive context outside the visibility of the pipeline DAG. Restricting these to pipeline agents keeps the side-effect and data-access surface fully visible in the agent YAML files that appear in the pipeline — auditable without tracing sub-agent chains.
+A sub-agent that could call kv or envelope would be able to cause side effects or read sensitive context outside the visibility of the pipeline DAG. Restricting these to pipeline agents keeps the side-effect and data-access surface fully visible in the agent YAML files that appear in the pipeline — auditable without tracing sub-agent chains.
 
 ### Tool-Level Access Policy (All Servers)
 
@@ -227,7 +220,7 @@ The allowlist narrows the callable surface. Container-level constraints (no netw
 
 ## `ktsu/cli` — CLI Tool Server
 
-`ktsu/cli` is a built-in tool server that wraps standard Unix CLI tools as typed MCP tools. Agents call CLI utilities the same way they call any other tool — over HTTP/SSE via MCP, same protocol, same mental model.
+`ktsu/cli` is a shipped tool server that wraps standard Unix CLI tools as typed MCP tools. Agents call CLI utilities the same way they call any other tool — over HTTP/SSE via MCP, same protocol, same mental model.
 
 ### Why a Server, Not Direct Invocation
 
@@ -235,7 +228,7 @@ Calling CLI tools directly from an agent reasoning loop has no interface contrac
 
 ### Standard Image
 
-`ktsu/cli@1.0.0` ships with a curated set of tools covering the most common pipeline needs:
+`ktsu/cli` ships with a curated set of tools covering the most common pipeline needs:
 
 | Tool | Description |
 |---|---|
