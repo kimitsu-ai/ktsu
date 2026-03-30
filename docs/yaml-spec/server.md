@@ -36,7 +36,6 @@ Kimitsu ships tool servers that run as standard MCP servers on default ports. Th
 | `format` | 9105 | `format_json`, `format_yaml`, `format_template` | Format data |
 | `validate` | 9106 | `validate_schema`, `validate_json` | Validate against JSON Schema |
 | `transform` | 9107 | `transform_jmespath`, `transform_map`, `transform_filter` | JMESPath operations |
-| `cli` | 9108 | `jq`, `grep`, `sed`, `awk`, `date`, `wc`, `diff`, `sort`, `uniq`, `cut`, `base64` | Unix CLI tools as typed MCP tools |
 
 ## Notes
 

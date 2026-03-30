@@ -138,8 +138,6 @@ Any agent may include reserved `ktsu_` prefixed fields in its output schema. The
 
 **Sub-agent server access is statically auditable.** A sub-agent cannot access any server endpoint not granted to its parent, and cannot have a wider allowlist than the parent for shared servers. This is validated at boot — not resolved silently at runtime. Version mismatches (parent on v1, sub-agent on v2) are caught as boot errors, not discovered in production.
 
-**`ktsu/cli` — CLI tools as typed MCP tools.** The standard CLI tool server wraps Unix utilities as named MCP tools with typed inputs. Agents call `jq`, `date`, `wc`, and others the same way they call any tool — over MCP, with the same access policy enforcement, the same audit trail in `skill_calls`, and the same container isolation. Custom images extend `ktsu/cli` as a base with a single Dockerfile and a local tool server file. No new concepts.
-
 **Sub-agents replace prompt skills.** LLM-backed reasoning tasks are modelled as full agents invoked by a parent, not as a special skill type. They get the full agent contract: typed output, Air-Lock validation, model declaration.
 
 **Declarative pipeline with typed IO contracts.** The full pipeline is declared in files with no code required. The Air-Lock validates every boundary.

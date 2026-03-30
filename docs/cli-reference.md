@@ -14,7 +14,7 @@ See also: [YAML Spec](yaml-spec/index.md) · [Overview](kimitsu-overview.md) · 
 | `ktsu start runtime` | Start the agent executor | Running the full stack or runtime only |
 | `ktsu start gateway` | Start the LLM gateway | Running the full stack or gateway only |
 | `ktsu start kv\|blob\|log\|memory\|envelope` | Start a stateful shipped tool server | Adding shipped state/storage tools to a running stack |
-| `ktsu start format\|validate\|transform\|cli` | Start a stateless shipped tool server | Adding shipped utility tools to a running stack |
+| `ktsu start format\|validate\|transform` | Start a stateless shipped tool server | Adding shipped utility tools to a running stack |
 | `ktsu invoke <workflow>` | Invoke a workflow | Development and testing |
 | `ktsu validate [project-dir]` | Validate config files | CI, pre-deploy checks, local debugging |
 | `ktsu new project <name>` | Scaffold a new project | Starting a new Kimitsu project |
@@ -160,7 +160,6 @@ ktsu start kv --port 9100 --orchestrator http://orchestrator:8080
 | `ktsu start format` | `9105` | Data formatting |
 | `ktsu start validate` | `9106` | Data validation |
 | `ktsu start transform` | `9107` | Data transformation |
-| `ktsu start cli` | `9108` | CLI command execution |
 
 **Flags (all stateless builtins):**
 
@@ -336,7 +335,6 @@ ktsu completion powershell | Out-String | Out-File -FilePath $profile
 | format | 9105 | `ktsu start format` |
 | validate | 9106 | `ktsu start validate` |
 | transform | 9107 | `ktsu start transform` |
-| cli | 9108 | `ktsu start cli` |
 
 All ports are configurable via `--port`.
 

@@ -108,7 +108,7 @@ Kimitsu ships first-party MCP servers as part of the binary. They are configured
 
 Stateful shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's internal HTTP API. The orchestrator remains the single writer to the database. These servers require `ORCHESTRATOR_URL` at startup.
 
-Stateless shipped servers (format, validate, transform, cli) have no orchestrator dependency.
+Stateless shipped servers (format, validate, transform) have no orchestrator dependency.
 
 ### Shipped Servers
 
@@ -122,8 +122,6 @@ Stateless shipped servers (format, validate, transform, cli) have no orchestrato
 | `format` | 9105 | `format_json`, `format_yaml`, `format_template` | Format data |
 | `validate` | 9106 | `validate_schema`, `validate_json` | Validate against JSON Schema |
 | `transform` | 9107 | `transform_jmespath`, `transform_map`, `transform_filter` | JMESPath operations |
-| `cli` | 9108 | `jq`, `grep`, `sed`, `awk`, `date`, `wc`, `diff`, `sort`, `uniq`, `cut`, `base64` | Unix CLI tools as typed MCP tools |
-
 ### KV Scoping
 
 The orchestrator automatically namespaces KV keys under the calling agent's `step_id`. Two agents calling `kv-set` with the same key name do not collide.
@@ -214,110 +212,7 @@ Both conditions are caught at boot — they are never silently resolved at runti
 
 #### Security Posture
 
-The allowlist narrows the callable surface. Container-level constraints (no network egress, resource limits, execution timeouts) restrict what permitted tools can do with their access. Neither layer alone is a hard sandbox. For sensitive contexts, both are required. The docs for `ktsu/cli` describe this in detail.
-
----
-
-## `ktsu/cli` — CLI Tool Server
-
-`ktsu/cli` is a shipped tool server that wraps standard Unix CLI tools as typed MCP tools. Agents call CLI utilities the same way they call any other tool — over HTTP/SSE via MCP, same protocol, same mental model.
-
-### Why a Server, Not Direct Invocation
-
-Calling CLI tools directly from an agent reasoning loop has no interface contract, no typed inputs, no audit trail, and no access policy. Wrapping them as a tool server gives you all of that for free: typed inputs validated before execution, every call recorded in `skill_calls`, allowlist enforcement by the Agent Runtime, and container-level isolation.
-
-### Standard Image
-
-`ktsu/cli` ships with a curated set of tools covering the most common pipeline needs:
-
-| Tool | Description |
-|---|---|
-| `jq` | Filter and transform JSON |
-| `grep` | Search text by pattern |
-| `sed` | Stream text editing |
-| `awk` | Field extraction and text processing |
-| `date` | Date formatting and arithmetic |
-| `wc` | Word, line, and byte counting |
-| `diff` | Compare two text inputs |
-| `sort` | Sort lines |
-| `uniq` | Deduplicate adjacent lines |
-| `cut` | Extract fields by delimiter |
-| `base64` | Encode and decode base64 |
-| `jq` | JSON filter and transform |
-
-Each tool is exposed as a named MCP tool with typed inputs — the server never accepts a raw shell command string. The agent provides values for the declared input fields; the server constructs the full command internally. No shell interpolation, no passthrough of arbitrary strings.
-
-### Referencing the Standard Image
-
-```yaml
-# servers/cli.server.yaml
-name: cli
-description: Standard Unix CLI tools.
-url: "http://ktsu-cli:8080"
-```
-
-Then in your agent, reference it with an allowlist for just the tools you need:
-
-```yaml
-servers:
-  - name: cli
-    path: servers/cli.server.yaml
-    access:
-      allowlist: [jq, date, wc]
-```
-
-And in Docker Compose:
-
-```yaml
-  ktsu-cli:
-    image: ktsu/cli:1.0.0
-    # no ORCHESTRATOR_URL — cli is stateless, no back-channel needed
-    # no network egress by default
-```
-
-### Custom CLI Image
-
-To add tools not in the standard image, extend `ktsu/cli` as a base:
-
-```dockerfile
-# Dockerfile
-FROM ktsu/cli:1.0.0
-RUN apt-get update && apt-get install -y \
-    imagemagick \
-    ghostscript \
-    pandoc
-```
-
-Then declare a local tool server file pointing at your custom image:
-
-```yaml
-# servers/cli-custom.server.yaml
-name: cli-custom
-description: Extended CLI tools — image and document processing.
-url: "http://cli-custom:8080"
-```
-
-And in Docker Compose:
-
-```yaml
-  cli-custom:
-    image: myproject/cli-custom:1.0.0
-    build:
-      context: ./docker/cli-custom
-```
-
-The agent references `"./servers/cli-custom.server.yaml"` exactly like any other local tool server. No new concepts.
-
-### Container Constraints
-
-`ktsu/cli` and custom CLI images run with the following constraints enforced at the container level:
-
-- **No network egress.** The container has no outbound internet access. Tools that make network calls (curl, wget) are not included in the standard image and should not be added to custom images unless explicitly needed and declared with `egress: true`.
-- **Read-only filesystem.** The container filesystem is read-only except for a tightly scoped scratch directory mounted at `/tmp/ktsu-scratch`. Tool outputs that need to persist between calls should be written to `ktsu/blob` via the parent agent.
-- **Execution timeout.** Each tool call has a maximum execution time (default: 30s). Runaway processes are killed and the tool call fails with `execution_timeout`.
-- **Resource limits.** CPU and memory limits are set at the container level via Docker or the orchestrator's container runtime configuration.
-
-The allowlist narrows which tools can be called. The container constraints limit what those tools can do. Both layers are required — neither alone is sufficient for a sensitive deployment.
+The allowlist narrows the callable surface. Container-level constraints (no network egress, resource limits, execution timeouts) restrict what permitted tools can do with their access. Neither layer alone is a hard sandbox. For sensitive contexts, both are required.
 
 ---
 

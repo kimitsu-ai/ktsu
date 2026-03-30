@@ -33,7 +33,7 @@ An Kimitsu deployment consists of four container tiers running on a shared inter
 │  │                                                      │   │
 │  │  ktsu/kv   ktsu/blob   ktsu/log   ktsu/envelope          │   │
 │  │  ktsu/memory   ktsu/format   ktsu/validate              │   │
-│  │  ktsu/cli   ktsu/transform                             │   │
+│  │  ktsu/transform                                        │   │
 │  │                                                      │   │
 │  │  Stateful servers call back to orchestrator HTTP API │   │
 │  └──────────────────────────────────────────────────────┘   │
@@ -104,7 +104,7 @@ The heartbeat is lightweight — even with 10 runtime instances each running 100
 
 Shipped tool servers are first-party MCP servers that ship with the Kimitsu binary. They are configured with `.server.yaml` files and referenced by path in agent configs, exactly like any other local tool server.
 
-Stateful shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's HTTP API. Each requires `ORCHESTRATOR_URL` at startup. Stateless shipped servers (format, validate, transform, cli) have no orchestrator dependency.
+Stateful shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's HTTP API. Each requires `ORCHESTRATOR_URL` at startup. Stateless shipped servers (format, validate, transform) have no orchestrator dependency.
 
 ### User-Provided Tool Servers
 
