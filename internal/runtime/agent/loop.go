@@ -26,12 +26,6 @@ type gatewayRequest struct {
 	Tools     []toolDef `json:"tools,omitempty"`
 }
 
-// Message is a single conversation turn sent to the gateway.
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
 // toolDef mirrors providers.ToolDefinition for the gateway wire format.
 type toolDef struct {
 	Name        string         `json:"name"`
