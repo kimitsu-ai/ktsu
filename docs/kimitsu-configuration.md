@@ -322,7 +322,7 @@ The orchestrator validates the full dependency graph at startup before any conta
                     access, version mismatches, empty intersections, or near-match
                     URL warnings
 7.  check-tools     Verify marketplace tool names exist in servers.yaml;
-                    verify no sub-agent declares restricted built-in tool servers;
+                    verify no sub-agent declares restricted tool servers;
                     verify every tool name in each access.allowlist exists in the
                     server's declared tools interface — typos are boot errors;
                     verify allowlist entries are valid (exact name, prefix-*, or *
@@ -337,7 +337,7 @@ The orchestrator validates the full dependency graph at startup before any conta
 9.  check-inputs    Verify agent inputs match depends_on — no undeclared dependencies
 10. policy          Apply env model_policy, verify all declared groups exist in gateway.yaml
 11. recover         Check for in-flight runs from a previous crash, resolve stale steps
-12. start-builtins  Start built-in tool server containers, wait for health checks;
+12. start-servers   Start shipped tool server processes, wait for health checks;
                     verify stateful servers can reach orchestrator back-channel
 13. start-runtime   Start Agent Runtime instances, wait for health checks
 14. start-gateway   Start LLM Gateway, verify provider connectivity
@@ -350,8 +350,7 @@ The orchestrator validates the full dependency graph at startup before any conta
 for each agent tool reference:
   if marketplace name:    → must exist in servers.yaml
   if local path:          → file must exist on disk
-  if built-in (ktsu/*):    → always valid
-  if restricted built-in in a sub-agent: → fail
+  if restricted server in a sub-agent: → fail
 
 for each tool server file with access.allowlist:
   for each entry in allowlist:
