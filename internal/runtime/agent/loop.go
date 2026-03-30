@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,6 +16,20 @@ import (
 
 const forcedConclusionMessage = "You have reached the maximum number of tool calls. Provide your final answer now without requesting any additional tools."
 const jsonCorrectionMessage = "Your response was not valid JSON. Please respond with only a valid JSON object and nothing else."
+
+// errPendingApproval is returned by run() when a tool call requires human approval.
+type errPendingApproval struct {
+	ToolName        string
+	ToolUseID       string
+	Arguments       map[string]any
+	OnReject        string
+	TimeoutMS       int64
+	TimeoutBehavior string
+}
+
+func (e *errPendingApproval) Error() string {
+	return fmt.Sprintf("pending_approval: %s", e.ToolName)
+}
 
 // gatewayRequest is the JSON body sent to POST {gateway}/invoke.
 type gatewayRequest struct {
@@ -78,18 +93,36 @@ func NewLoop(gatewayURL string, mcpClient *mcp.Client) *Loop {
 func (l *Loop) Run(ctx context.Context, req InvokeRequest) CallbackPayload {
 	start := time.Now()
 	payload := CallbackPayload{
-		RunID:  req.RunID,
-		StepID: req.StepID,
+		RunID:    req.RunID,
+		StepID:   req.StepID,
+		IsResume: req.IsResume,
 	}
 
-	output, rawOutput, metrics, err := l.run(ctx, req)
+	output, rawOutput, messages, metrics, err := l.run(ctx, req)
 	metrics.DurationMS = time.Since(start).Milliseconds()
 	payload.Metrics = metrics
+	payload.Messages = messages
 
 	if err != nil {
-		payload.Status = "failed"
-		payload.Error = err.Error()
-		payload.RawOutput = rawOutput
+		var pendingErr *errPendingApproval
+		if errors.As(err, &pendingErr) {
+			payload.Status = "pending_approval"
+			payload.PendingApproval = &PendingApproval{
+				ToolName:        pendingErr.ToolName,
+				ToolUseID:       pendingErr.ToolUseID,
+				Arguments:       pendingErr.Arguments,
+				OnReject:        pendingErr.OnReject,
+				TimeoutMS:       pendingErr.TimeoutMS,
+				TimeoutBehavior: pendingErr.TimeoutBehavior,
+			}
+			if raw, marshalErr := json.Marshal(req); marshalErr == nil {
+				payload.OriginalRequest = raw
+			}
+		} else {
+			payload.Status = "failed"
+			payload.Error = err.Error()
+			payload.RawOutput = rawOutput
+		}
 	} else {
 		payload.Status = "ok"
 		payload.Output = output
@@ -97,25 +130,26 @@ func (l *Loop) Run(ctx context.Context, req InvokeRequest) CallbackPayload {
 	return payload
 }
 
-func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, string, Metrics, error) {
+func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, string, []Message, Metrics, error) {
 	var metrics Metrics
 
 	// --- Tool discovery ---
 	// toolByName maps tool name → ToolServerSpec (for routing tool calls with auth).
 	// tools is the flat list sent to the gateway.
 	type serverRef struct {
-		url       string
-		authToken string
+		url           string
+		authToken     string
+		approvalRules []ToolApprovalRule
 	}
 	toolByName := make(map[string]serverRef)
 	var tools []toolDef
 	for _, srv := range req.ToolServers {
 		discovered, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.AuthToken, srv.Allowlist)
 		if err != nil {
-			return nil, "", metrics, fmt.Errorf("discover tools from %s: %w", srv.Name, err)
+			return nil, "", nil, metrics, fmt.Errorf("discover tools from %s: %w", srv.Name, err)
 		}
 		for _, t := range discovered {
-			toolByName[t.Name] = serverRef{url: srv.URL, authToken: srv.AuthToken}
+			toolByName[t.Name] = serverRef{url: srv.URL, authToken: srv.AuthToken, approvalRules: srv.ApprovalRules}
 			tools = append(tools, toolDef{
 				Name:        t.Name,
 				Description: t.Description,
@@ -127,7 +161,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 	// --- Initial messages ---
 	inputJSON, err := json.Marshal(req.Input)
 	if err != nil {
-		return nil, "", metrics, fmt.Errorf("marshal input: %w", err)
+		return nil, "", nil, metrics, fmt.Errorf("marshal input: %w", err)
 	}
 	systemPrompt := req.System
 	if len(req.OutputSchema) > 0 {
@@ -136,14 +170,70 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 			systemPrompt += "\n\nYour output MUST conform to this JSON schema:\n" + string(schemaJSON)
 		}
 	}
-	messages := []Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: string(inputJSON)},
+
+	var messages []Message
+	if len(req.Messages) > 0 {
+		// Resume from checkpoint — use the saved context directly.
+		messages = req.Messages
+	} else {
+		messages = []Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: string(inputJSON)},
+		}
 	}
 
 	maxTurns := req.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 10 // sensible default
+	}
+
+	// Resume: execute any pre-approved tool calls before entering the main loop.
+	if len(req.ApprovedToolCalls) > 0 {
+		approvedSet := make(map[string]bool, len(req.ApprovedToolCalls))
+		for _, id := range req.ApprovedToolCalls {
+			approvedSet[id] = true
+		}
+		for _, msg := range messages {
+			if msg.Role != "assistant" {
+				continue
+			}
+			var blocks []map[string]any
+			if jsonErr := json.Unmarshal([]byte(msg.Content), &blocks); jsonErr != nil {
+				continue
+			}
+			for _, block := range blocks {
+				if block["type"] != "tool_use" {
+					continue
+				}
+				id, _ := block["id"].(string)
+				if !approvedSet[id] {
+					continue
+				}
+				name, _ := block["name"].(string)
+				input, _ := block["input"].(map[string]any)
+				sref, ok := toolByName[name]
+				if !ok {
+					return nil, "", messages, metrics, fmt.Errorf("tool_not_permitted: %s", name)
+				}
+				argsJSON, _ := json.Marshal(input)
+				log.Printf("[agent] run=%s step=%s tool=%s args=%s (pre-approved resume)", req.RunID, req.StepID, name, argsJSON)
+				result, err := l.mcpClient.CallTool(ctx, sref.url, sref.authToken, name, input)
+				if err != nil {
+					return nil, "", messages, metrics, fmt.Errorf("tool call %s: %w", name, err)
+				}
+				metrics.ToolCalls++
+				resultText := ""
+				if len(result.Content) > 0 {
+					resultText = result.Content[0].Text
+				}
+				toolResultContent, _ := json.Marshal([]map[string]any{{
+					"type":        "tool_result",
+					"tool_use_id": id,
+					"content":     resultText,
+				}})
+				messages = append(messages, Message{Role: "user", Content: string(toolResultContent)})
+			}
+		}
 	}
 
 	var lastInvalidContent string
@@ -159,7 +249,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 
 		gwResp, err := l.callGateway(ctx, req, messages, turnTools)
 		if err != nil {
-			return nil, "", metrics, err
+			return nil, "", messages, metrics, err
 		}
 
 		metrics.LLMCalls++
@@ -174,13 +264,34 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 			for _, tc := range gwResp.ToolCalls {
 				sref, ok := toolByName[tc.Name]
 				if !ok {
-					return nil, "", metrics, fmt.Errorf("tool_not_permitted: %s", tc.Name)
+					return nil, "", messages, metrics, fmt.Errorf("tool_not_permitted: %s", tc.Name)
 				}
+
+				// Check if this tool requires human approval.
+				if rule := findApprovalRule(tc.Name, sref.approvalRules); rule != nil {
+					// Append the assistant tool_use block to the checkpoint messages.
+					toolUseContent, _ := json.Marshal([]map[string]any{{
+						"type":  "tool_use",
+						"id":    tc.ID,
+						"name":  tc.Name,
+						"input": tc.Arguments,
+					}})
+					messages = append(messages, Message{Role: "assistant", Content: string(toolUseContent)})
+					return nil, "", messages, metrics, &errPendingApproval{
+						ToolName:        tc.Name,
+						ToolUseID:       tc.ID,
+						Arguments:       tc.Arguments,
+						OnReject:        rule.OnReject,
+						TimeoutMS:       rule.TimeoutMS,
+						TimeoutBehavior: rule.TimeoutBehavior,
+					}
+				}
+
 				argsJSON, _ := json.Marshal(tc.Arguments)
 				log.Printf("[agent] run=%s step=%s tool=%s args=%s", req.RunID, req.StepID, tc.Name, argsJSON)
 				result, err := l.mcpClient.CallTool(ctx, sref.url, sref.authToken, tc.Name, tc.Arguments)
 				if err != nil {
-					return nil, "", metrics, fmt.Errorf("tool call %s: %w", tc.Name, err)
+					return nil, "", messages, metrics, fmt.Errorf("tool call %s: %w", tc.Name, err)
 				}
 				metrics.ToolCalls++
 
@@ -217,7 +328,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 			messages = append(messages, Message{Role: "user", Content: jsonCorrectionMessage})
 			continue
 		}
-		return output, "", metrics, nil
+		return output, "", messages, metrics, nil
 	}
 
 	// Free JSON correction: if the loop exhausted all turns but the last
@@ -227,7 +338,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 	if lastInvalidContent != "" {
 		gwResp, err := l.callGateway(ctx, req, messages, nil)
 		if err != nil {
-			return nil, lastInvalidContent, metrics, fmt.Errorf("max_turns_exceeded")
+			return nil, lastInvalidContent, messages, metrics, fmt.Errorf("max_turns_exceeded")
 		}
 		metrics.LLMCalls++
 		metrics.TokensIn += gwResp.TokensIn
@@ -235,11 +346,11 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 		metrics.CostUSD += gwResp.CostUSD
 
 		if output, err := parseOutput(gwResp.Content); err == nil {
-			return output, "", metrics, nil
+			return output, "", messages, metrics, nil
 		}
 	}
 
-	return nil, lastInvalidContent, metrics, fmt.Errorf("max_turns_exceeded")
+	return nil, lastInvalidContent, messages, metrics, fmt.Errorf("max_turns_exceeded")
 }
 
 // callGateway POSTs to the gateway /invoke and returns the parsed response.
@@ -312,4 +423,28 @@ func stripCodeFence(s string) string {
 		s = s[:idx]
 	}
 	return strings.TrimSpace(s)
+}
+
+// matchesPattern reports whether toolName matches pattern.
+// Supports exact names, "prefix-*" wildcards, and "*" for all tools.
+func matchesPattern(toolName, pattern string) bool {
+	if pattern == "*" {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(toolName, prefix)
+	}
+	return toolName == pattern
+}
+
+// findApprovalRule returns the first ToolApprovalRule whose pattern matches
+// toolName, or nil if no rule matches.
+func findApprovalRule(toolName string, rules []ToolApprovalRule) *ToolApprovalRule {
+	for i := range rules {
+		if matchesPattern(toolName, rules[i].Pattern) {
+			return &rules[i]
+		}
+	}
+	return nil
 }
