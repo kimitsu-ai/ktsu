@@ -222,7 +222,7 @@ ktsu validate [project-dir] [flags]
 |---|---|---|
 | `[project-dir]` | `.` | Project root directory |
 | `--env` | `""` | Path to environment config to validate |
-| `--workflow-dir` | `<project-dir>/workflows` | Directory of `*.workflow.yaml` files |
+| `--workflow-dir` | `""` | Directory of `*.workflow.yaml` files (defaults to `<project-dir>/workflows`) |
 | `--graph` | `false` | Output Mermaid graph of workflows instead of text summary |
 
 **Default output** (without `--graph`): colored text grouped by Workflows / Agents / Servers / Systems, with a summary line.
