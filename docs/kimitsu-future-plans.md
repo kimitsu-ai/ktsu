@@ -37,7 +37,6 @@ The following components are implemented and tested:
 
 **Shipped Tool Servers** (standalone, started via `ktsu start <name>`)
 - `ktsu/kv`, `ktsu/blob`, `ktsu/log`, `ktsu/memory`, `ktsu/envelope`
-- `ktsu/format`, `ktsu/validate`, `ktsu/transform`
 
 **Config & Boot**
 - YAML loaders for workflow, agent, env, gateway, server manifest

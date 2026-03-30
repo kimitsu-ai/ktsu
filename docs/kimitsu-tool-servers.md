@@ -106,9 +106,7 @@ The `allowlist` is enforced by the Agent Runtime — the agent only ever sees to
 
 Kimitsu ships first-party MCP servers as part of the binary. They are configured with `.server.yaml` files and started with `ktsu start <name>`, exactly like any other local tool server.
 
-Stateful shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's internal HTTP API. The orchestrator remains the single writer to the database. These servers require `ORCHESTRATOR_URL` at startup.
-
-Stateless shipped servers (format, validate, transform) have no orchestrator dependency.
+All shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's internal HTTP API. The orchestrator remains the single writer to the database. These servers require `ORCHESTRATOR_URL` at startup.
 
 ### Shipped Servers
 
@@ -119,9 +117,6 @@ Stateless shipped servers (format, validate, transform) have no orchestrator dep
 | `log` | 9102 | `log_write`, `log_read`, `log_tail` | Structured run log |
 | `memory` | 9103 | `memory_store`, `memory_retrieve`, `memory_search`, `memory_forget` | Semantic vector memory |
 | `envelope` | 9104 | `envelope_get`, `envelope_set`, `envelope_append` | Read and write run envelope fields |
-| `format` | 9105 | `format_json`, `format_yaml`, `format_template` | Format data |
-| `validate` | 9106 | `validate_schema`, `validate_json` | Validate against JSON Schema |
-| `transform` | 9107 | `transform_jmespath`, `transform_map`, `transform_filter` | JMESPath operations |
 ### KV Scoping
 
 The orchestrator automatically namespaces KV keys under the calling agent's `step_id`. Two agents calling `kv-set` with the same key name do not collide.

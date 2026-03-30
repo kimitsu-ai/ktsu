@@ -31,9 +31,8 @@ An Kimitsu deployment consists of four container tiers running on a shared inter
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │  Shipped Tool Servers  (first-party, standard MCP) │   │
 │  │                                                      │   │
-│  │  ktsu/kv   ktsu/blob   ktsu/log   ktsu/envelope          │   │
-│  │  ktsu/memory   ktsu/format   ktsu/validate              │   │
-│  │  ktsu/transform                                        │   │
+│  │  ktsu/kv   ktsu/blob   ktsu/log                          │   │
+│  │  ktsu/memory   ktsu/envelope                            │   │
 │  │                                                      │   │
 │  │  Stateful servers call back to orchestrator HTTP API │   │
 │  └──────────────────────────────────────────────────────┘   │
@@ -104,7 +103,7 @@ The heartbeat is lightweight — even with 10 runtime instances each running 100
 
 Shipped tool servers are first-party MCP servers that ship with the Kimitsu binary. They are configured with `.server.yaml` files and referenced by path in agent configs, exactly like any other local tool server.
 
-Stateful shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's HTTP API. Each requires `ORCHESTRATOR_URL` at startup. Stateless shipped servers (format, validate, transform) have no orchestrator dependency.
+All shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's HTTP API. Each requires `ORCHESTRATOR_URL` at startup.
 
 ### User-Provided Tool Servers
 
@@ -222,7 +221,7 @@ This keeps the circuit breaker fast (no DB read per call) and the gateway statel
 | Orchestrator | Single instance (HA pair for production) | Deterministic, low CPU — manages DAG state |
 | Agent Runtime | Horizontal — 1 to N instances | I/O-bound event loop; add instances for concurrency |
 | LLM Gateway | Horizontal — 1 to N instances | Proxies concurrent LLM calls; stateless |
-| Shipped tool servers | Kimitsu-managed — one instance per server type | Stateless servers scale horizontally; stateful servers are single-instance by default |
+| Shipped tool servers | Kimitsu-managed — one instance per server type | Stateful servers are single-instance by default |
 | User-provided tool servers | Operator-managed | Kimitsu does not manage user tool server scaling |
 
 ---

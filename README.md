@@ -170,17 +170,14 @@ KTSU_GATEWAY_URL=http://llm-gateway.internal:8081 \
 | log | `ktsu start log` | 9102 |
 | memory | `ktsu start memory` | 9103 |
 | envelope | `ktsu start envelope` | 9104 |
-| format | `ktsu start format` | 9105 |
-| validate | `ktsu start validate` | 9106 |
-| transform | `ktsu start transform` | 9107 |
 
-All built-in servers accept `--host` and `--port`. Stateful built-ins also accept `--orchestrator` (reads `KTSU_ORCHESTRATOR_URL`):
+All built-in servers accept `--host`, `--port`, and `--orchestrator` (reads `KTSU_ORCHESTRATOR_URL`):
 
 ```sh
 go run ./cmd/ktsu start kv --host 0.0.0.0 --port 9100 --orchestrator http://orchestrator.internal:8080
 ```
 
-Stateful built-ins (`kv`, `blob`, `log`, `memory`, `envelope`) register with the orchestrator on startup and require `--orchestrator` to be set. Stateless built-ins (`format`, `validate`, `transform`) do not.
+All built-in servers register with the orchestrator on startup and require `--orchestrator` to be set.
 
 ## Other commands
 

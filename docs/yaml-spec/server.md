@@ -33,9 +33,6 @@ Kimitsu ships tool servers that run as standard MCP servers on default ports. Th
 | `log` | 9102 | `log_write`, `log_read`, `log_tail` | Structured run log |
 | `memory` | 9103 | `memory_store`, `memory_retrieve`, `memory_search`, `memory_forget` | Semantic vector memory |
 | `envelope` | 9104 | `envelope_get`, `envelope_set`, `envelope_append` | Read and write run envelope fields |
-| `format` | 9105 | `format_json`, `format_yaml`, `format_template` | Format data |
-| `validate` | 9106 | `validate_schema`, `validate_json` | Validate against JSON Schema |
-| `transform` | 9107 | `transform_jmespath`, `transform_map`, `transform_filter` | JMESPath operations |
 
 ## Notes
 

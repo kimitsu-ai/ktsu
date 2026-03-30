@@ -14,7 +14,6 @@ See also: [YAML Spec](yaml-spec/index.md) · [Overview](kimitsu-overview.md) · 
 | `ktsu start runtime` | Start the agent executor | Running the full stack or runtime only |
 | `ktsu start gateway` | Start the LLM gateway | Running the full stack or gateway only |
 | `ktsu start kv\|blob\|log\|memory\|envelope` | Start a stateful shipped tool server | Adding shipped state/storage tools to a running stack |
-| `ktsu start format\|validate\|transform` | Start a stateless shipped tool server | Adding shipped utility tools to a running stack |
 | `ktsu invoke <workflow>` | Invoke a workflow | Development and testing |
 | `ktsu validate [project-dir]` | Validate config files | CI, pre-deploy checks, local debugging |
 | `ktsu new project <name>` | Scaffold a new project | Starting a new Kimitsu project |
@@ -128,7 +127,7 @@ ktsu start gateway --config gateway.yaml --port 8081
 
 ### Shipped Tool Servers
 
-Built-in servers are MCP-compatible tool providers. Stateful servers register with the orchestrator on startup; stateless servers do not.
+Built-in servers are MCP-compatible tool providers. All shipped servers register with the orchestrator on startup and require `--orchestrator`.
 
 #### Stateful (require `--orchestrator`)
 
@@ -151,26 +150,6 @@ Built-in servers are MCP-compatible tool providers. Stateful servers register wi
 ```bash
 ktsu start kv
 ktsu start kv --port 9100 --orchestrator http://orchestrator:8080
-```
-
-#### Stateless (no orchestrator needed)
-
-| Command | Default Port | Description |
-|---|---|---|
-| `ktsu start format` | `9105` | Data formatting |
-| `ktsu start validate` | `9106` | Data validation |
-| `ktsu start transform` | `9107` | Data transformation |
-
-**Flags (all stateless builtins):**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--host` | `""` | Host interface to bind |
-| `--port` | *(see table above)* | Port to listen on |
-
-```bash
-ktsu start format
-ktsu start transform --port 9107
 ```
 
 ---
@@ -332,9 +311,6 @@ ktsu completion powershell | Out-String | Out-File -FilePath $profile
 | log | 9102 | `ktsu start log` |
 | memory | 9103 | `ktsu start memory` |
 | envelope | 9104 | `ktsu start envelope` |
-| format | 9105 | `ktsu start format` |
-| validate | 9106 | `ktsu start validate` |
-| transform | 9107 | `ktsu start transform` |
 
 All ports are configurable via `--port`.
 
