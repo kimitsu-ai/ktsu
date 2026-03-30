@@ -26,6 +26,7 @@ type WorkflowInput struct {
 // PipelineStep is one entry in pipeline[]. Exactly one of Agent/Transform/Webhook is set.
 type PipelineStep struct {
 	ID                  string                 `yaml:"id"`
+	On                  string                 `yaml:"on,omitempty"` // "approval" — fires when a depends_on step enters pending_approval
 	Agent               string                 `yaml:"agent,omitempty"`
 	Transform           *TransformSpec         `yaml:"transform,omitempty"`
 	Webhook             *WebhookSpec           `yaml:"webhook,omitempty"`
