@@ -29,7 +29,7 @@ An Kimitsu deployment consists of four container tiers running on a shared inter
 │                      └──────────────┘                       │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │  Built-in Tool Servers  (first-party, Kimitsu-managed) │   │
+│  │  Shipped Tool Servers  (first-party, standard MCP) │   │
 │  │                                                      │   │
 │  │  ktsu/kv   ktsu/blob   ktsu/log   ktsu/envelope          │   │
 │  │  ktsu/memory   ktsu/format   ktsu/validate              │   │
@@ -100,11 +100,11 @@ If a runtime stops heartbeating entirely, all steps the orchestrator dispatched 
 
 The heartbeat is lightweight — even with 10 runtime instances each running 100 concurrent invocations, the orchestrator receives 10 HTTP requests every 5 seconds. The DB write is a single bulk update.
 
-### Built-in Tool Servers
+### Shipped Tool Servers
 
-Built-in tool servers are first-party MCP servers shipped as standalone Docker images by Kimitsu. They are a distinct tier from user-provided tool servers — Kimitsu manages their lifecycle, they run on the internal network with well-known service names, and stateful built-in servers have a back-channel dependency on the orchestrator. They write to the orchestrator's state store via the orchestrator's internal HTTP API — the orchestrator remains the single writer to the database.
+Shipped tool servers are first-party MCP servers that ship with the Kimitsu binary. They are configured with `.server.yaml` files and referenced by path in agent configs, exactly like any other local tool server.
 
-This back-channel is a meaningful architectural distinction. `ktsu/kv` and `ktsu/blob` are not independent MCP servers that happen to run nearby — they are part of the Kimitsu state surface. Each stateful built-in server requires `ORCHESTRATOR_URL` at startup and calls back in to write state. Stateless built-in servers (`ktsu/cli`, `ktsu/format`, `ktsu/validate`, `ktsu/transform`) have no orchestrator dependency and can be run without one.
+Stateful shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's HTTP API. Each requires `ORCHESTRATOR_URL` at startup. Stateless shipped servers (format, validate, transform, cli) have no orchestrator dependency.
 
 ### User-Provided Tool Servers
 
