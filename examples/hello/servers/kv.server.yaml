@@ -1,0 +1,3 @@
+name: kv
+description: "Key-value storage scoped to agent namespace"
+url: "http://localhost:9100"

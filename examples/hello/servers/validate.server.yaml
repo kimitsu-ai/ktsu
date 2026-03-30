@@ -1,0 +1,3 @@
+name: validate
+description: "Validate data against JSON Schema"
+url: "http://localhost:9106"
