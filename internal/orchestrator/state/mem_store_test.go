@@ -2,6 +2,8 @@ package state
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -255,6 +257,97 @@ func TestMemStore_ListSteps_unknownRunReturnsEmpty(t *testing.T) {
 	}
 	if len(steps) != 0 {
 		t.Errorf("want 0 steps, got %d", len(steps))
+	}
+}
+
+func TestMemStore_ApprovalCRUD(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+
+	approval := &types.Approval{
+		RunID:           "run-a",
+		StepID:          "step-a",
+		ToolName:        "delete-file",
+		ToolUseID:       "tc1",
+		Arguments:       map[string]any{"path": "/tmp/x"},
+		OnReject:        "fail",
+		TimeoutMS:       30000,
+		TimeoutBehavior: "reject",
+		Status:          types.ApprovalStatusPending,
+		CreatedAt:       time.Now(),
+		OriginalRequest: json.RawMessage(`{"run_id":"run-a"}`),
+		PartialMetrics:  types.StepMetrics{TokensIn: 50},
+	}
+
+	// Create
+	if err := store.CreateApproval(ctx, approval); err != nil {
+		t.Fatalf("CreateApproval: %v", err)
+	}
+
+	// Duplicate create should fail
+	if err := store.CreateApproval(ctx, approval); err == nil {
+		t.Error("expected error for duplicate CreateApproval")
+	}
+
+	// Get
+	got, err := store.GetApproval(ctx, "run-a", "step-a")
+	if err != nil {
+		t.Fatalf("GetApproval: %v", err)
+	}
+	if got.ToolName != "delete-file" {
+		t.Errorf("ToolName: got %q", got.ToolName)
+	}
+	if got.PartialMetrics.TokensIn != 50 {
+		t.Errorf("PartialMetrics.TokensIn: got %d", got.PartialMetrics.TokensIn)
+	}
+
+	// Update
+	got.Status = types.ApprovalStatusApproved
+	if err := store.UpdateApproval(ctx, got); err != nil {
+		t.Fatalf("UpdateApproval: %v", err)
+	}
+
+	// ListPendingApprovals — should not include the approved one
+	pending, err := store.ListPendingApprovals(ctx)
+	if err != nil {
+		t.Fatalf("ListPendingApprovals: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending approvals after update, got %d", len(pending))
+	}
+}
+
+func TestMemStore_ListPendingApprovals_Multiple(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		a := &types.Approval{
+			RunID:     fmt.Sprintf("run-%d", i),
+			StepID:    "step-1",
+			ToolName:  "delete-x",
+			Status:    types.ApprovalStatusPending,
+			CreatedAt: time.Now(),
+		}
+		if err := store.CreateApproval(ctx, a); err != nil {
+			t.Fatalf("CreateApproval %d: %v", i, err)
+		}
+	}
+
+	pending, err := store.ListPendingApprovals(ctx)
+	if err != nil {
+		t.Fatalf("ListPendingApprovals: %v", err)
+	}
+	if len(pending) != 3 {
+		t.Errorf("expected 3 pending approvals, got %d", len(pending))
+	}
+}
+
+func TestMemStore_GetApproval_NotFound(t *testing.T) {
+	store := NewMemStore()
+	_, err := store.GetApproval(context.Background(), "no-run", "no-step")
+	if err == nil {
+		t.Error("expected error for missing approval")
 	}
 }
 

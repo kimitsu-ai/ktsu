@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -10,24 +11,28 @@ import (
 )
 
 var (
-	errRunNotFound      = errors.New("run not found")
-	errRunAlreadyExists = errors.New("run already exists")
-	errStepNotFound     = errors.New("step not found")
-	errStepAlreadyExists = errors.New("step already exists")
+	errRunNotFound           = errors.New("run not found")
+	errRunAlreadyExists      = errors.New("run already exists")
+	errStepNotFound          = errors.New("step not found")
+	errStepAlreadyExists     = errors.New("step already exists")
+	errApprovalNotFound      = errors.New("approval not found")
+	errApprovalAlreadyExists = errors.New("approval already exists")
 )
 
 // MemStore is an in-memory implementation of Store, intended for testing.
 type MemStore struct {
-	mu    sync.RWMutex
-	runs  map[string]*types.Run
-	steps map[string]map[string]*types.Step // runID → stepID → Step
+	mu        sync.RWMutex
+	runs      map[string]*types.Run
+	steps     map[string]map[string]*types.Step // runID → stepID → Step
+	approvals map[string]*types.Approval        // key: runID+"/"+stepID
 }
 
 // NewMemStore returns a new, empty MemStore.
 func NewMemStore() *MemStore {
 	return &MemStore{
-		runs:  make(map[string]*types.Run),
-		steps: make(map[string]map[string]*types.Step),
+		runs:      make(map[string]*types.Run),
+		steps:     make(map[string]map[string]*types.Step),
+		approvals: make(map[string]*types.Approval),
 	}
 }
 
@@ -52,7 +57,27 @@ func copyStep(s *types.Step) *types.Step {
 			cp.Output[k] = v
 		}
 	}
+	if s.Messages != nil {
+		cp.Messages = make(json.RawMessage, len(s.Messages))
+		copy(cp.Messages, s.Messages)
+	}
 	cp.Metrics = s.Metrics
+	return &cp
+}
+
+// copyApproval returns a deep copy of a.
+func copyApproval(a *types.Approval) *types.Approval {
+	cp := *a
+	if a.Arguments != nil {
+		cp.Arguments = make(map[string]any, len(a.Arguments))
+		for k, v := range a.Arguments {
+			cp.Arguments[k] = v
+		}
+	}
+	if a.OriginalRequest != nil {
+		cp.OriginalRequest = make(json.RawMessage, len(a.OriginalRequest))
+		copy(cp.OriginalRequest, a.OriginalRequest)
+	}
 	return &cp
 }
 
@@ -223,4 +248,58 @@ func (m *MemStore) GetEnvelope(_ context.Context, runID string) (*types.Envelope
 	}
 
 	return env, nil
+}
+
+// CreateApproval stores a copy of the approval. Returns an error if the key already exists.
+func (m *MemStore) CreateApproval(_ context.Context, approval *types.Approval) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := approval.RunID + "/" + approval.StepID
+	if _, exists := m.approvals[key]; exists {
+		return errApprovalAlreadyExists
+	}
+	m.approvals[key] = copyApproval(approval)
+	return nil
+}
+
+// GetApproval returns a copy of the stored approval. Returns an error if not found.
+func (m *MemStore) GetApproval(_ context.Context, runID, stepID string) (*types.Approval, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	key := runID + "/" + stepID
+	a, exists := m.approvals[key]
+	if !exists {
+		return nil, errApprovalNotFound
+	}
+	return copyApproval(a), nil
+}
+
+// ListPendingApprovals returns copies of all approvals with status pending.
+func (m *MemStore) ListPendingApprovals(_ context.Context) ([]*types.Approval, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var out []*types.Approval
+	for _, a := range m.approvals {
+		if a.Status == types.ApprovalStatusPending {
+			out = append(out, copyApproval(a))
+		}
+	}
+	return out, nil
+}
+
+// UpdateApproval replaces the stored approval with a copy of the provided value.
+// Returns an error if the approval does not exist.
+func (m *MemStore) UpdateApproval(_ context.Context, approval *types.Approval) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := approval.RunID + "/" + approval.StepID
+	if _, exists := m.approvals[key]; !exists {
+		return errApprovalNotFound
+	}
+	m.approvals[key] = copyApproval(approval)
+	return nil
 }

@@ -1,6 +1,9 @@
 package types
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type StepType string
 
@@ -17,7 +20,8 @@ const (
 	StepStatusRunning  StepStatus = "running"
 	StepStatusComplete StepStatus = "complete"
 	StepStatusFailed   StepStatus = "failed"
-	StepStatusSkipped  StepStatus = "skipped"
+	StepStatusSkipped          StepStatus = "skipped"
+	StepStatusPendingApproval  StepStatus = "pending_approval"
 )
 
 type RunStatus string
@@ -51,4 +55,34 @@ type Step struct {
 	Error     string                 `json:"error,omitempty"`
 	Output    map[string]interface{} `json:"output,omitempty"`
 	Metrics   StepMetrics            `json:"metrics,omitempty"`
+	Messages  json.RawMessage        `json:"messages,omitempty"` // full conversation context, set on pending_approval
+}
+
+// ApprovalStatus is the lifecycle state of a manual approval request.
+type ApprovalStatus string
+
+const (
+	ApprovalStatusPending  ApprovalStatus = "pending"
+	ApprovalStatusApproved ApprovalStatus = "approved"
+	ApprovalStatusRejected ApprovalStatus = "rejected"
+	ApprovalStatusTimeout  ApprovalStatus = "timeout"
+)
+
+// Approval records a pending or decided manual approval for a tool call.
+type Approval struct {
+	RunID           string          `json:"run_id"`
+	StepID          string          `json:"step_id"`
+	ToolName        string          `json:"tool_name"`
+	ToolUseID       string          `json:"tool_use_id"`
+	Arguments       map[string]any  `json:"arguments,omitempty"`
+	OnReject        string          `json:"on_reject"`
+	TimeoutMS       int64           `json:"timeout_ms"`
+	TimeoutBehavior string          `json:"timeout_behavior"`
+	Status          ApprovalStatus  `json:"status"`
+	CreatedAt       time.Time       `json:"created_at"`
+	DecidedAt       *time.Time      `json:"decided_at,omitempty"`
+	// OriginalRequest is the serialized InvokeRequest for re-dispatch on approval.
+	OriginalRequest json.RawMessage `json:"original_request,omitempty"`
+	// PartialMetrics holds metrics from the pending_approval leg.
+	PartialMetrics  StepMetrics     `json:"partial_metrics,omitempty"`
 }

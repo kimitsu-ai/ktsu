@@ -16,6 +16,10 @@ type Store interface {
 	GetStep(ctx context.Context, runID, stepID string) (*types.Step, error)
 	ListSteps(ctx context.Context, runID string) ([]*types.Step, error)
 	GetEnvelope(ctx context.Context, runID string) (*types.Envelope, error)
+	CreateApproval(ctx context.Context, approval *types.Approval) error
+	GetApproval(ctx context.Context, runID, stepID string) (*types.Approval, error)
+	ListPendingApprovals(ctx context.Context) ([]*types.Approval, error)
+	UpdateApproval(ctx context.Context, approval *types.Approval) error
 }
 
 // SQLiteStore is a SQLite-backed implementation of Store.
@@ -57,6 +61,22 @@ func (s *SQLiteStore) ListSteps(ctx context.Context, runID string) ([]*types.Ste
 
 func (s *SQLiteStore) GetEnvelope(ctx context.Context, runID string) (*types.Envelope, error) {
 	return nil, ErrNotImplemented
+}
+
+func (s *SQLiteStore) CreateApproval(ctx context.Context, approval *types.Approval) error {
+	return ErrNotImplemented
+}
+
+func (s *SQLiteStore) GetApproval(ctx context.Context, runID, stepID string) (*types.Approval, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *SQLiteStore) ListPendingApprovals(ctx context.Context) ([]*types.Approval, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *SQLiteStore) UpdateApproval(ctx context.Context, approval *types.Approval) error {
+	return ErrNotImplemented
 }
 
 // ErrNotImplemented is returned by store stubs
