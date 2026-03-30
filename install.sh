@@ -65,7 +65,8 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     gh release download "$VERSION" --repo "$REPO" --pattern "$ASSET_NAME" --dir "$TMP_DIR"
 elif [ -n "$GH_TOKEN" ]; then
     # Two-step download for private assets via API
-    ASSET_ID=$(echo "$LATEST_RELEASE" | grep -B 1 "\"name\": \"$ASSET_NAME\"" | grep '"id":' | sed -E 's/.*"id": ([0-9]+).*/\1/')
+    # Extracts the "id" that precedes the matching "name" in the JSON response
+    ASSET_ID=$(echo "$LATEST_RELEASE" | sed -n '/"id":/{h;}; /"name": "'"$ASSET_NAME"'"/{g;p;}' | head -n 1 | sed -E 's/.*"id": ([0-9]+).*/\1/')
     if [ -z "$ASSET_ID" ]; then
         echo "Error: Could not find asset $ASSET_NAME in release $VERSION"
         exit 1
