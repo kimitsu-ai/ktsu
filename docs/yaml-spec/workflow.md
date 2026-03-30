@@ -88,6 +88,18 @@ pipeline:
     condition: "triage.category == 'billing'"  # JMESPath; if falsy → skipped (not failed)
     depends_on: [triage]
 
+  # ── Approval notification step ────────────────────────────────────────────
+  # Fires when any depends_on step enters pending_approval (agent hit a require_approval gate).
+  # Use to notify a reviewer; they then POST to /runs/{id}/steps/{id}/approval/decide.
+  - id: notify-approval-needed
+    on: approval                      # fires on pending_approval, not on step completion
+    depends_on: [enrich]              # which step(s) to watch for pending_approval
+    webhook:
+      url: "env:APPROVAL_WEBHOOK_URL"
+      method: POST
+      timeout_s: 10
+      # Body is always the approval event: run_id, step_id, tool_name, tool_use_id, arguments, status
+
 model_policy:
   cost_budget_usd: 0.50          # circuit breaker — rejects LLM calls when exhausted
   group_map:
@@ -234,7 +246,8 @@ Metrics (tokens, cost) are always collected from all items, including failed one
 | `webhook.method` | string | no | HTTP method; default: `POST` |
 | `webhook.body` | object | no | Key-value map; values are JMESPath against merged step outputs |
 | `webhook.timeout_s` | number | no | Request timeout in seconds; default: 30 |
-| `condition` | string | no | JMESPath; if falsy step is `skipped` (not failed) |
+| `on` | string | no | `approval` — fires when a `depends_on` step enters `pending_approval`. Body is always the approval event (fixed JSON; `webhook.body` is ignored). |
+| `condition` | string | no | JMESPath; if falsy step is `skipped` (not failed). Not evaluated for `on: approval` steps. |
 | `depends_on` | string[] | no | Step IDs to wait for |
 
 ## Notes
@@ -244,3 +257,5 @@ Metrics (tokens, cost) are always collected from all items, including failed one
 - Transform `depends_on` is derived from `inputs[].from` — do not declare it separately.
 - Webhook non-2xx or network error → step fails immediately; no retry.
 - Webhook `condition` false → step is `skipped`; downstream steps still run.
+- `on: approval` steps fire when a depended-on agent step hits a `require_approval` gate and enters `pending_approval`. They do not fire on normal step completion. A step can have both `on: approval` and `depends_on` — the `on` field only controls the trigger; `depends_on` still declares the structural dependency.
+- `pending_approval` is a non-terminal step status. The run does not fail — it waits for a decision via `POST /runs/{run_id}/steps/{step_id}/approval/decide`. Independent pipeline branches continue executing while the approval is pending.
