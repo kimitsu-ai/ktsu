@@ -338,7 +338,7 @@ The orchestrator validates the full dependency graph at startup before any conta
 10. policy          Apply env model_policy, verify all declared groups exist in gateway.yaml
 11. recover         Check for in-flight runs from a previous crash, resolve stale steps
 12. start-servers   Start shipped tool server processes, wait for health checks;
-                    verify stateful servers can reach orchestrator back-channel
+                    verify envelope server can reach orchestrator back-channel
 13. start-runtime   Start Agent Runtime instances, wait for health checks
 14. start-gateway   Start LLM Gateway, verify provider connectivity
 15. ready           All checks passed — begin accepting triggers

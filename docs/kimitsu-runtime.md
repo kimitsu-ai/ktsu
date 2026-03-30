@@ -31,10 +31,9 @@ An Kimitsu deployment consists of four container tiers running on a shared inter
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │  Shipped Tool Servers  (first-party, standard MCP) │   │
 │  │                                                      │   │
-│  │  ktsu/kv   ktsu/blob   ktsu/log                          │   │
-│  │  ktsu/memory   ktsu/envelope                            │   │
+│  │  ktsu/envelope                                       │   │
 │  │                                                      │   │
-│  │  Stateful servers call back to orchestrator HTTP API │   │
+│  │  Envelope server calls back to orchestrator HTTP API │   │
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
          │
@@ -73,7 +72,7 @@ A long-running container (or horizontally scaled pool) that executes agent logic
 
 The Agent Runtime is a **generic, reusable image**. It has no workflow-specific code. What makes an invocation a specific agent is the payload the orchestrator sends: the prompt, input data, tool server endpoint URLs, sub-agent definitions, LLM Gateway URL, and output schema. The runtime executes the agent reasoning loop and returns the result.
 
-The runtime is stateless between invocations. It holds no data about previous runs. All persistence is handled by tool calls (ktsu/kv, ktsu/blob, ktsu/memory) which write to the orchestrator's state store via their respective tool servers.
+The runtime is stateless between invocations. It holds no data about previous runs. All persistence is handled by user-provided or external tool servers — the Kimitsu binary ships no storage tool servers.
 
 Transform steps and webhook steps do **not** execute on the Agent Runtime. They are executed directly by the orchestrator.
 
@@ -103,7 +102,7 @@ The heartbeat is lightweight — even with 10 runtime instances each running 100
 
 Shipped tool servers are first-party MCP servers that ship with the Kimitsu binary. They are configured with `.server.yaml` files and referenced by path in agent configs, exactly like any other local tool server.
 
-All shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's HTTP API. Each requires `ORCHESTRATOR_URL` at startup.
+The envelope server has a back-channel dependency on the orchestrator — it reads from the state store via the orchestrator's HTTP API. It requires `ORCHESTRATOR_URL` at startup.
 
 ### User-Provided Tool Servers
 
@@ -497,16 +496,6 @@ services:
     image: ktsu/llm-gateway:latest
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-
-  ktsu-kv:
-    image: ktsu/kv:latest
-    environment:
-      - KTSU_ORCHESTRATOR_URL=http://orchestrator:8080
-
-  ktsu-log:
-    image: ktsu/log:latest
-    environment:
-      - KTSU_ORCHESTRATOR_URL=http://orchestrator:8080
 
   ktsu-envelope:
     image: ktsu/envelope:latest

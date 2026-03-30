@@ -28,10 +28,6 @@ Kimitsu ships tool servers that run as standard MCP servers on default ports. Th
 
 | Server | Default Port | Tools | Description |
 |---|---|---|---|
-| `kv` | 9100 | `kv_get`, `kv_set`, `kv_delete` | Key-value storage scoped to agent namespace |
-| `blob` | 9101 | `blob_get`, `blob_put`, `blob_delete`, `blob_list` | Binary/file storage |
-| `log` | 9102 | `log_write`, `log_read`, `log_tail` | Structured run log |
-| `memory` | 9103 | `memory_store`, `memory_retrieve`, `memory_search`, `memory_forget` | Semantic vector memory |
 | `envelope` | 9104 | `envelope_get`, `envelope_set`, `envelope_append` | Read and write run envelope fields |
 
 ## Notes

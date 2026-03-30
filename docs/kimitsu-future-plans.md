@@ -36,7 +36,7 @@ The following components are implemented and tested:
 - `restrictions.allow_from` enforcement per group
 
 **Shipped Tool Servers** (standalone, started via `ktsu start <name>`)
-- `ktsu/kv`, `ktsu/blob`, `ktsu/log`, `ktsu/memory`, `ktsu/envelope`
+- `ktsu/envelope`
 
 **Config & Boot**
 - YAML loaders for workflow, agent, env, gateway, server manifest

@@ -9,7 +9,7 @@
 
 2. **Tool servers are external.** Kimitsu does not build, package, host, or manage user-provided tool servers. A local tool server file is a pointer — URL, auth, and interface contract. Nothing more.
 
-3. **Shipped tool servers are standard MCP servers.** First-party tool servers ship with the Kimitsu binary and are configured with `.server.yaml` files like any other local server. Stateful shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator and write to the state store via the orchestrator's HTTP API — they are part of the Kimitsu state surface.
+3. **The shipped envelope server is a standard MCP server.** It ships with the Kimitsu binary and is configured with a `.server.yaml` file like any other local server. It has a back-channel dependency on the orchestrator and reads from the state store via the orchestrator's HTTP API — it is the orchestrator's read interface for agents.
 
 4. **Marketplace tool servers are declared centrally.** `servers.yaml` is the single source of truth for external dependencies. Agents cannot call a marketplace server that is not in `servers.yaml`. This is enforced at boot.
 

@@ -12,9 +12,9 @@ There are two tiers of tool server references:
 | Tier | Declared in | Referenced in agent as | Versioned by |
 |---|---|---|---|
 | Marketplace | `servers.yaml` | name only (`sentiment-scorer`) | `servers.yaml` |
-| Local | `servers/*.server.yaml` | path (`servers/kv.server.yaml`) | the file itself |
+| Local | `servers/*.server.yaml` | path (`servers/wiki-search.server.yaml`) | the file itself |
 
-Shipped tool servers (kv, blob, log, etc.) are local tool servers that happen to ship with the Kimitsu binary. They get `.server.yaml` files like any other local server.
+The shipped tool server (envelope) is a local tool server that ships with the Kimitsu binary. It gets a `.server.yaml` file like any other local server.
 
 ---
 
@@ -91,8 +91,8 @@ servers:
       allowlist:
         - crm-lookup           # exact name
         - crm-read-*           # prefix wildcard
-  - name: kv
-    path: servers/kv.server.yaml
+  - name: envelope
+    path: servers/envelope.server.yaml
     access:
       allowlist:
         - "*"                  # all tools this server exposes
@@ -106,20 +106,13 @@ The `allowlist` is enforced by the Agent Runtime — the agent only ever sees to
 
 Kimitsu ships first-party MCP servers as part of the binary. They are configured with `.server.yaml` files and started with `ktsu start <name>`, exactly like any other local tool server.
 
-All shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator — they write to the state store via the orchestrator's internal HTTP API. The orchestrator remains the single writer to the database. These servers require `ORCHESTRATOR_URL` at startup.
+The envelope server has a back-channel dependency on the orchestrator — it reads from the state store via the orchestrator's internal HTTP API. This server requires `ORCHESTRATOR_URL` at startup.
 
 ### Shipped Servers
 
 | Server | Default Port | Tools | Description |
 |---|---|---|---|
-| `kv` | 9100 | `kv_get`, `kv_set`, `kv_delete` | Key-value storage scoped to agent namespace |
-| `blob` | 9101 | `blob_get`, `blob_put`, `blob_delete`, `blob_list` | Binary/file storage |
-| `log` | 9102 | `log_write`, `log_read`, `log_tail` | Structured run log |
-| `memory` | 9103 | `memory_store`, `memory_retrieve`, `memory_search`, `memory_forget` | Semantic vector memory |
 | `envelope` | 9104 | `envelope_get`, `envelope_set`, `envelope_append` | Read and write run envelope fields |
-### KV Scoping
-
-The orchestrator automatically namespaces KV keys under the calling agent's `step_id`. Two agents calling `kv-set` with the same key name do not collide.
 
 ---
 
@@ -138,7 +131,7 @@ The `restricted` field on a tool server controls which agent types may call it. 
 
 Enforced at invocation time — the orchestrator only includes restricted tool server endpoints in pipeline agent invocation payloads, never in sub-agent payloads.
 
-A sub-agent that could call kv or envelope would be able to cause side effects or read sensitive context outside the visibility of the pipeline DAG. Restricting these to pipeline agents keeps the side-effect and data-access surface fully visible in the agent YAML files that appear in the pipeline — auditable without tracing sub-agent chains.
+A sub-agent that could call envelope would be able to read sensitive context outside the visibility of the pipeline DAG. Restricting it to pipeline agents keeps the data-access surface fully visible in the agent YAML files that appear in the pipeline — auditable without tracing sub-agent chains.
 
 ### Tool-Level Access Policy (All Servers)
 

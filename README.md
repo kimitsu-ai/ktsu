@@ -165,19 +165,15 @@ KTSU_GATEWAY_URL=http://llm-gateway.internal:8081 \
 
 | Server | Command | Default port |
 |---|---|---|
-| kv | `ktsu start kv` | 9100 |
-| blob | `ktsu start blob` | 9101 |
-| log | `ktsu start log` | 9102 |
-| memory | `ktsu start memory` | 9103 |
 | envelope | `ktsu start envelope` | 9104 |
 
-All built-in servers accept `--host`, `--port`, and `--orchestrator` (reads `KTSU_ORCHESTRATOR_URL`):
+The envelope server accepts `--host`, `--port`, and `--orchestrator` (reads `KTSU_ORCHESTRATOR_URL`):
 
 ```sh
-go run ./cmd/ktsu start kv --host 0.0.0.0 --port 9100 --orchestrator http://orchestrator.internal:8080
+go run ./cmd/ktsu start envelope --host 0.0.0.0 --port 9104 --orchestrator http://orchestrator.internal:8080
 ```
 
-All built-in servers register with the orchestrator on startup and require `--orchestrator` to be set.
+The envelope server registers with the orchestrator on startup and requires `--orchestrator` to be set.
 
 ## Other commands
 
