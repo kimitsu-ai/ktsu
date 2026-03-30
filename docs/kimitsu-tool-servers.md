@@ -178,6 +178,43 @@ access:
 
 Omitting the `access` block entirely is equivalent to `allowlist: ["*"]` — all tools are permitted. For sensitive servers, declaring an explicit allowlist is strongly recommended.
 
+#### Tool Call Approval Policies
+
+Any allowlist entry can require explicit human approval before the tool call executes. Instead of a plain string, declare an object with a `require_approval` block:
+
+```yaml
+access:
+  allowlist:
+    - wiki-search                 # plain string — no approval required
+    - name: crm-read-*            # object form — no approval (explicit)
+    - name: delete-*              # any tool starting with "delete-"
+      require_approval:
+        on_reject: fail           # "fail" | "recover"
+        timeout: 30m              # optional — duration string (e.g. 30m, 2h)
+        timeout_behavior: reject  # "fail" | "reject" — what to do when timeout fires
+```
+
+When an agent attempts to call a tool that matches a `require_approval` pattern, the Agent Runtime suspends the run and sends a `pending_approval` callback to the Orchestrator. The run does not fail — it waits. A human (or external system) then issues an approval or rejection decision via the Orchestrator's REST API.
+
+**Fields:**
+
+| Field | Values | Description |
+|---|---|---|
+| `on_reject` | `fail` \| `recover` | `fail` — the step fails immediately. `recover` — the agent receives a rejection message and can try an alternative approach. |
+| `timeout` | duration string | Optional. If no decision is received within this duration, `timeout_behavior` applies. |
+| `timeout_behavior` | `fail` \| `reject` | Only relevant when `timeout` is set. `fail` — step fails. `reject` — treated as a rejection (respects `on_reject`). |
+
+**Approval REST API** (on the Orchestrator):
+
+```
+GET  /approvals                                  # list all pending approvals
+GET  /runs/{run_id}/steps/{step_id}/approval     # get approval for a specific step
+POST /runs/{run_id}/steps/{step_id}/approval/decide
+     Body: {"decision": "approved" | "rejected"}
+```
+
+Boot validation rejects `require_approval` blocks with invalid `on_reject` or `timeout_behavior` values.
+
 #### Environment Overrides
 
 The allowlist can be overridden per environment via environment variables, without touching the tool server file:
