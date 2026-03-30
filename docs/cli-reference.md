@@ -225,6 +225,8 @@ ktsu validate [project-dir] [flags]
 | `--workflow-dir` | `""` | Directory of `*.workflow.yaml` files (defaults to `<project-dir>/workflows`) |
 | `--graph` | `false` | Output Mermaid graph of workflows instead of text summary |
 
+Note: `--workflow-dir` defaults to `""` and derives the path from `[project-dir]` at runtime — unlike `ktsu start orchestrator`, which defaults to `./workflows` literally.
+
 **Default output** (without `--graph`): colored text grouped by Workflows / Agents / Servers / Systems, with a summary line.
 
 **`--graph` output**: Mermaid `graph TD` diagram per workflow showing steps, dependencies, external file references, and error indicators.
