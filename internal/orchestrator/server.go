@@ -290,14 +290,24 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 				authToken = os.Getenv(strings.TrimPrefix(authToken, "env:"))
 			}
 			var allowlist []string
+			var approvalRules []agent.ToolApprovalRule
 			for _, ta := range srv.Access.Allowlist {
 				allowlist = append(allowlist, ta.Name)
+				if ta.RequireApproval != nil {
+					approvalRules = append(approvalRules, agent.ToolApprovalRule{
+						Pattern:         ta.Name,
+						OnReject:        ta.RequireApproval.OnReject,
+						TimeoutMS:       ta.RequireApproval.Timeout.Milliseconds(),
+						TimeoutBehavior: ta.RequireApproval.TimeoutBehavior,
+					})
+				}
 			}
 			toolServers = append(toolServers, agent.ToolServerSpec{
-				Name:      serverCfg.Name,
-				URL:       serverCfg.URL,
-				Allowlist: allowlist,
-				AuthToken: authToken,
+				Name:          serverCfg.Name,
+				URL:           serverCfg.URL,
+				Allowlist:     allowlist,
+				AuthToken:     authToken,
+				ApprovalRules: approvalRules,
 			})
 		}
 	}
