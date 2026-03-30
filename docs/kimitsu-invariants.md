@@ -9,11 +9,11 @@
 
 2. **Tool servers are external.** Kimitsu does not build, package, host, or manage user-provided tool servers. A local tool server file is a pointer — URL, auth, and interface contract. Nothing more.
 
-3. **Built-in tool servers are a distinct tier.** `ktsu/` namespaced tool servers are first-party Docker images managed by Kimitsu. Stateful built-in servers have a back-channel dependency on the orchestrator and write to the state store via the orchestrator's HTTP API. They are not generic external MCP servers — they are part of the Kimitsu state surface.
+3. **Shipped tool servers are standard MCP servers.** First-party tool servers ship with the Kimitsu binary and are configured with `.server.yaml` files like any other local server. Stateful shipped servers (kv, blob, log, memory, envelope) have a back-channel dependency on the orchestrator and write to the state store via the orchestrator's HTTP API — they are part of the Kimitsu state surface.
 
 4. **Marketplace tool servers are declared centrally.** `servers.yaml` is the single source of truth for external dependencies. Agents cannot call a marketplace server that is not in `servers.yaml`. This is enforced at boot.
 
-5. **Only pipeline agents can cause internal side effects.** Restricted built-in tool servers (storage, context) are only available to pipeline agents, never to sub-agents.
+5. **Only pipeline agents can cause internal side effects.** Restricted tool servers (storage, context) are only available to pipeline agents, never to sub-agents.
 
 6. **Tool-level access is enforced by the Agent Runtime, not the server.** The Agent Runtime's MCP client enforces the allowlist declared in each tool server file. Enforcement applies uniformly to all server types — built-in, local, and marketplace — regardless of whether the server implements its own restrictions.
 
