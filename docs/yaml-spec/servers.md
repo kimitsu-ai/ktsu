@@ -30,5 +30,5 @@ servers:
 
 ## Notes
 
-- Local tool server files (`servers/*.server.yaml`) and built-in servers (`ktsu/*`) are never listed here.
+- Local tool server files (`servers/*.server.yaml`) are not listed here — they are referenced directly by path in agent files.
 - Agents reference servers from this manifest by name only (no path).
