@@ -211,7 +211,7 @@ This keeps the circuit breaker fast (no DB read per call) and the gateway statel
 
 ### Network Zones
 
-**Internal network.** A private container network connecting the orchestrator, Agent Runtime, LLM Gateway, and any built-in tool servers. No container on this network has outbound internet access by default. In Docker Compose this is a private bridge network. In ECS it is a task group with no public IP. In K8s it is a namespace with a default-deny egress NetworkPolicy.
+**Internal network.** A private container network connecting the orchestrator, Agent Runtime, LLM Gateway, and any shipped tool servers. No container on this network has outbound internet access by default. In Docker Compose this is a private bridge network. In ECS it is a task group with no public IP. In K8s it is a namespace with a default-deny egress NetworkPolicy.
 
 **Egress.** Tool servers that need to reach external services are deployed with outbound access at the operator's discretion. The tool server file declares `egress: true` as a signal to operators. The LLM Gateway always has egress — it is the only Kimitsu container that talks to LLM providers.
 
@@ -222,14 +222,14 @@ This keeps the circuit breaker fast (no DB read per call) and the gateway statel
 | Orchestrator | Single instance (HA pair for production) | Deterministic, low CPU — manages DAG state |
 | Agent Runtime | Horizontal — 1 to N instances | I/O-bound event loop; add instances for concurrency |
 | LLM Gateway | Horizontal — 1 to N instances | Proxies concurrent LLM calls; stateless |
-| Built-in tool servers | Kimitsu-managed — one instance per server type | Stateless servers scale horizontally; stateful servers are single-instance by default |
+| Shipped tool servers | Kimitsu-managed — one instance per server type | Stateless servers scale horizontally; stateful servers are single-instance by default |
 | User-provided tool servers | Operator-managed | Kimitsu does not manage user tool server scaling |
 
 ---
 
 ## State Store
 
-The orchestrator persists all run state in a relational database. The state store is the single source of truth for run history, step status, cost tracking, and built-in tool server data. The orchestrator is the only writer — no other container has database credentials.
+The orchestrator persists all run state in a relational database. The state store is the single source of truth for run history, step status, cost tracking, and shipped tool server data. The orchestrator is the only writer — no other container has database credentials.
 
 ### Supported Backends
 

@@ -13,8 +13,8 @@ See also: [YAML Spec](yaml-spec/index.md) · [Overview](kimitsu-overview.md) · 
 | `ktsu start orchestrator` | Start the control plane | Running the full stack or orchestrator only |
 | `ktsu start runtime` | Start the agent executor | Running the full stack or runtime only |
 | `ktsu start gateway` | Start the LLM gateway | Running the full stack or gateway only |
-| `ktsu start kv\|blob\|log\|memory\|envelope` | Start a stateful built-in tool server | Adding built-in state/storage tools to a running stack |
-| `ktsu start format\|validate\|transform\|cli` | Start a stateless built-in tool server | Adding built-in utility tools to a running stack |
+| `ktsu start kv\|blob\|log\|memory\|envelope` | Start a stateful shipped tool server | Adding shipped state/storage tools to a running stack |
+| `ktsu start format\|validate\|transform\|cli` | Start a stateless shipped tool server | Adding shipped utility tools to a running stack |
 | `ktsu invoke <workflow>` | Invoke a workflow | Development and testing |
 | `ktsu validate [project-dir]` | Validate config files | CI, pre-deploy checks, local debugging |
 | `ktsu new project <name>` | Scaffold a new project | Starting a new Kimitsu project |
@@ -54,7 +54,7 @@ CLI flags take precedence over environment variables. All env vars are optional.
 
 ## ktsu start
 
-Start a Kimitsu service or built-in tool server. Every service exposes `GET /health` returning `{"status":"ok"}`.
+Start a Kimitsu service or shipped tool server. Every service exposes `GET /health` returning `{"status":"ok"}`.
 
 ### Core Services
 
@@ -126,7 +126,7 @@ ktsu start gateway --config gateway.yaml --port 8081
 
 ---
 
-### Built-in Tool Servers
+### Shipped Tool Servers
 
 Built-in servers are MCP-compatible tool providers. Stateful servers register with the orchestrator on startup; stateless servers do not.
 
@@ -347,5 +347,5 @@ All ports are configurable via `--port`.
 - [YAML Spec Index](yaml-spec/index.md) — config file formats (workflow, agent, gateway, env, servers)
 - [Overview](kimitsu-overview.md) — architecture and concepts
 - [Configuration](kimitsu-configuration.md) — configuration reference
-- [Tool Servers](kimitsu-tool-servers.md) — built-in tool server details
+- [Tool Servers](kimitsu-tool-servers.md) — shipped tool server details
 - [Pipeline Primitives](kimitsu-pipeline-primitives.md) — step types and pipeline mechanics

@@ -35,7 +35,7 @@ The following components are implemented and tested:
 - Budget circuit breaker per run_id
 - `restrictions.allow_from` enforcement per group
 
-**Built-in Tool Servers** (standalone, started via `ktsu start <name>`)
+**Shipped Tool Servers** (standalone, started via `ktsu start <name>`)
 - `ktsu/kv`, `ktsu/blob`, `ktsu/log`, `ktsu/memory`, `ktsu/envelope`
 - `ktsu/format`, `ktsu/validate`, `ktsu/transform`, `ktsu/cli`
 

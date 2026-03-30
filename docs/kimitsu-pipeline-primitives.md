@@ -381,7 +381,7 @@ The child workflow's `POST /invoke/{workflow}` receives this as its input body. 
 
 ## Built-in Agents
 
-Built-in agents are first-party agents shipped with Kimitsu, referenced by `ktsu/` name exactly like built-in tool servers. They appear as pipeline steps in the DAG, consume model budget, and go through Air-Lock. They are pre-hardened implementations of patterns that are common, security-sensitive, or easy to get wrong.
+Built-in agents are first-party agents shipped with Kimitsu, referenced by `ktsu/` name exactly like shipped tool servers. They appear as pipeline steps in the DAG, consume model budget, and go through Air-Lock. They are pre-hardened implementations of patterns that are common, security-sensitive, or easy to get wrong.
 
 ### `ktsu/secure-parser`
 
@@ -434,7 +434,7 @@ The output schema of `ktsu/secure-parser` is always:
 |---|---|
 | `ktsu/secure-parser@1.0.0` | Toolless hardened parser for unstructured text from untrusted sources |
 
-More built-in agents will be added in future versions. Built-in agents follow the same versioning and deprecation policy as built-in tool servers.
+More built-in agents will be added in future versions. Built-in agents follow the same versioning and deprecation policy as shipped tool servers.
 
 ---
 
