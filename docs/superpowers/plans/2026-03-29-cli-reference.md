@@ -35,8 +35,7 @@ See also: [YAML Spec](yaml-spec/index.md) · [Overview](kimitsu-overview.md) · 
 | `ktsu start orchestrator` | Start the control plane | Running the full stack or orchestrator only |
 | `ktsu start runtime` | Start the agent executor | Running the full stack or runtime only |
 | `ktsu start gateway` | Start the LLM gateway | Running the full stack or gateway only |
-| `ktsu start kv\|blob\|log\|memory\|envelope` | Start a stateful built-in tool server | Adding built-in state/storage tools to a running stack |
-| `ktsu start format\|validate\|transform\|cli` | Start a stateless built-in tool server | Adding built-in utility tools to a running stack |
+| `ktsu start envelope` | Start the shipped envelope tool server | Adding the envelope server to a running stack |
 | `ktsu invoke <workflow>` | Invoke a workflow | Development and testing |
 | `ktsu validate [project-dir]` | Validate config files | CI, pre-deploy checks, local debugging |
 | `ktsu new project <name>` | Scaffold a new project | Starting a new Kimitsu project |
@@ -61,7 +60,7 @@ CLI flags take precedence over environment variables. All env vars are optional.
 |---|---|---|---|
 | `KTSU_ORCHESTRATOR_HOST` | `""` (all interfaces) | `start orchestrator` | Host interface to bind |
 | `KTSU_ORCHESTRATOR_PORT` | `8080` | `start orchestrator` | Port to listen on |
-| `KTSU_ORCHESTRATOR_URL` | `http://localhost:8080` | `start runtime`, `start kv/blob/log/memory/envelope`, `invoke` | Orchestrator URL |
+| `KTSU_ORCHESTRATOR_URL` | `http://localhost:8080` | `start runtime`, `start envelope`, `invoke` | Orchestrator URL |
 | `KTSU_OWN_URL` | `""` | `start orchestrator` | Orchestrator's own URL for callbacks |
 | `KTSU_PROJECT_DIR` | `.` | `start orchestrator` | Project root for resolving agent/server paths |
 | `KTSU_GATEWAY_HOST` | `""` (all interfaces) | `start gateway` | Host interface to bind |
@@ -148,52 +147,27 @@ ktsu start gateway --config gateway.yaml --port 8081
 
 ---
 
-### Built-in Tool Servers
+### Shipped Tool Servers
 
-Built-in servers are MCP-compatible tool providers. Stateful servers register with the orchestrator on startup; stateless servers do not.
+The envelope server is the sole shipped MCP-compatible tool provider. It registers with the orchestrator on startup and requires `--orchestrator`.
 
-#### Stateful (require `--orchestrator`)
+#### `ktsu start envelope` (requires `--orchestrator`)
 
 | Command | Default Port | Description |
 |---|---|---|
-| `ktsu start kv` | `9100` | Key-value store |
-| `ktsu start blob` | `9101` | Blob storage |
-| `ktsu start log` | `9102` | Structured logging |
-| `ktsu start memory` | `9103` | In-memory state |
 | `ktsu start envelope` | `9104` | Envelope/context management |
 
-**Flags (all stateful builtins):**
+**Flags:**
 
 | Flag | Default | Env | Description |
 |---|---|---|---|
 | `--host` | `""` | — | Host interface to bind |
-| `--port` | *(see table above)* | — | Port to listen on |
+| `--port` | `9104` | — | Port to listen on |
 | `--orchestrator` | `http://localhost:8080` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL for registration |
 
 ```bash
-ktsu start kv
-ktsu start kv --port 9100 --orchestrator http://orchestrator:8080
-```
-
-#### Stateless (no orchestrator needed)
-
-| Command | Default Port | Description |
-|---|---|---|
-| `ktsu start format` | `9105` | Data formatting |
-| `ktsu start validate` | `9106` | Data validation |
-| `ktsu start transform` | `9107` | Data transformation |
-| `ktsu start cli` | `9108` | CLI command execution |
-
-**Flags (all stateless builtins):**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--host` | `""` | Host interface to bind |
-| `--port` | *(see table above)* | Port to listen on |
-
-```bash
-ktsu start format
-ktsu start transform --port 9107
+ktsu start envelope
+ktsu start envelope --port 9104 --orchestrator http://orchestrator:8080
 ```
 
 ---
@@ -348,15 +322,7 @@ ktsu completion powershell | Out-String | Out-File -FilePath $profile
 | Orchestrator | 8080 | `ktsu start orchestrator` |
 | LLM Gateway | 8081 | `ktsu start gateway` |
 | Agent Runtime | 8082 | `ktsu start runtime` |
-| kv | 9100 | `ktsu start kv` |
-| blob | 9101 | `ktsu start blob` |
-| log | 9102 | `ktsu start log` |
-| memory | 9103 | `ktsu start memory` |
 | envelope | 9104 | `ktsu start envelope` |
-| format | 9105 | `ktsu start format` |
-| validate | 9106 | `ktsu start validate` |
-| transform | 9107 | `ktsu start transform` |
-| cli | 9108 | `ktsu start cli` |
 
 All ports are configurable via `--port`.
 
@@ -367,7 +333,7 @@ All ports are configurable via `--port`.
 - [YAML Spec Index](yaml-spec/index.md) — config file formats (workflow, agent, gateway, env, servers)
 - [Overview](kimitsu-overview.md) — architecture and concepts
 - [Configuration](kimitsu-configuration.md) — configuration reference
-- [Tool Servers](kimitsu-tool-servers.md) — built-in tool server details
+- [Tool Servers](kimitsu-tool-servers.md) — shipped tool server details
 - [Pipeline Primitives](kimitsu-pipeline-primitives.md) — step types and pipeline mechanics
 ```
 
@@ -377,10 +343,10 @@ Open `cmd/ktsu/main.go` and confirm:
 - `startOrchestratorCmd` flags match the table (lines 136-148)
 - `startRuntimeCmd` flags match (lines 169-177)
 - `startGatewayCmd` flags match (lines 208-211)
-- `startBuiltinCmd` stateful vs stateless split matches (`hasOrchestrator` param, lines 95-103)
+- `startEnvelopeCmd` flags match
 - `invokeCmd` flags match (lines 303-308)
 - `validateCmd` flags match (lines 363-367)
-- All default ports match (lines 95-103)
+- Default port for envelope matches
 
 - [ ] **Step 3: Verify cross-links exist**
 
