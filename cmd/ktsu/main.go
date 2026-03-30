@@ -24,12 +24,9 @@ import (
 	"github.com/kimitsu-ai/ktsu/internal/builtins"
 	blobpkg "github.com/kimitsu-ai/ktsu/internal/builtins/blob"
 	envelopepkg "github.com/kimitsu-ai/ktsu/internal/builtins/envelope"
-	formatpkg "github.com/kimitsu-ai/ktsu/internal/builtins/format"
 	kvpkg "github.com/kimitsu-ai/ktsu/internal/builtins/kv"
 	logpkg "github.com/kimitsu-ai/ktsu/internal/builtins/log"
 	memorypkg "github.com/kimitsu-ai/ktsu/internal/builtins/memory"
-	transformpkg "github.com/kimitsu-ai/ktsu/internal/builtins/transform"
-	validatepkg "github.com/kimitsu-ai/ktsu/internal/builtins/validate"
 	"github.com/kimitsu-ai/ktsu/internal/config"
 	"github.com/kimitsu-ai/ktsu/internal/gateway"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator"
@@ -96,9 +93,6 @@ func startCmd() *cobra.Command {
 	start.AddCommand(startBuiltinCmd("log", 9102, func() builtins.BuiltinServer { return logpkg.New() }, true))
 	start.AddCommand(startBuiltinCmd("memory", 9103, func() builtins.BuiltinServer { return memorypkg.New() }, true))
 	start.AddCommand(startBuiltinCmd("envelope", 9104, func() builtins.BuiltinServer { return envelopepkg.New() }, true))
-	start.AddCommand(startBuiltinCmd("format", 9105, func() builtins.BuiltinServer { return formatpkg.New() }, false))
-	start.AddCommand(startBuiltinCmd("validate", 9106, func() builtins.BuiltinServer { return validatepkg.New() }, false))
-	start.AddCommand(startBuiltinCmd("transform", 9107, func() builtins.BuiltinServer { return transformpkg.New() }, false))
 	return start
 }
 
