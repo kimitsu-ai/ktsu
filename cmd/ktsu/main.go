@@ -23,7 +23,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/kimitsu-ai/ktsu/internal/builtins"
 	blobpkg "github.com/kimitsu-ai/ktsu/internal/builtins/blob"
-	clipkg "github.com/kimitsu-ai/ktsu/internal/builtins/cli"
 	envelopepkg "github.com/kimitsu-ai/ktsu/internal/builtins/envelope"
 	formatpkg "github.com/kimitsu-ai/ktsu/internal/builtins/format"
 	kvpkg "github.com/kimitsu-ai/ktsu/internal/builtins/kv"
@@ -100,7 +99,6 @@ func startCmd() *cobra.Command {
 	start.AddCommand(startBuiltinCmd("format", 9105, func() builtins.BuiltinServer { return formatpkg.New() }, false))
 	start.AddCommand(startBuiltinCmd("validate", 9106, func() builtins.BuiltinServer { return validatepkg.New() }, false))
 	start.AddCommand(startBuiltinCmd("transform", 9107, func() builtins.BuiltinServer { return transformpkg.New() }, false))
-	start.AddCommand(startBuiltinCmd("cli", 9108, func() builtins.BuiltinServer { return clipkg.New() }, false))
 	return start
 }
 
