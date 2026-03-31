@@ -38,8 +38,9 @@ func main() {
 
 func rootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "ktsu",
-		Short: "Kimitsu — agentic pipeline framework",
+		Use:          "ktsu",
+		Short:        "Kimitsu — agentic pipeline framework",
+		SilenceUsage: true,
 	}
 	root.AddCommand(startCmd())
 	root.AddCommand(validateCmd())
@@ -221,10 +222,9 @@ func invokeCmd() *cobra.Command {
 	var orchestratorURL, inputJSON string
 	var wait bool
 	cmd := &cobra.Command{
-		Use:          "invoke <workflow>",
-		Short:        "Invoke a workflow on the orchestrator",
-		Args:         cobra.ExactArgs(1),
-		SilenceUsage: true,
+		Use:   "invoke <workflow>",
+		Short: "Invoke a workflow on the orchestrator",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			workflow := args[0]
 			resp, err := http.Post(orchestratorURL+"/invoke/"+workflow, "application/json", strings.NewReader(inputJSON))
@@ -335,6 +335,26 @@ func validateCmd() *cobra.Command {
 
 					// Print grouped summary
 					printProjectSummary(cmd.OutOrStdout(), projectDir, summary)
+
+					// Check if there are any errors in the summary
+					hasErrors := false
+					var allErrs []string
+					checkErrors := func(list []fileStatus) {
+						for _, f := range list {
+							if len(f.errors) > 0 {
+								hasErrors = true
+								allErrs = append(allErrs, fmt.Sprintf("%s: %v", f.path, f.errors))
+							}
+						}
+					}
+					checkErrors(summary.workflows)
+					checkErrors(summary.agents)
+					checkErrors(summary.servers)
+					checkErrors(summary.systems)
+
+					if hasErrors {
+						return errors.New("validation failed")
+					}
 				}
 
 				if err != nil {
@@ -428,7 +448,7 @@ func checkWorkflow(file string, wf *config.WorkflowConfig, projectDir string) Va
 			agentPath := config.StripVersion(step.Agent)
 			// Resolve relative to project root, matching orchestrator behavior.
 			absPath := filepath.Join(projectDir, agentPath)
-			validateExternalRef(&res, absPath, "agent")
+			validateExternalRef(&res, absPath, "agent", projectDir)
 		}
 	}
 
@@ -467,7 +487,7 @@ func useColor(out io.Writer) bool {
 	return false
 }
 
-func validateExternalRef(res *ValidationResult, path, kind string) {
+func validateExternalRef(res *ValidationResult, path, kind string, projectDir string) {
 	if _, ok := res.ExternalRefs[path]; ok {
 		return
 	}
@@ -480,19 +500,41 @@ func validateExternalRef(res *ValidationResult, path, kind string) {
 			ext.Errors = append(ext.Errors, err.Error())
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", path, err))
 		} else {
+			// Check for output schema
+			if agentCfg.Output == nil || len(agentCfg.Output.Schema) == 0 {
+				ext.Errors = append(ext.Errors, "agent has no output schema defined")
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: agent has no output schema defined", path))
+			}
+
 			// Check for servers
 			for _, srv := range agentCfg.Servers {
 				if srv.Path != "" {
-					serverPath := filepath.Join(filepath.Dir(path), srv.Path)
+					serverPath := srv.Path
+					if !filepath.IsAbs(srv.Path) {
+						// Relative to agent file
+						serverPath = filepath.Join(filepath.Dir(path), srv.Path)
+					} else {
+						// If absolute but doesn't exist, try project-relative
+						if _, err := os.Stat(srv.Path); os.IsNotExist(err) {
+							serverPath = filepath.Join(projectDir, srv.Path)
+						}
+					}
 					ext.Deps = append(ext.Deps, serverPath)
-					validateExternalRef(res, serverPath, "server")
+					validateExternalRef(res, serverPath, "server", projectDir)
 				}
 			}
 			// Check for sub-agents
 			for _, sub := range agentCfg.SubAgents {
-				subPath := filepath.Join(filepath.Dir(path), config.StripVersion(sub))
+				subPath := config.StripVersion(sub)
+				if !filepath.IsAbs(subPath) {
+					subPath = filepath.Join(filepath.Dir(path), subPath)
+				} else {
+					if _, err := os.Stat(subPath); os.IsNotExist(err) {
+						subPath = filepath.Join(projectDir, subPath)
+					}
+				}
 				ext.Deps = append(ext.Deps, subPath)
-				validateExternalRef(res, subPath, "agent")
+				validateExternalRef(res, subPath, "agent", projectDir)
 			}
 		}
 	case "server":
@@ -526,14 +568,39 @@ func buildProjectSummary(projectDir string, workflowResults []ValidationResult) 
 	uniqueAgents := make(map[string][]string)
 	uniqueServers := make(map[string][]string)
 
+	// dummy result for collecting orphan refs
+	orphanRes := ValidationResult{ExternalRefs: make(map[string]ExternalRef)}
+
+	// Scan for orphan agents
+	if files, err := filepath.Glob(filepath.Join(projectDir, "agents", "*.agent.yaml")); err == nil {
+		for _, f := range files {
+			validateExternalRef(&orphanRes, f, "agent", projectDir)
+		}
+	}
+	// Scan for orphan servers
+	if files, err := filepath.Glob(filepath.Join(projectDir, "servers", "*.server.yaml")); err == nil {
+		for _, f := range files {
+			validateExternalRef(&orphanRes, f, "server", projectDir)
+		}
+	}
+
 	for _, res := range workflowResults {
 		s.workflows = append(s.workflows, fileStatus{path: res.File, errors: res.Errors})
-		for _, ext := range res.ExternalRefs {
+		for path, ext := range res.ExternalRefs {
 			if ext.Kind == "agent" {
-				uniqueAgents[ext.Path] = ext.Errors
+				uniqueAgents[path] = ext.Errors
 			} else if ext.Kind == "server" {
-				uniqueServers[ext.Path] = ext.Errors
+				uniqueServers[path] = ext.Errors
 			}
+		}
+	}
+
+	// Merge orphan refs
+	for path, ext := range orphanRes.ExternalRefs {
+		if ext.Kind == "agent" {
+			uniqueAgents[path] = ext.Errors
+		} else if ext.Kind == "server" {
+			uniqueServers[path] = ext.Errors
 		}
 	}
 

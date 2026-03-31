@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kimitsu-ai/ktsu/internal/runtime/agent/mcp"
@@ -93,11 +94,11 @@ func (l *Loop) Run(ctx context.Context, req InvokeRequest) CallbackPayload {
 	payload.Metrics = metrics
 
 	if err != nil {
-		payload.Status = "failed"
+		payload.Status = StatusFailed
 		payload.Error = err.Error()
 		payload.RawOutput = rawOutput
 	} else {
-		payload.Status = "ok"
+		payload.Status = StatusOK
 		payload.Output = output
 	}
 	return payload
@@ -109,19 +110,33 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 	// --- Tool discovery ---
 	// toolByName maps tool name → ToolServerSpec (for routing tool calls with auth).
 	// tools is the flat list sent to the gateway.
-	type serverRef struct {
-		url       string
-		authToken string
+	// Discovery is fanned out across servers concurrently; results are merged in original order.
+	type discoveryResult struct {
+		srv   ToolServerSpec
+		tools []mcp.ToolDefinition
+		err   error
 	}
-	toolByName := make(map[string]serverRef)
+	discResults := make([]discoveryResult, len(req.ToolServers))
+	var discWg sync.WaitGroup
+	for i, srv := range req.ToolServers {
+		discWg.Add(1)
+		go func(i int, srv ToolServerSpec) {
+			defer discWg.Done()
+			discovered, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.AuthToken, srv.Allowlist)
+			discResults[i] = discoveryResult{srv: srv, tools: discovered, err: err}
+		}(i, srv)
+	}
+	discWg.Wait()
+
+	toolByName := make(map[string]*ToolServerSpec)
 	var tools []toolDef
-	for _, srv := range req.ToolServers {
-		discovered, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.AuthToken, srv.Allowlist)
-		if err != nil {
-			return nil, "", metrics, fmt.Errorf("discover tools from %s: %w", srv.Name, err)
+	for i := range discResults {
+		r := &discResults[i]
+		if r.err != nil {
+			return nil, "", metrics, fmt.Errorf("discover tools from %s: %w", r.srv.Name, r.err)
 		}
-		for _, t := range discovered {
-			toolByName[t.Name] = serverRef{url: srv.URL, authToken: srv.AuthToken}
+		for _, t := range r.tools {
+			toolByName[t.Name] = &r.srv
 			tools = append(tools, toolDef{
 				Name:        t.Name,
 				Description: t.Description,
@@ -142,15 +157,14 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 			systemPrompt += "\n\nYour output MUST conform to this JSON schema:\n" + string(schemaJSON)
 		}
 	}
-	messages := []Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: string(inputJSON)},
-	}
-
 	maxTurns := req.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 10 // sensible default
 	}
+
+	messages := make([]Message, 0, 2+maxTurns*4)
+	messages = append(messages, Message{Role: "system", Content: systemPrompt})
+	messages = append(messages, Message{Role: "user", Content: string(inputJSON)})
 
 	var lastInvalidContent string
 
@@ -163,50 +177,59 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 			turnTools = nil
 		}
 
-		gwResp, err := l.callGateway(ctx, req, messages, turnTools)
+		gwResp, err := l.callGateway(ctx, req.RunID, req.StepID, req.Model.Group, req.Model.MaxTokens, messages, turnTools)
 		if err != nil {
 			return nil, "", metrics, err
 		}
 
-		metrics.LLMCalls++
-		metrics.TokensIn += gwResp.TokensIn
-		metrics.TokensOut += gwResp.TokensOut
-		metrics.CostUSD += gwResp.CostUSD
-		if metrics.ModelResolved == "" {
-			metrics.ModelResolved = gwResp.ModelResolved
-		}
+		metrics.add(gwResp)
 
 		if len(gwResp.ToolCalls) > 0 {
-			for _, tc := range gwResp.ToolCalls {
+			type callResult struct {
+				tc     toolCall
+				result mcp.ToolCallResult
+				err    error
+			}
+			callResults := make([]callResult, len(gwResp.ToolCalls))
+			var callWg sync.WaitGroup
+			for i, tc := range gwResp.ToolCalls {
 				sref, ok := toolByName[tc.Name]
 				if !ok {
 					return nil, "", metrics, fmt.Errorf("tool_not_permitted: %s", tc.Name)
 				}
-				argsJSON, _ := json.Marshal(tc.Arguments)
-				log.Printf("[agent] run=%s step=%s tool=%s args=%s", req.RunID, req.StepID, tc.Name, argsJSON)
-				result, err := l.mcpClient.CallTool(ctx, sref.url, sref.authToken, tc.Name, tc.Arguments)
-				if err != nil {
-					return nil, "", metrics, fmt.Errorf("tool call %s: %w", tc.Name, err)
+				callWg.Add(1)
+				go func(i int, tc toolCall, sref *ToolServerSpec) {
+					defer callWg.Done()
+					argsJSON, _ := json.Marshal(tc.Arguments)
+					log.Printf("[agent] run=%s step=%s tool=%s args=%s", req.RunID, req.StepID, tc.Name, argsJSON)
+					result, err := l.mcpClient.CallTool(ctx, sref.URL, sref.AuthToken, tc.Name, tc.Arguments)
+					callResults[i] = callResult{tc: tc, result: result, err: err}
+				}(i, tc, sref)
+			}
+			callWg.Wait()
+
+			for _, cr := range callResults {
+				if cr.err != nil {
+					return nil, "", metrics, fmt.Errorf("tool call %s: %w", cr.tc.Name, cr.err)
 				}
 				metrics.ToolCalls++
 
-				// Append assistant tool_use block.
+				argsJSON, _ := json.Marshal(cr.tc.Arguments)
 				toolUseContent, _ := json.Marshal([]map[string]any{{
 					"type":  "tool_use",
-					"id":    tc.ID,
-					"name":  tc.Name,
-					"input": tc.Arguments,
+					"id":    cr.tc.ID,
+					"name":  cr.tc.Name,
+					"input": json.RawMessage(argsJSON),
 				}})
 				messages = append(messages, Message{Role: "assistant", Content: string(toolUseContent)})
 
-				// Append user tool_result block.
 				resultText := ""
-				if len(result.Content) > 0 {
-					resultText = result.Content[0].Text
+				if len(cr.result.Content) > 0 {
+					resultText = cr.result.Content[0].Text
 				}
 				toolResultContent, _ := json.Marshal([]map[string]any{{
 					"type":        "tool_result",
-					"tool_use_id": tc.ID,
+					"tool_use_id": cr.tc.ID,
 					"content":     resultText,
 				}})
 				messages = append(messages, Message{Role: "user", Content: string(toolResultContent)})
@@ -231,14 +254,11 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 	// fix its formatting. This avoids a common footgun where tool-using
 	// agents spend all turns on tools and then fail on a trivial parse error.
 	if lastInvalidContent != "" {
-		gwResp, err := l.callGateway(ctx, req, messages, nil)
+		gwResp, err := l.callGateway(ctx, req.RunID, req.StepID, req.Model.Group, req.Model.MaxTokens, messages, nil)
 		if err != nil {
 			return nil, lastInvalidContent, metrics, fmt.Errorf("max_turns_exceeded")
 		}
-		metrics.LLMCalls++
-		metrics.TokensIn += gwResp.TokensIn
-		metrics.TokensOut += gwResp.TokensOut
-		metrics.CostUSD += gwResp.CostUSD
+		metrics.add(gwResp)
 
 		if output, err := parseOutput(gwResp.Content); err == nil {
 			return output, "", metrics, nil
@@ -248,14 +268,24 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 	return nil, lastInvalidContent, metrics, fmt.Errorf("max_turns_exceeded")
 }
 
+func (m *Metrics) add(r gatewayResponse) {
+	m.LLMCalls++
+	m.TokensIn += r.TokensIn
+	m.TokensOut += r.TokensOut
+	m.CostUSD += r.CostUSD
+	if m.ModelResolved == "" {
+		m.ModelResolved = r.ModelResolved
+	}
+}
+
 // callGateway POSTs to the gateway /invoke and returns the parsed response.
-func (l *Loop) callGateway(ctx context.Context, req InvokeRequest, messages []Message, tools []toolDef) (gatewayResponse, error) {
+func (l *Loop) callGateway(ctx context.Context, runID, stepID, group string, maxTokens int, messages []Message, tools []toolDef) (gatewayResponse, error) {
 	body, err := json.Marshal(gatewayRequest{
-		RunID:     req.RunID,
-		StepID:    req.StepID,
-		Group:     req.Model.Group,
+		RunID:     runID,
+		StepID:    stepID,
+		Group:     group,
 		Messages:  messages,
-		MaxTokens: req.Model.MaxTokens,
+		MaxTokens: maxTokens,
 		Tools:     tools,
 	})
 	if err != nil {

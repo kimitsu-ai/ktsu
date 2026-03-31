@@ -280,7 +280,18 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		}
 		outputSchema = agentCfg.Output.Schema
 		for _, srv := range agentCfg.Servers {
-			serverPath := filepath.Join(d.projectDir, srv.Path)
+			serverPath := srv.Path
+			if srv.Path != "" && !filepath.IsAbs(srv.Path) {
+				// Relative to agent file
+				serverPath = filepath.Join(filepath.Dir(agentPath), srv.Path)
+			} else if srv.Path != "" && filepath.IsAbs(srv.Path) {
+				// If it's absolute but doesn't exist, try project-relative.
+				// This handles "/servers/foo.yaml" in a container where project root is /.
+				if _, err := os.Stat(srv.Path); os.IsNotExist(err) {
+					serverPath = filepath.Join(d.projectDir, srv.Path)
+				}
+			}
+
 			serverCfg, err := config.LoadToolServer(serverPath)
 			if err != nil {
 				return nil, zero, fmt.Errorf("load server %s: %w", srv.Path, err)

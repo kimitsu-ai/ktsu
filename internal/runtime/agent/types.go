@@ -28,11 +28,16 @@ type ToolServerSpec struct {
 	AuthToken string   `json:"auth_token,omitempty"` // resolved bearer token
 }
 
+const (
+	StatusOK     = "ok"
+	StatusFailed = "failed"
+)
+
 // CallbackPayload is the result POSTed to callback_url when the loop finishes.
 type CallbackPayload struct {
 	RunID     string         `json:"run_id"`
 	StepID    string         `json:"step_id"`
-	Status    string         `json:"status"` // "ok" | "failed"
+	Status    string         `json:"status"` // StatusOK | StatusFailed
 	Output    map[string]any `json:"output"`
 	Error     string         `json:"error"`
 	RawOutput string         `json:"raw_output,omitempty"` // last LLM content when output validation failed

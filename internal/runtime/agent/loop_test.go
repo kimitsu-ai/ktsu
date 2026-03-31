@@ -613,6 +613,226 @@ func TestLoop_noOutputSchemaNoSchemaInPrompt(t *testing.T) {
 	}
 }
 
+func TestLoop_forcedConclusionNotDuplicated(t *testing.T) {
+	// max_turns=1; turn 1 produces invalid JSON; free correction succeeds.
+	// The forced-conclusion message must appear exactly once in the recovery call's messages.
+	callCount := 0
+	var recoveryMessages []any
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+		if callCount == 1 {
+			json.NewEncoder(w).Encode(map[string]any{
+				"content":        "not json",
+				"model_resolved": "anthropic/claude-sonnet-4-6",
+				"tokens_in":      10, "tokens_out": 5, "cost_usd": 0.0,
+			})
+		} else {
+			recoveryMessages, _ = body["messages"].([]any)
+			json.NewEncoder(w).Encode(map[string]any{
+				"content":        `{"ok":true}`,
+				"model_resolved": "anthropic/claude-sonnet-4-6",
+				"tokens_in":      10, "tokens_out": 5, "cost_usd": 0.0,
+			})
+		}
+	}))
+	defer gw.Close()
+
+	req := baseReq()
+	req.MaxTurns = 1
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != agent.StatusOK {
+		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
+	}
+
+	forcedCount := 0
+	for _, msg := range recoveryMessages {
+		m, _ := msg.(map[string]any)
+		if content, _ := m["content"].(string); strings.Contains(content, "maximum number of tool calls") {
+			forcedCount++
+		}
+	}
+	if forcedCount != 1 {
+		t.Errorf("expected forced-conclusion message exactly once, found %d times", forcedCount)
+	}
+}
+
+func TestLoop_parallelToolCalls(t *testing.T) {
+	// Turn 1: two tool calls for two different servers.
+	// Turn 2: final answer.
+	// Assert both tool_result blocks appear in turn 2's messages in original order.
+	mcp1 := fakeMCPServer(t, "tool-a", `"result-a"`)
+	mcp2 := fakeMCPServer(t, "tool-b", `"result-b"`)
+	defer mcp1.Close()
+	defer mcp2.Close()
+
+	var capturedTurn2Messages []any
+	callIdx := 0
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if callIdx == 0 {
+			callIdx++
+			json.NewEncoder(w).Encode(map[string]any{
+				"content":        "",
+				"model_resolved": "anthropic/claude-sonnet-4-6",
+				"tokens_in":      100,
+				"tokens_out":     20,
+				"cost_usd":       0.001,
+				"tool_calls": []map[string]any{
+					{"id": "tc-a", "name": "tool-a", "arguments": map[string]any{"k": "v"}},
+					{"id": "tc-b", "name": "tool-b", "arguments": map[string]any{"k": "v"}},
+				},
+			})
+			return
+		}
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		capturedTurn2Messages, _ = body["messages"].([]any)
+		json.NewEncoder(w).Encode(map[string]any{
+			"content":        `{"done":true}`,
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      50,
+			"tokens_out":     10,
+			"cost_usd":       0.0005,
+		})
+	}))
+	defer gw.Close()
+
+	req := baseReq()
+	req.ToolServers = []agent.ToolServerSpec{
+		{Name: "srv1", URL: mcp1.URL, Allowlist: []string{"tool-a"}},
+		{Name: "srv2", URL: mcp2.URL, Allowlist: []string{"tool-b"}},
+	}
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != agent.StatusOK {
+		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
+	}
+	if payload.Metrics.ToolCalls != 2 {
+		t.Errorf("expected 2 tool calls, got %d", payload.Metrics.ToolCalls)
+	}
+
+	// messages: [system, user, assistant(tool_use-a), user(tool_result-a), assistant(tool_use-b), user(tool_result-b)]
+	if len(capturedTurn2Messages) < 6 {
+		t.Fatalf("expected at least 6 messages on turn 2, got %d", len(capturedTurn2Messages))
+	}
+	// Verify tool results appear in the original call order (tc-a before tc-b).
+	resultA, _ := capturedTurn2Messages[3].(map[string]any)
+	resultAContent, _ := resultA["content"].(string)
+	if !strings.Contains(resultAContent, "tc-a") {
+		t.Errorf("expected tool_result for tc-a at index 3, got: %v", resultAContent)
+	}
+	resultB, _ := capturedTurn2Messages[5].(map[string]any)
+	resultBContent, _ := resultB["content"].(string)
+	if !strings.Contains(resultBContent, "tc-b") {
+		t.Errorf("expected tool_result for tc-b at index 5, got: %v", resultBContent)
+	}
+}
+
+func TestLoop_parallelToolDiscovery(t *testing.T) {
+	// Two MCP servers each advertising one tool.
+	// Both tools must appear in the gateway request's tools list.
+	mcp1 := fakeMCPServer(t, "tool-alpha", `"result-alpha"`)
+	mcp2 := fakeMCPServer(t, "tool-beta", `"result-beta"`)
+	defer mcp1.Close()
+	defer mcp2.Close()
+
+	var capturedTools []any
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if capturedTools == nil {
+			capturedTools, _ = body["tools"].([]any)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"content":        `{"done":true}`,
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      10,
+			"tokens_out":     5,
+			"cost_usd":       0.0,
+		})
+	}))
+	defer gw.Close()
+
+	req := baseReq()
+	req.ToolServers = []agent.ToolServerSpec{
+		{Name: "srv1", URL: mcp1.URL, Allowlist: []string{"tool-alpha"}},
+		{Name: "srv2", URL: mcp2.URL, Allowlist: []string{"tool-beta"}},
+	}
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != agent.StatusOK {
+		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
+	}
+	toolNames := make(map[string]bool)
+	for _, tool := range capturedTools {
+		if m, ok := tool.(map[string]any); ok {
+			toolNames[m["name"].(string)] = true
+		}
+	}
+	if !toolNames["tool-alpha"] {
+		t.Error("expected tool-alpha in gateway request")
+	}
+	if !toolNames["tool-beta"] {
+		t.Error("expected tool-beta in gateway request")
+	}
+}
+
+func TestLoop_modelResolvedSetOnFreeCorrection(t *testing.T) {
+	// max_turns=1: forced conclusion produces invalid JSON.
+	// Free correction (2nd call): valid JSON with model_resolved set.
+	// Assert ModelResolved is populated from the recovery call.
+	callCount := 0
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		if callCount == 1 {
+			json.NewEncoder(w).Encode(map[string]any{
+				"content":        "not valid json at all",
+				"model_resolved": "anthropic/claude-sonnet-4-6",
+				"tokens_in":      50,
+				"tokens_out":     10,
+				"cost_usd":       0.001,
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]any{
+				"content":        `{"result":"ok"}`,
+				"model_resolved": "anthropic/claude-haiku-4-5",
+				"tokens_in":      20,
+				"tokens_out":     5,
+				"cost_usd":       0.0002,
+			})
+		}
+	}))
+	defer gw.Close()
+
+	req := baseReq()
+	req.MaxTurns = 1
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != agent.StatusOK {
+		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
+	}
+	if payload.Metrics.ModelResolved != "anthropic/claude-sonnet-4-6" {
+		t.Errorf("expected model_resolved from first call, got: %q", payload.Metrics.ModelResolved)
+	}
+	if payload.Metrics.LLMCalls != 2 {
+		t.Errorf("expected 2 LLM calls, got %d", payload.Metrics.LLMCalls)
+	}
+}
+
 func TestLoop_toolDiscoveryError(t *testing.T) {
 	// MCP server that returns 500
 	badMCP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

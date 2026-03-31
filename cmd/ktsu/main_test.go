@@ -167,7 +167,93 @@ pipeline:
 	}
 }
 
+// TestValidateCmd_detectsOrphanErrors verifies that validate reports errors in agent files
+// even if they are not referenced by any workflow.
+func TestValidateCmd_detectsOrphanErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a valid workflow
+	goodWorkflow := `
+name: good-workflow
+pipeline:
+  - id: step_a
+    webhook: { url: http://example.com }
+`
+	if err := writeFile(filepath.Join(dir, "workflows/good.workflow.yaml"), goodWorkflow); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	// Write a broken agent (missing output schema)
+	brokenAgent := `
+name: broken-agent
+system: test
+`
+	if err := writeFile(filepath.Join(dir, "agents/broken.agent.yaml"), brokenAgent); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.Flags().Set("workflow-dir", filepath.Join(dir, "workflows"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	// Run validation on the project directory
+	if err := cmd.RunE(cmd, []string{dir}); err == nil {
+		t.Error("want error for broken orphan agent, got nil")
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "broken.agent.yaml") {
+		t.Errorf("output missing broken agent filename: %s", output)
+	}
+	if !strings.Contains(output, "has no output schema") {
+		t.Errorf("output missing expected error message: %s", output)
+	}
+}
+
+// TestValidateCmd_resolvesRelativePathsCorrectly verifies that validate correctly resolves
+// relative server paths within an agent file.
+func TestValidateCmd_resolvesRelativePathsCorrectly(t *testing.T) {
+	dir := t.TempDir()
+
+	// agents/myagent.agent.yaml -> ../servers/myserver.server.yaml
+	agentContent := `
+name: myagent
+model: standard
+system: test
+servers:
+  - name: myserver
+    path: ../servers/myserver.server.yaml
+output:
+  schema: { type: object }
+`
+	serverContent := `
+name: myserver
+url: http://myserver
+`
+	if err := writeFile(filepath.Join(dir, "agents/myagent.agent.yaml"), agentContent); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+	if err := writeFile(filepath.Join(dir, "servers/myserver.server.yaml"), serverContent); err != nil {
+		t.Fatalf("write server: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	// Should pass because ../servers/myserver.server.yaml is resolved relative to agents/myagent.agent.yaml
+	if err := cmd.RunE(cmd, []string{dir}); err != nil {
+		t.Fatalf("validation failed: %v\nOutput: %s", err, buf.String())
+	}
+}
+
 func writeFile(path, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
@@ -282,7 +368,7 @@ pipeline:
 	if err := os.MkdirAll(dir+"/agents", 0755); err != nil {
 		t.Fatalf("mkdir agents: %v", err)
 	}
-	if err := writeFile(dir+"/agents/test.agent.yaml", "name: test\nmodel: default"); err != nil {
+	if err := writeFile(dir+"/agents/test.agent.yaml", "name: test\nmodel: default\noutput:\n  schema:\n    type: object"); err != nil {
 		t.Fatalf("write agent: %v", err)
 	}
 
@@ -355,9 +441,12 @@ func TestValidateCmd_graphOutput_externalRefs(t *testing.T) {
 	// 1. Write Agent
 	agentContent := `
 name: researcher
+model: default
 servers:
   - name: search
     path: ../servers.yaml
+output:
+  schema: { type: object }
 `
 	if err := os.MkdirAll(dir+"/agents", 0o755); err != nil {
 		t.Fatalf("mkdir agents: %v", err)
