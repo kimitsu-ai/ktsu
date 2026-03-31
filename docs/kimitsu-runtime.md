@@ -403,8 +403,62 @@ state_store:
 | `ok` | Completed successfully, output validated by Air-Lock |
 | `failed` | Failed — skill error, Air-Lock rejection after retries, timeout, heartbeat timeout, or reserved field condition |
 | `skipped` | Never ran — upstream step was skipped via `ktsu_skip_reason`, or webhook condition evaluated false |
+| `pending_approval` | Agent suspended — waiting for a human to approve or reject a tool call. See Manual Approval below. |
 
-When a step is skipped, downstream steps that depend on it are also skipped. If a step fails, the run fails immediately and all remaining steps are skipped.
+When a step is skipped, downstream steps that depend on it are also skipped. If a step fails, the run fails immediately and all remaining steps are skipped. A `pending_approval` step does not block other independent pipeline branches — only downstream dependents wait.
+
+### Manual Approval
+
+When an agent attempts to call a tool marked `require_approval` in its allowlist, the Agent Runtime suspends the reasoning loop and sends a `pending_approval` callback to the Orchestrator. The runtime terminates — no in-process waiting, no blocked goroutines. The full conversation context (all messages up to and including the pending tool call) is included in the callback so any runtime instance can resume the work.
+
+**Lifecycle:**
+
+1. Agent Runtime encounters a tool call matching a `require_approval` pattern.
+2. Runtime appends the assistant `tool_use` block to the conversation checkpoint and sends a `pending_approval` callback. The callback includes:
+   - `pending_approval` — tool name, ID, arguments, and policy fields
+   - `messages` — full conversation checkpoint
+   - `original_request` — serialized invocation request for re-dispatch
+   - `metrics` — accumulated cost/token data for the pending leg
+3. Orchestrator stores the approval record, updates the step to `pending_approval`, and fires any `on: approval` webhook steps that depend on this step.
+4. Human (or external system) calls `POST /runs/{run_id}/steps/{step_id}/approval/decide` with `{"decision": "approved"}` or `{"decision": "rejected"}`.
+5. **Approved:** Orchestrator re-invokes the runtime with the conversation checkpoint, marking the tool call as pre-approved. The runtime executes the tool, appends the result, and continues the reasoning loop normally.
+6. **Rejected (`on_reject: fail`):** Orchestrator signals the step as failed. The run fails.
+7. **Rejected (`on_reject: recover`):** Orchestrator re-invokes the runtime with the conversation checkpoint plus a `tool_result` message saying the call was rejected. The agent can try an alternative approach.
+8. When the resumed runtime sends a final `ok`/`failed` callback, the Orchestrator accumulates metrics from both legs (pending + resume) before recording the final step result.
+
+**Approval notification via `on: approval` steps:**
+
+A webhook step with `on: approval` fires when any of its `depends_on` steps enters `pending_approval`. Use this to send a Slack notification or trigger a review workflow:
+
+```yaml
+pipeline:
+  - id: process-records
+    agent: "./agents/processor.agent.yaml"
+
+  - id: notify-approval-needed
+    on: approval
+    depends_on: [process-records]
+    webhook:
+      url: "env:SLACK_WEBHOOK_URL"
+      method: POST
+      timeout_s: 10
+```
+
+The webhook receives a JSON body with `run_id`, `step_id`, `tool_name`, `tool_use_id`, `arguments`, and `status: "pending"`.
+
+**REST API:**
+
+```
+GET  /approvals
+     Returns all currently pending approvals across all runs.
+
+GET  /runs/{run_id}/steps/{step_id}/approval
+     Returns the approval record for a specific step.
+
+POST /runs/{run_id}/steps/{step_id}/approval/decide
+     Body: {"decision": "approved" | "rejected"}
+     Returns 200 on success, 404 if approval not found, 409 if already decided.
+```
 
 ### The Envelope
 

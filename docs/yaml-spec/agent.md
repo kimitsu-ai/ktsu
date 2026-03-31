@@ -22,9 +22,14 @@ servers:                         # omit entirely for a toolless agent
     path: servers/wiki-search.server.yaml  # relative to project root
     access:
       allowlist:
-        - wiki-search            # exact tool name
+        - wiki-search            # exact tool name (plain string)
         - crm-read-*             # prefix wildcard — any tool starting with "crm-read-"
         - "*"                    # all tools this server exposes
+        - name: delete-*         # object form — adds require_approval policy
+          require_approval:
+            on_reject: fail      # "fail" | "recover"
+            timeout: 30m         # optional — duration string; omit for no timeout
+            timeout_behavior: reject  # "fail" | "reject" — required when timeout is set
 
 sub_agents:                      # sub-agents this agent may invoke (optional)
   - agents/summarizer.agent.yaml # path relative to project root
@@ -53,7 +58,10 @@ output:
 | `servers` | array | no | Tool servers this agent may call; omit for toolless agent |
 | `servers[].name` | string | yes | Logical name — used in logs |
 | `servers[].path` | string | yes | Path to `.server.yaml` file, relative to project root |
-| `servers[].access.allowlist` | string[] | yes | Permitted tools: exact name, `prefix-*`, or `*` |
+| `servers[].access.allowlist` | string[] or object[] | yes | Permitted tools: exact name, `prefix-*`, or `*`. Each entry may be a plain string or an object `{name, require_approval}` to add an approval policy. |
+| `servers[].access.allowlist[].require_approval.on_reject` | string | yes (if require_approval set) | `fail` — step fails on rejection. `recover` — agent receives a rejection message and may try an alternative. |
+| `servers[].access.allowlist[].require_approval.timeout` | duration | no | Approval deadline (e.g. `30m`, `2h`). If no decision is received in time, `timeout_behavior` applies. |
+| `servers[].access.allowlist[].require_approval.timeout_behavior` | string | yes (if timeout set) | `fail` — step fails on timeout. `reject` — treated as a rejection (respects `on_reject`). |
 | `sub_agents` | string[] | no | Paths to `.agent.yaml` files this agent may invoke, relative to project root |
 | `output.schema` | JSON Schema | yes | Air-Lock validated before downstream steps can read this agent's output |
 
@@ -130,4 +138,5 @@ These are just JSON path conventions for the LLM — use them in prose instructi
 
 - A toolless agent (no `servers` block) has no tools to exploit — recommended as the first pipeline step when handling raw user input.
 - Allowlist wildcards: `*` (all tools), `prefix-*` (prefix match). Mid-string wildcards are a boot error.
+- Allowlist entries may be plain strings or objects with `require_approval` to gate tool calls on human approval. When matched, the agent runtime suspends the run and sends a `pending_approval` callback; execution resumes after a decision is posted to `POST /runs/{run_id}/steps/{step_id}/approval/decide`.
 - Sub-agents are referenced by file path only (no logical name). They do not appear in the pipeline DAG and their cost rolls up to the parent step.
