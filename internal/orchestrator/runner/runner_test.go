@@ -1176,3 +1176,88 @@ func TestRunner_fanout_maxFailures_unlimited(t *testing.T) {
 		}
 	}
 }
+
+// TestRunner_metrics_preserved_on_skip verifies that LLM cost/token metrics are stored
+// on the step record even when the step is skipped via ktsu_skip_reason.
+func TestRunner_metrics_preserved_on_skip(t *testing.T) {
+	store := state.NewMemStore()
+	// failingDispatcher returns explicit non-zero metrics on success paths.
+	fd := &failingDispatcher{
+		failStepIDs: map[string]bool{},
+		successOutput: map[string]interface{}{
+			"label":            "irrelevant",
+			"ktsu_skip_reason": "not_applicable",
+		},
+	}
+	r := NewWithDispatcher(store, fd)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "classify",
+		Agent: "agents/classifier.agent.yaml",
+	})
+
+	ctx := context.Background()
+	// Execute succeeds at the workflow level (the step is skipped, not failed).
+	_ = r.Execute(ctx, "test-workflow", "run-skip-metrics", wf, map[string]interface{}{})
+
+	step, err := store.GetStep(ctx, "run-skip-metrics", "classify")
+	if err != nil {
+		t.Fatalf("step not found: %v", err)
+	}
+	if step.Status != types.StepStatusSkipped {
+		t.Errorf("expected step skipped, got %s", step.Status)
+	}
+	if step.Metrics.CostUSD == 0 {
+		t.Error("expected non-zero CostUSD on skipped step — metrics must be preserved")
+	}
+	if step.Metrics.TokensIn == 0 {
+		t.Error("expected non-zero TokensIn on skipped step")
+	}
+}
+
+// TestRunner_metrics_preserved_on_airlock_fail verifies that LLM cost/token metrics
+// are stored on the step record even when airlock schema validation fails.
+func TestRunner_metrics_preserved_on_airlock_fail(t *testing.T) {
+	store := state.NewMemStore()
+
+	// Dispatcher returns output that violates a required schema field.
+	fd := &failingDispatcher{
+		failStepIDs: map[string]bool{},
+		successOutput: map[string]interface{}{
+			// "required_field" is absent — airlock validation will reject this.
+			"other_field": "value",
+		},
+	}
+	r := NewWithDispatcher(store, fd)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "validate_step",
+		Agent: "agents/validator.agent.yaml",
+		Output: &config.OutputSpec{
+			Schema: map[string]interface{}{
+				"type":     "object",
+				"required": []interface{}{"required_field"},
+				"properties": map[string]interface{}{
+					"required_field": map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+	})
+
+	ctx := context.Background()
+	err := r.Execute(ctx, "test-workflow", "run-airlock-metrics", wf, map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected Execute to fail due to airlock validation error")
+	}
+
+	step, getErr := store.GetStep(ctx, "run-airlock-metrics", "validate_step")
+	if getErr != nil {
+		t.Fatalf("step not found: %v", getErr)
+	}
+	if step.Status != types.StepStatusFailed {
+		t.Errorf("expected step failed, got %s", step.Status)
+	}
+	if step.Metrics.CostUSD == 0 {
+		t.Error("expected non-zero CostUSD on airlock-failed step — metrics must be preserved")
+	}
+}

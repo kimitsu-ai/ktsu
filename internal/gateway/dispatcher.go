@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync/atomic"
 
@@ -114,6 +115,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req DispatchRequest) (provide
 	// 7. Calculate cost
 	if pc, found := pricing.LookupPricing(modelID, group.Pricing); found {
 		resp.CostUSD = pricing.CalculateCost(resp.TokensIn, resp.TokensOut, pc)
+	} else if pc, found := pricing.LookupBuiltin(modelID); found {
+		resp.CostUSD = pricing.CalculateCost(resp.TokensIn, resp.TokensOut, pc)
+	} else {
+		log.Printf("gateway: no pricing configured for model %q — cost_usd will be 0", modelID)
 	}
 
 	// 8. Set model_resolved

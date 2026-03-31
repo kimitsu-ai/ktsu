@@ -154,6 +154,28 @@ func TestDispatcher_provider_not_registered(t *testing.T) {
 	}
 }
 
+func TestDispatcher_calculates_cost_from_builtin_when_no_pricing_config(t *testing.T) {
+	fp := &fakeProvider{
+		name:     "openai",
+		response: providers.InvokeResponse{Content: "hi", TokensIn: 1_000_000, TokensOut: 1_000_000},
+	}
+	// Use a group with NO pricing config — should fall back to built-in for gpt-4o-mini.
+	cfg := &config.GatewayConfig{
+		ModelGroups: []config.ModelGroupConfig{
+			{Name: "fast", Models: []string{"openai/gpt-4o-mini"}, Strategy: "round_robin"},
+		},
+	}
+	d := gw.NewDispatcher(cfg, map[string]providers.Provider{"openai": fp})
+	resp, err := d.Dispatch(context.Background(), gw.DispatchRequest{Group: "fast"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Built-in: 1M input @ $0.15 + 1M output @ $0.60 = $0.75
+	if resp.CostUSD != 0.75 {
+		t.Fatalf("expected builtin cost 0.75, got %f", resp.CostUSD)
+	}
+}
+
 func TestDispatcher_calculates_cost(t *testing.T) {
 	fp := &fakeProvider{
 		name:     "openai",

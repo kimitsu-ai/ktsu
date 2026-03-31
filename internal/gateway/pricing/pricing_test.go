@@ -68,3 +68,42 @@ func TestLookupPricing_not_found(t *testing.T) {
 		t.Fatal("expected not found for unknown model")
 	}
 }
+
+func TestLookupBuiltin_known_model(t *testing.T) {
+	pc, ok := pricing.LookupBuiltin("claude-haiku-4-5-20251001")
+	if !ok {
+		t.Fatal("expected builtin pricing for claude-haiku-4-5-20251001")
+	}
+	if pc.InputPerMillion <= 0 || pc.OutputPerMillion <= 0 {
+		t.Errorf("expected positive pricing, got in=%f out=%f", pc.InputPerMillion, pc.OutputPerMillion)
+	}
+}
+
+func TestLookupBuiltin_unknown_model(t *testing.T) {
+	_, ok := pricing.LookupBuiltin("unknown-custom-model")
+	if ok {
+		t.Fatal("expected no builtin pricing for unknown model")
+	}
+}
+
+func TestLookupBuiltin_user_config_overrides(t *testing.T) {
+	// User sets a custom price for a model that also exists in builtins.
+	userConfigs := []config.PricingConfig{
+		{Model: "gpt-4o", InputPerMillion: 99.00, OutputPerMillion: 99.00},
+	}
+	got, ok := pricing.LookupPricing("gpt-4o", userConfigs)
+	if !ok {
+		t.Fatal("expected to find user-configured pricing")
+	}
+	if got.InputPerMillion != 99.00 {
+		t.Errorf("expected user override price 99.00, got %f", got.InputPerMillion)
+	}
+	// Builtin should still exist but not be used when user config is present.
+	builtin, ok := pricing.LookupBuiltin("gpt-4o")
+	if !ok {
+		t.Fatal("expected builtin to exist for gpt-4o")
+	}
+	if builtin.InputPerMillion == 99.00 {
+		t.Error("builtin should not have been modified by user config")
+	}
+}

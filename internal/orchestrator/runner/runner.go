@@ -153,8 +153,11 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 				}
 			}
 
+			// Always capture metrics so cost/token data is preserved in the envelope
+			// regardless of whether the step succeeds, fails, or is skipped.
+			stepRec.Metrics = stepMetrics
+
 			if execErr != nil {
-				stepRec.Metrics = stepMetrics
 				return failRun(stepRec, execErr.Error())
 			}
 
@@ -201,7 +204,6 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			now := time.Now()
 			stepRec.Status = types.StepStatusComplete
 			stepRec.Output = cleanOutput
-			stepRec.Metrics = stepMetrics
 			stepRec.EndedAt = &now
 			if err := r.store.UpdateStep(ctx, stepRec); err != nil {
 				return fmt.Errorf("update step %s: %w", step.ID, err)
