@@ -47,7 +47,56 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(invokeCmd())
 	root.AddCommand(lockCmd())
 	root.AddCommand(newCmd())
+	root.AddCommand(orchestratorGroupCmd())
 	return root
+}
+
+func orchestratorGroupCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "orchestrator",
+		Aliases: []string{"orc"},
+		Short:   "Query and interact with a running orchestrator",
+	}
+	cmd.AddCommand(orchestratorEnvelopeCmd())
+	return cmd
+}
+
+func orchestratorEnvelopeCmd() *cobra.Command {
+	var orchestratorURL string
+	cmd := &cobra.Command{
+		Use:   "envelope <run_id>",
+		Short: "Print the envelope for a run",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runID := args[0]
+			resp, err := http.Get(orchestratorURL + "/envelope/" + runID)
+			if err != nil {
+				return fmt.Errorf("envelope: %w", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				var result map[string]interface{}
+				json.NewDecoder(resp.Body).Decode(&result)
+				if msg, ok := result["error"].(string); ok {
+					return fmt.Errorf("envelope: %s (status %d)", msg, resp.StatusCode)
+				}
+				return fmt.Errorf("envelope: orchestrator returned status %d", resp.StatusCode)
+			}
+
+			var envelope interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+				return fmt.Errorf("envelope: decode: %w", err)
+			}
+			data, _ := json.MarshalIndent(envelope, "", "  ")
+			fmt.Fprintln(cmd.OutOrStdout(), string(data))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
+		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:8080"),
+		"orchestrator URL (env: KTSU_ORCHESTRATOR_URL)")
+	return cmd
 }
 
 func signalCtx() context.Context {
@@ -293,13 +342,13 @@ func invokeCmd() *cobra.Command {
 }
 
 func validateCmd() *cobra.Command {
-	var envPath, workflowDir string
+	var envPath, workflowDir, projectDir string
 	cmd := &cobra.Command{
 		Use:   "validate [project-dir]",
 		Short: "Validate Kimitsu configuration files",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			projectDir := "."
+			// Positional arg overrides --project-dir flag (backward compat).
 			if len(args) > 0 {
 				projectDir = args[0]
 			}
@@ -368,6 +417,9 @@ func validateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&envPath, "env", "", "path to environment config")
 	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "", "directory of *.workflow.yaml files to validate")
 	cmd.Flags().Bool("graph", false, "output Mermaid graph of workflows")
+	cmd.Flags().StringVar(&projectDir, "project-dir",
+		envOr("KTSU_PROJECT_DIR", "."),
+		"project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
 	return cmd
 }
 

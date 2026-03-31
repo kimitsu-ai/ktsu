@@ -250,6 +250,166 @@ url: http://myserver
 	}
 }
 
+// TestValidateCmd_detectsMissingServerViaWorkflow verifies that validate catches a missing
+// server file that is referenced through a workflow → agent → server chain.
+func TestValidateCmd_detectsMissingServerViaWorkflow(t *testing.T) {
+	dir := t.TempDir()
+
+	workflowContent := `
+name: test-workflow
+pipeline:
+  - id: step1
+    agent: agents/myagent.agent.yaml
+`
+	agentContent := `
+name: myagent
+model: default
+system: test
+servers:
+  - name: myserver
+    path: ../servers/missing.server.yaml
+output:
+  schema: { type: object }
+`
+	if err := writeFile(filepath.Join(dir, "workflows/test.workflow.yaml"), workflowContent); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	if err := writeFile(filepath.Join(dir, "agents/myagent.agent.yaml"), agentContent); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+	// Intentionally no server file — validate must catch this.
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	if err := cmd.RunE(cmd, []string{dir}); err == nil {
+		t.Errorf("want error for missing server, got nil\nOutput: %s", buf.String())
+	}
+}
+
+// TestValidateCmd_projectDirFlag verifies that --project-dir (and KTSU_PROJECT_DIR) controls
+// the base path used when resolving agent and server references — matching orchestrator behaviour.
+func TestValidateCmd_projectDirFlag(t *testing.T) {
+	dir := t.TempDir()
+
+	workflowContent := `
+name: test-workflow
+pipeline:
+  - id: step1
+    agent: agents/myagent.agent.yaml
+`
+	agentContent := `
+name: myagent
+model: default
+system: test
+servers:
+  - name: myserver
+    path: ../servers/myserver.server.yaml
+output:
+  schema: { type: object }
+`
+	serverContent := `
+name: myserver
+url: http://myserver
+`
+	if err := writeFile(filepath.Join(dir, "workflows/test.workflow.yaml"), workflowContent); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	if err := writeFile(filepath.Join(dir, "agents/myagent.agent.yaml"), agentContent); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+	if err := writeFile(filepath.Join(dir, "servers/myserver.server.yaml"), serverContent); err != nil {
+		t.Fatalf("write server: %v", err)
+	}
+
+	// Verify KTSU_PROJECT_DIR env var is honoured.
+	t.Setenv("KTSU_PROJECT_DIR", dir)
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	// No positional arg — relies solely on KTSU_PROJECT_DIR via the --project-dir default.
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("want no error when KTSU_PROJECT_DIR is set correctly, got: %v\nOutput: %s", err, buf.String())
+	}
+}
+
+// TestOrchestratorEnvelopeCmd_printsEnvelopeJSON verifies that ktsu orchestrator envelope
+// sends GET /envelope/{run_id} and pretty-prints the JSON response.
+func TestOrchestratorEnvelopeCmd_printsEnvelopeJSON(t *testing.T) {
+	envelope := map[string]interface{}{
+		"run_id":   "run-abc123",
+		"workflow": "my-workflow",
+		"status":   "complete",
+		"steps":    []interface{}{},
+		"totals":   map[string]interface{}{"duration_ms": float64(1200)},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/envelope/run-abc123" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(envelope)
+	}))
+	defer srv.Close()
+
+	var buf strings.Builder
+	cmd := orchestratorEnvelopeCmd()
+	cmd.Flags().Set("orchestrator", srv.URL)
+	cmd.SetOut(&buf)
+
+	if err := cmd.RunE(cmd, []string{"run-abc123"}); err != nil {
+		t.Fatalf("orchestratorEnvelopeCmd.RunE: %v", err)
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(buf.String()), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\nOutput: %s", err, buf.String())
+	}
+	if got["run_id"] != "run-abc123" {
+		t.Errorf("want run_id=run-abc123, got %v", got["run_id"])
+	}
+}
+
+// TestOrchestratorEnvelopeCmd_notFound verifies that a 404 from the orchestrator
+// surfaces as an error containing the server's error message.
+func TestOrchestratorEnvelopeCmd_notFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "run not found"})
+	}))
+	defer srv.Close()
+
+	cmd := orchestratorEnvelopeCmd()
+	cmd.Flags().Set("orchestrator", srv.URL)
+
+	err := cmd.RunE(cmd, []string{"run-missing"})
+	if err == nil {
+		t.Fatal("want error for 404, got nil")
+	}
+	if !strings.Contains(err.Error(), "run not found") {
+		t.Errorf("want error containing 'run not found', got: %v", err)
+	}
+}
+
+// TestOrchestratorGroupCmd_hasOrcAlias verifies the orchestrator command group
+// registers "orc" as an alias.
+func TestOrchestratorGroupCmd_hasOrcAlias(t *testing.T) {
+	cmd := orchestratorGroupCmd()
+	for _, a := range cmd.Aliases {
+		if a == "orc" {
+			return
+		}
+	}
+	t.Error("want 'orc' alias on orchestrator command group")
+}
+
 func writeFile(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err

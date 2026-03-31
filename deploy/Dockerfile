@@ -14,5 +14,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o ktsu ./cmd/ktsu
 # Final stage
 FROM alpine:latest
 RUN apk add --no-cache ca-certificates
+WORKDIR /app
 COPY --from=builder /app/ktsu /usr/local/bin/ktsu
 ENTRYPOINT ["ktsu"]
