@@ -45,4 +45,5 @@ environments/
 !environments/*.example.yaml
 .worktrees/
 /ktsu
+test_bin/
 install-go.sh
