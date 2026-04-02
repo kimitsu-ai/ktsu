@@ -13,8 +13,8 @@ type Config struct {
 	Env         *config.EnvConfig
 	WorkflowDir string // default: "./workflows"
 	Host        string // bind interface, "" = all
-	Port        int    // default 8080
-	RuntimeURL  string // URL of the Agent Runtime (e.g. "http://runtime:8082")
+	Port        int    // default 5050
+	RuntimeURL  string // URL of the Agent Runtime (e.g. "http://runtime:5051")
 	OwnURL      string // this orchestrator's own URL, for constructing callback_url
 	ProjectDir  string // root dir for resolving agent/server paths (default: ".")
 	APIKey      string // optional bearer token; empty = auth disabled

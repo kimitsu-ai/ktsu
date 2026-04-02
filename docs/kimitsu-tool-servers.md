@@ -71,7 +71,7 @@ auth: "env:GITHUB_TOKEN"
 A server file with no auth:
 ```yaml
 name: public-search
-url: "http://search.internal:8080"
+url: "http://search.internal:5050"
 ```
 
 ### How Agents Reference Tool Servers

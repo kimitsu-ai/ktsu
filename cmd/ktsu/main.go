@@ -94,7 +94,7 @@ func orchestratorEnvelopeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
-		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:8080"),
+		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:5050"),
 		"orchestrator URL (env: KTSU_ORCHESTRATOR_URL)")
 	return cmd
 }
@@ -226,13 +226,13 @@ func startCmd() *cobra.Command {
 	start.Flags().StringVar(&ownURL, "own-url", envOr("KTSU_OWN_URL", ""), "orchestrator's own URL for callbacks (env: KTSU_OWN_URL)")
 	start.Flags().StringVar(&projectDir, "project-dir", envOr("KTSU_PROJECT_DIR", "."), "project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
 	start.Flags().StringVar(&orchHost, "orchestrator-host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "orchestrator bind host (env: KTSU_ORCHESTRATOR_HOST)")
-	start.Flags().IntVar(&orchPort, "orchestrator-port", envIntOr("KTSU_ORCHESTRATOR_PORT", 8080), "orchestrator port (env: KTSU_ORCHESTRATOR_PORT)")
+	start.Flags().IntVar(&orchPort, "orchestrator-port", envIntOr("KTSU_ORCHESTRATOR_PORT", 5050), "orchestrator port (env: KTSU_ORCHESTRATOR_PORT)")
 	start.Flags().StringVar(&apiKey, "api-key", envOr("KTSU_API_KEY", ""), "orchestrator API key for bearer auth (env: KTSU_API_KEY)")
 	start.Flags().StringVar(&gatewayConfigPath, "gateway-config", "gateway.yaml", "path to gateway config")
 	start.Flags().StringVar(&gwHost, "gateway-host", envOr("KTSU_GATEWAY_HOST", ""), "gateway bind host (env: KTSU_GATEWAY_HOST)")
-	start.Flags().IntVar(&gwPort, "gateway-port", envIntOr("KTSU_GATEWAY_PORT", 8081), "gateway port (env: KTSU_GATEWAY_PORT)")
+	start.Flags().IntVar(&gwPort, "gateway-port", envIntOr("KTSU_GATEWAY_PORT", 5052), "gateway port (env: KTSU_GATEWAY_PORT)")
 	start.Flags().StringVar(&rtHost, "runtime-host", envOr("KTSU_RUNTIME_HOST", ""), "runtime bind host (env: KTSU_RUNTIME_HOST)")
-	start.Flags().IntVar(&rtPort, "runtime-port", envIntOr("KTSU_RUNTIME_PORT", 8082), "runtime port (env: KTSU_RUNTIME_PORT)")
+	start.Flags().IntVar(&rtPort, "runtime-port", envIntOr("KTSU_RUNTIME_PORT", 5051), "runtime port (env: KTSU_RUNTIME_PORT)")
 
 	start.AddCommand(startOrchestratorCmd())
 	start.AddCommand(startRuntimeCmd())
@@ -274,7 +274,7 @@ func startOrchestratorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&envPath, "env", "", "path to environment config (e.g. environments/dev.env.yaml)")
 	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "./workflows", "path to workflow directory")
 	cmd.Flags().StringVar(&host, "host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "host interface to bind (env: KTSU_ORCHESTRATOR_HOST)")
-	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_ORCHESTRATOR_PORT", 8080), "port to listen on (env: KTSU_ORCHESTRATOR_PORT)")
+	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_ORCHESTRATOR_PORT", 5050), "port to listen on (env: KTSU_ORCHESTRATOR_PORT)")
 	cmd.Flags().StringVar(&runtimeURL, "runtime-url",
 		envOr("KTSU_RUNTIME_URL", ""),
 		"agent runtime URL (env: KTSU_RUNTIME_URL)")
@@ -308,13 +308,13 @@ func startRuntimeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
-		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:8080"),
+		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:5050"),
 		"orchestrator URL (env: KTSU_ORCHESTRATOR_URL)")
 	cmd.Flags().StringVar(&gatewayURL, "gateway",
-		envOr("KTSU_GATEWAY_URL", "http://localhost:8081"),
+		envOr("KTSU_GATEWAY_URL", "http://localhost:5052"),
 		"LLM gateway URL (env: KTSU_GATEWAY_URL)")
 	cmd.Flags().StringVar(&host, "host", envOr("KTSU_RUNTIME_HOST", ""), "host interface to bind (env: KTSU_RUNTIME_HOST)")
-	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_RUNTIME_PORT", 8082), "port to listen on (env: KTSU_RUNTIME_PORT)")
+	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_RUNTIME_PORT", 5051), "port to listen on (env: KTSU_RUNTIME_PORT)")
 	return cmd
 }
 
@@ -348,7 +348,7 @@ func startGatewayCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&configPath, "config", "gateway.yaml", "path to gateway config")
 	cmd.Flags().StringVar(&host, "host", envOr("KTSU_GATEWAY_HOST", ""), "host interface to bind (env: KTSU_GATEWAY_HOST)")
-	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_GATEWAY_PORT", 8081), "port to listen on (env: KTSU_GATEWAY_PORT)")
+	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_GATEWAY_PORT", 5052), "port to listen on (env: KTSU_GATEWAY_PORT)")
 	return cmd
 }
 
@@ -368,7 +368,7 @@ func startBuiltinCmd(name string, defaultPort int, newFn func() builtins.Builtin
 	cmd.Flags().IntVar(&port, "port", defaultPort, "port to listen on")
 	if hasOrchestrator {
 		cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
-			envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:8080"),
+			envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:5050"),
 			"orchestrator URL for registration (env: KTSU_ORCHESTRATOR_URL)")
 	}
 	return cmd
@@ -443,7 +443,7 @@ func invokeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&inputJSON, "input", "{}", "JSON input for the workflow")
 	cmd.Flags().BoolVar(&wait, "wait", false, "poll until the run completes and print result")
 	cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
-		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:8080"),
+		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:5050"),
 		"orchestrator URL (env: KTSU_ORCHESTRATOR_URL)")
 	return cmd
 }

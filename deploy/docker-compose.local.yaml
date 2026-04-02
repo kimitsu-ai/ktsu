@@ -35,7 +35,7 @@ services:
       ollama-pull:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5052/health"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -55,18 +55,18 @@ services:
       - --project-dir
       - /app
     ports:
-      - "${KTSU_PORT:-8080}:8080"
+      - "${KTSU_PORT:-5050}:5050"
     volumes:
       - ../examples/hello/workflows:/app/workflows:ro
       - ../examples/hello/agents:/app/agents:ro
     environment:
-      KTSU_RUNTIME_URL: http://runtime:8082
-      KTSU_OWN_URL: http://orchestrator:8080
+      KTSU_RUNTIME_URL: http://runtime:5051
+      KTSU_OWN_URL: http://orchestrator:5050
     depends_on:
       gateway:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5050/health"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -82,15 +82,15 @@ services:
     volumes:
       - ../examples/hello/agents:/app/agents:ro
     environment:
-      KTSU_ORCHESTRATOR_URL: http://orchestrator:8080
-      KTSU_GATEWAY_URL: http://gateway:8081
+      KTSU_ORCHESTRATOR_URL: http://orchestrator:5050
+      KTSU_GATEWAY_URL: http://gateway:5052
     depends_on:
       orchestrator:
         condition: service_healthy
       gateway:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8082/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5051/health"]
       interval: 5s
       timeout: 3s
       retries: 5

@@ -97,7 +97,7 @@ func (s *server) postCallback(callbackURL string, payload agent.CallbackPayload)
 func (s *server) serve(ctx context.Context) error {
 	port := s.r.cfg.Port
 	if port == 0 {
-		port = 8082
+		port = 5051
 	}
 	addr := net.JoinHostPort(s.r.cfg.Host, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", addr)

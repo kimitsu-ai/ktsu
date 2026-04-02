@@ -240,7 +240,7 @@ func (s *server) handleStepComplete(w http.ResponseWriter, r *http.Request) {
 func (s *server) serve(ctx context.Context) error {
 	port := s.o.cfg.Port
 	if port == 0 {
-		port = 8080
+		port = 5050
 	}
 	addr := net.JoinHostPort(s.o.cfg.Host, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", addr)

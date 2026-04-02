@@ -15,7 +15,7 @@ type Config struct {
 	OrchestratorURL string
 	LLMGatewayURL   string
 	Host            string // bind interface, "" = all
-	Port            int    // default 8082
+	Port            int    // default 5051
 	Logger          *log.Logger
 }
 

@@ -59,15 +59,15 @@ CLI flags take precedence over environment variables. All env vars are optional.
 | Variable | Default | Affects | Description |
 |---|---|---|---|
 | `KTSU_ORCHESTRATOR_HOST` | `""` (all interfaces) | `start orchestrator` | Host interface to bind |
-| `KTSU_ORCHESTRATOR_PORT` | `8080` | `start orchestrator` | Port to listen on |
-| `KTSU_ORCHESTRATOR_URL` | `http://localhost:8080` | `start runtime`, `start envelope`, `invoke` | Orchestrator URL |
+| `KTSU_ORCHESTRATOR_PORT` | `5050` | `start orchestrator` | Port to listen on |
+| `KTSU_ORCHESTRATOR_URL` | `http://localhost:5050` | `start runtime`, `start envelope`, `invoke` | Orchestrator URL |
 | `KTSU_OWN_URL` | `""` | `start orchestrator` | Orchestrator's own URL for callbacks |
 | `KTSU_PROJECT_DIR` | `.` | `start orchestrator` | Project root for resolving agent/server paths |
 | `KTSU_GATEWAY_HOST` | `""` (all interfaces) | `start gateway` | Host interface to bind |
-| `KTSU_GATEWAY_PORT` | `8081` | `start gateway` | Port to listen on |
-| `KTSU_GATEWAY_URL` | `http://localhost:8081` | `start runtime` | LLM gateway URL |
+| `KTSU_GATEWAY_PORT` | `5052` | `start gateway` | Port to listen on |
+| `KTSU_GATEWAY_URL` | `http://localhost:5052` | `start runtime` | LLM gateway URL |
 | `KTSU_RUNTIME_HOST` | `""` (all interfaces) | `start runtime` | Host interface to bind |
-| `KTSU_RUNTIME_PORT` | `8082` | `start runtime` | Port to listen on |
+| `KTSU_RUNTIME_PORT` | `5051` | `start runtime` | Port to listen on |
 | `KTSU_RUNTIME_URL` | `""` | `start orchestrator` | Agent runtime URL |
 | `NO_COLOR` | *(unset)* | `validate` | Set to any value to disable colored output |
 
@@ -92,14 +92,14 @@ ktsu start orchestrator [flags]
 | `--env` | `""` | — | Path to environment config (e.g. `environments/dev.env.yaml`) |
 | `--workflow-dir` | `./workflows` | — | Directory of `*.workflow.yaml` files |
 | `--host` | `""` | `KTSU_ORCHESTRATOR_HOST` | Host interface to bind |
-| `--port` | `8080` | `KTSU_ORCHESTRATOR_PORT` | Port to listen on |
+| `--port` | `5050` | `KTSU_ORCHESTRATOR_PORT` | Port to listen on |
 | `--runtime-url` | `""` | `KTSU_RUNTIME_URL` | Agent runtime URL |
 | `--own-url` | `""` | `KTSU_OWN_URL` | Orchestrator's own URL for callbacks |
 | `--project-dir` | `.` | `KTSU_PROJECT_DIR` | Project root for resolving agent/server paths |
 
 ```bash
 ktsu start orchestrator
-ktsu start orchestrator --env environments/dev.env.yaml --port 8080
+ktsu start orchestrator --env environments/dev.env.yaml --port 5050
 ```
 
 ---
@@ -114,14 +114,14 @@ ktsu start runtime [flags]
 
 | Flag | Default | Env | Description |
 |---|---|---|---|
-| `--orchestrator` | `http://localhost:8080` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL |
-| `--gateway` | `http://localhost:8081` | `KTSU_GATEWAY_URL` | LLM gateway URL |
+| `--orchestrator` | `http://localhost:5050` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL |
+| `--gateway` | `http://localhost:5052` | `KTSU_GATEWAY_URL` | LLM gateway URL |
 | `--host` | `""` | `KTSU_RUNTIME_HOST` | Host interface to bind |
-| `--port` | `8082` | `KTSU_RUNTIME_PORT` | Port to listen on |
+| `--port` | `5051` | `KTSU_RUNTIME_PORT` | Port to listen on |
 
 ```bash
 ktsu start runtime
-ktsu start runtime --orchestrator http://orchestrator:8080 --gateway http://gateway:8081
+ktsu start runtime --orchestrator http://orchestrator:5050 --gateway http://gateway:5052
 ```
 
 ---
@@ -138,11 +138,11 @@ ktsu start gateway [flags]
 |---|---|---|---|
 | `--config` | `gateway.yaml` | — | Path to gateway config file |
 | `--host` | `""` | `KTSU_GATEWAY_HOST` | Host interface to bind |
-| `--port` | `8081` | `KTSU_GATEWAY_PORT` | Port to listen on |
+| `--port` | `5052` | `KTSU_GATEWAY_PORT` | Port to listen on |
 
 ```bash
 ktsu start gateway
-ktsu start gateway --config gateway.yaml --port 8081
+ktsu start gateway --config gateway.yaml --port 5052
 ```
 
 ---
@@ -163,11 +163,11 @@ The envelope server is the sole shipped MCP-compatible tool provider. It registe
 |---|---|---|---|
 | `--host` | `""` | — | Host interface to bind |
 | `--port` | `9104` | — | Port to listen on |
-| `--orchestrator` | `http://localhost:8080` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL for registration |
+| `--orchestrator` | `http://localhost:5050` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL for registration |
 
 ```bash
 ktsu start envelope
-ktsu start envelope --port 9104 --orchestrator http://orchestrator:8080
+ktsu start envelope --port 9104 --orchestrator http://orchestrator:5050
 ```
 
 ---
@@ -184,7 +184,7 @@ ktsu invoke <workflow> [flags]
 |---|---|---|---|
 | `--input` | `{}` | — | JSON input for the workflow |
 | `--wait` | `false` | — | Poll until the run completes and print result |
-| `--orchestrator` | `http://localhost:8080` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL |
+| `--orchestrator` | `http://localhost:5050` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL |
 
 **Without `--wait`:** prints `run_id: <id>` immediately and exits.
 
@@ -201,7 +201,7 @@ ktsu invoke hello --input '{"name": "World"}'
 ktsu invoke hello --input '{"name": "World"}' --wait
 
 # Remote orchestrator
-ktsu invoke hello --orchestrator http://example.com:8080 --wait
+ktsu invoke hello --orchestrator http://example.com:5050 --wait
 ```
 
 ---
@@ -319,9 +319,9 @@ ktsu completion powershell | Out-String | Out-File -FilePath $profile
 
 | Service | Default Port | Command |
 |---|---|---|
-| Orchestrator | 8080 | `ktsu start orchestrator` |
-| LLM Gateway | 8081 | `ktsu start gateway` |
-| Agent Runtime | 8082 | `ktsu start runtime` |
+| Orchestrator | 5050 | `ktsu start orchestrator` |
+| LLM Gateway | 5052 | `ktsu start gateway` |
+| Agent Runtime | 5051 | `ktsu start runtime` |
 | envelope | 9104 | `ktsu start envelope` |
 
 All ports are configurable via `--port`.

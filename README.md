@@ -18,9 +18,9 @@ This launches the gateway, orchestrator, and runtime with the `examples/hello/` 
 
 ```sh
 # Check each service (should return {"status":"ok"})
-curl -s http://localhost:8081/health   # gateway
-curl -s http://localhost:8080/health   # orchestrator
-curl -s http://localhost:8082/health   # runtime
+curl -s http://localhost:5052/health   # gateway
+curl -s http://localhost:5050/health   # orchestrator
+curl -s http://localhost:5051/health   # runtime
 ```
 
 Once healthy, invoke the workflow with the ktsu CLI:
@@ -33,7 +33,7 @@ Once healthy, invoke the workflow with the ktsu CLI:
 Or with curl:
 
 ```sh
-curl -s -X POST http://localhost:${KTSU_PORT:-8080}/invoke/hello \
+curl -s -X POST http://localhost:${KTSU_PORT:-5050}/invoke/hello \
   -H 'Content-Type: application/json' \
   -d '{"name": "World"}'
 # => {"run_id":"run_a1b2c3...","status":"accepted"}
@@ -42,10 +42,10 @@ curl -s -X POST http://localhost:${KTSU_PORT:-8080}/invoke/hello \
 The invoke endpoint returns immediately with a `run_id`. Poll the run to check progress:
 
 ```sh
-curl -s http://localhost:${KTSU_PORT:-8080}/runs/<run_id>
+curl -s http://localhost:${KTSU_PORT:-5050}/runs/<run_id>
 ```
 
-The host port is configurable via `KTSU_PORT` in `.env` (default: `8080`).
+The host port is configurable via `KTSU_PORT` in `.env` (default: `5050`).
 
 ### Self-contained (no API key)
 
@@ -111,9 +111,9 @@ Each service is a subcommand of the `ktsu` binary.
 
 | Service | Command | Default port |
 |---|---|---|
-| Orchestrator | `ktsu start orchestrator` | 8080 |
-| LLM Gateway | `ktsu start gateway` | 8081 |
-| Agent Runtime | `ktsu start runtime` | 8082 |
+| Orchestrator | `ktsu start orchestrator` | 5050 |
+| LLM Gateway | `ktsu start gateway` | 5052 |
+| Agent Runtime | `ktsu start runtime` | 5051 |
 
 Run all three together in a single process:
 
@@ -129,15 +129,15 @@ Or start each service individually. Every service accepts `--host` (bind interfa
 go run ./cmd/ktsu start orchestrator
 
 # With an environment config and custom address
-go run ./cmd/ktsu start orchestrator --env environments/dev.env.yaml --host 0.0.0.0 --port 8080
+go run ./cmd/ktsu start orchestrator --env environments/dev.env.yaml --host 0.0.0.0 --port 5050
 
 # LLM Gateway
-go run ./cmd/ktsu start gateway --config gateway.yaml --port 8081
+go run ./cmd/ktsu start gateway --config gateway.yaml --port 5052
 
 # Agent Runtime — point at the orchestrator and gateway
 go run ./cmd/ktsu start runtime \
-  --orchestrator http://orchestrator.internal:8080 \
-  --gateway http://llm-gateway.internal:8081
+  --orchestrator http://orchestrator.internal:5050 \
+  --gateway http://llm-gateway.internal:5052
 ```
 
 Shortcut for the orchestrator:
@@ -153,18 +153,18 @@ All service addresses and peer URLs can be set via `KTSU_*` environment variable
 | Variable | Flag | Service | Default |
 |---|---|---|---|
 | `KTSU_ORCHESTRATOR_HOST` | `--host` | orchestrator | `""` (all interfaces) |
-| `KTSU_ORCHESTRATOR_PORT` | `--port` | orchestrator | `8080` |
+| `KTSU_ORCHESTRATOR_PORT` | `--port` | orchestrator | `5050` |
 | `KTSU_GATEWAY_HOST` | `--host` | gateway | `""` |
-| `KTSU_GATEWAY_PORT` | `--port` | gateway | `8081` |
+| `KTSU_GATEWAY_PORT` | `--port` | gateway | `5052` |
 | `KTSU_RUNTIME_HOST` | `--host` | runtime | `""` |
-| `KTSU_RUNTIME_PORT` | `--port` | runtime | `8082` |
-| `KTSU_ORCHESTRATOR_URL` | `--orchestrator` | runtime, builtins | `http://localhost:8080` |
-| `KTSU_GATEWAY_URL` | `--gateway` | runtime | `http://localhost:8081` |
+| `KTSU_RUNTIME_PORT` | `--port` | runtime | `5051` |
+| `KTSU_ORCHESTRATOR_URL` | `--orchestrator` | runtime, builtins | `http://localhost:5050` |
+| `KTSU_GATEWAY_URL` | `--gateway` | runtime | `http://localhost:5052` |
 
 ```sh
 # Container / multi-host example
-KTSU_ORCHESTRATOR_URL=http://orchestrator.internal:8080 \
-KTSU_GATEWAY_URL=http://llm-gateway.internal:8081 \
+KTSU_ORCHESTRATOR_URL=http://orchestrator.internal:5050 \
+KTSU_GATEWAY_URL=http://llm-gateway.internal:5052 \
   go run ./cmd/ktsu start runtime
 ```
 
@@ -177,7 +177,7 @@ KTSU_GATEWAY_URL=http://llm-gateway.internal:8081 \
 The envelope server accepts `--host`, `--port`, and `--orchestrator` (reads `KTSU_ORCHESTRATOR_URL`):
 
 ```sh
-go run ./cmd/ktsu start envelope --host 0.0.0.0 --port 9104 --orchestrator http://orchestrator.internal:8080
+go run ./cmd/ktsu start envelope --host 0.0.0.0 --port 9104 --orchestrator http://orchestrator.internal:5050
 ```
 
 The envelope server registers with the orchestrator on startup and requires `--orchestrator` to be set.

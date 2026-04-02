@@ -108,7 +108,7 @@ func writeError(w http.ResponseWriter, status int, errType, message string, retr
 func (s *server) serve(ctx context.Context) error {
 	port := s.g.cfg.Port
 	if port == 0 {
-		port = 8081
+		port = 5052
 	}
 	addr := net.JoinHostPort(s.g.cfg.Host, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", addr)
