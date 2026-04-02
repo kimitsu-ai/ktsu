@@ -130,9 +130,9 @@ func startCmd() *cobra.Command {
 	var (
 		all bool
 		// orchestrator flags
-		envPath, workflowDir, ownURL, projectDir string
-		orchHost                                  string
-		orchPort                                  int
+		envPath, workflowDir, ownURL, projectDir, apiKey string
+		orchHost                                          string
+		orchPort                                          int
 		// gateway flags
 		gatewayConfigPath string
 		gwHost            string
@@ -192,6 +192,7 @@ func startCmd() *cobra.Command {
 				RuntimeURL:  rtURL,
 				OwnURL:      ownURL,
 				ProjectDir:  projectDir,
+				APIKey:      apiKey,
 				Logger:      orchLogger,
 			})
 
@@ -226,6 +227,7 @@ func startCmd() *cobra.Command {
 	start.Flags().StringVar(&projectDir, "project-dir", envOr("KTSU_PROJECT_DIR", "."), "project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
 	start.Flags().StringVar(&orchHost, "orchestrator-host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "orchestrator bind host (env: KTSU_ORCHESTRATOR_HOST)")
 	start.Flags().IntVar(&orchPort, "orchestrator-port", envIntOr("KTSU_ORCHESTRATOR_PORT", 8080), "orchestrator port (env: KTSU_ORCHESTRATOR_PORT)")
+	start.Flags().StringVar(&apiKey, "api-key", envOr("KTSU_API_KEY", ""), "orchestrator API key for bearer auth (env: KTSU_API_KEY)")
 	start.Flags().StringVar(&gatewayConfigPath, "gateway-config", "gateway.yaml", "path to gateway config")
 	start.Flags().StringVar(&gwHost, "gateway-host", envOr("KTSU_GATEWAY_HOST", ""), "gateway bind host (env: KTSU_GATEWAY_HOST)")
 	start.Flags().IntVar(&gwPort, "gateway-port", envIntOr("KTSU_GATEWAY_PORT", 8081), "gateway port (env: KTSU_GATEWAY_PORT)")
@@ -240,7 +242,7 @@ func startCmd() *cobra.Command {
 }
 
 func startOrchestratorCmd() *cobra.Command {
-	var envPath, workflowDir, host, runtimeURL, ownURL, projectDir string
+	var envPath, workflowDir, host, runtimeURL, ownURL, projectDir, apiKey string
 	var port int
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
@@ -263,6 +265,7 @@ func startOrchestratorCmd() *cobra.Command {
 				RuntimeURL:  runtimeURL,
 				OwnURL:      ownURL,
 				ProjectDir:  projectDir,
+				APIKey:      apiKey,
 			})
 			log.Printf("starting %s", o)
 			return o.Start(signalCtx())
@@ -281,6 +284,9 @@ func startOrchestratorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&projectDir, "project-dir",
 		envOr("KTSU_PROJECT_DIR", "."),
 		"project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
+	cmd.Flags().StringVar(&apiKey, "api-key",
+		envOr("KTSU_API_KEY", ""),
+		"orchestrator API key for bearer auth (env: KTSU_API_KEY)")
 	return cmd
 }
 

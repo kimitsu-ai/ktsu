@@ -80,11 +80,30 @@ func newServer(o *Orchestrator) *server {
 	return s
 }
 
+func (s *server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.o.cfg.APIKey == "" {
+			h(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+s.o.cfg.APIKey {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":   "unauthorized",
+				"message": "Set Authorization: Bearer <key> header. See KTSU_API_KEY.",
+			})
+			return
+		}
+		h(w, r)
+	}
+}
+
 func (s *server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
-	s.mux.HandleFunc("POST /invoke/{workflow}", s.handleInvoke)
-	s.mux.HandleFunc("GET /runs/{run_id}", s.handleGetRun)
-	s.mux.HandleFunc("GET /envelope/{run_id}", s.handleGetEnvelope)
+	s.mux.HandleFunc("POST /invoke/{workflow}", s.requireAuth(s.handleInvoke))
+	s.mux.HandleFunc("GET /runs/{run_id}", s.requireAuth(s.handleGetRun))
+	s.mux.HandleFunc("GET /envelope/{run_id}", s.requireAuth(s.handleGetEnvelope))
 	s.mux.HandleFunc("POST /heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /runs/{run_id}/steps/{step_id}/complete", s.handleStepComplete)
 }

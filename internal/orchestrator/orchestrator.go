@@ -17,6 +17,7 @@ type Config struct {
 	RuntimeURL  string // URL of the Agent Runtime (e.g. "http://runtime:8082")
 	OwnURL      string // this orchestrator's own URL, for constructing callback_url
 	ProjectDir  string // root dir for resolving agent/server paths (default: ".")
+	APIKey      string // optional bearer token; empty = auth disabled
 	Logger      *log.Logger
 }
 
