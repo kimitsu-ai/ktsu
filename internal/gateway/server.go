@@ -22,10 +22,19 @@ type server struct {
 	g          *Gateway
 	dispatcher Dispatchable
 	mux        *http.ServeMux
+	logger     *log.Logger
+}
+
+func (s *server) logf(format string, args ...any) {
+	if s.logger != nil {
+		s.logger.Printf(format, args...)
+	} else {
+		log.Printf(format, args...)
+	}
 }
 
 func newServer(g *Gateway, d Dispatchable) *server {
-	s := &server{g: g, dispatcher: d, mux: http.NewServeMux()}
+	s := &server{g: g, dispatcher: d, mux: http.NewServeMux(), logger: g.logger}
 	s.routes()
 	return s
 }
@@ -40,7 +49,7 @@ func (s *server) Handler() http.Handler { return s.mux }
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-		log.Printf("handleHealth: encode failed: %v", err)
+		s.logf("handleHealth: encode failed: %v", err)
 	}
 }
 
@@ -65,7 +74,7 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("handleInvoke: encode failed: %v", err)
+		s.logf("handleInvoke: encode failed: %v", err)
 	}
 }
 
@@ -106,7 +115,7 @@ func (s *server) serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("gateway listening on %s", addr)
+	s.logf("gateway listening on %s", addr)
 	srv := &http.Server{Handler: s.mux}
 	go func() {
 		<-ctx.Done()

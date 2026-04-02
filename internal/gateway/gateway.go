@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -19,12 +20,14 @@ type Config struct {
 	GatewayConfig *config.GatewayConfig
 	Host          string
 	Port          int
+	Logger        *log.Logger
 }
 
 // Gateway is the LLM proxy service.
 type Gateway struct {
 	cfg        Config
 	dispatcher Dispatchable
+	logger     *log.Logger
 }
 
 // New creates a Gateway from config, registering providers from GatewayConfig.
@@ -38,12 +41,12 @@ func New(cfg Config) (*Gateway, error) {
 		return nil, fmt.Errorf("build providers: %w", err)
 	}
 	d := NewDispatcher(cfg.GatewayConfig, provs)
-	return &Gateway{cfg: cfg, dispatcher: d}, nil
+	return &Gateway{cfg: cfg, dispatcher: d, logger: cfg.Logger}, nil
 }
 
 // NewWithDispatcher creates a Gateway with a custom dispatcher (for testing).
 func NewWithDispatcher(cfg Config, d Dispatchable) *Gateway {
-	return &Gateway{cfg: cfg, dispatcher: d}
+	return &Gateway{cfg: cfg, dispatcher: d, logger: cfg.Logger}
 }
 
 // Handler returns the HTTP handler (for testing without starting a listener).

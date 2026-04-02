@@ -36,21 +36,31 @@ func defaultProjectDir(d string) string {
 type stepCallbackKey struct{ runID, stepID string }
 
 type server struct {
-	o               *Orchestrator
-	store           state.Store
-	runner          *runner.Runner
-	mux             *http.ServeMux
-	pendingMu       sync.Mutex
+	o                *Orchestrator
+	store            state.Store
+	runner           *runner.Runner
+	mux              *http.ServeMux
+	pendingMu        sync.Mutex
 	pendingCallbacks map[stepCallbackKey]chan agent.CallbackPayload
+	logger           *log.Logger
+}
+
+func (s *server) logf(format string, args ...any) {
+	if s.logger != nil {
+		s.logger.Printf(format, args...)
+	} else {
+		log.Printf(format, args...)
+	}
 }
 
 func newServer(o *Orchestrator) *server {
 	store := state.NewMemStore()
 	s := &server{
-		o:               o,
-		store:           store,
-		mux:             http.NewServeMux(),
+		o:                o,
+		store:            store,
+		mux:              http.NewServeMux(),
 		pendingCallbacks: make(map[stepCallbackKey]chan agent.CallbackPayload),
+		logger:           o.logger,
 	}
 
 	var r *runner.Runner
@@ -89,7 +99,7 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 
 	input := map[string]interface{}{}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		log.Printf("handleInvoke: non-JSON body (treating as empty): %v", err)
+		s.logf("handleInvoke: non-JSON body (treating as empty): %v", err)
 		input = map[string]interface{}{}
 	}
 
@@ -110,7 +120,7 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		ctx := context.Background()
 		if err := s.runner.Execute(ctx, workflow, runID, wf, input); err != nil {
-			log.Printf("run %s failed: %v", runID, err)
+			s.logf("run %s failed: %v", runID, err)
 		}
 	}()
 
@@ -158,7 +168,7 @@ func (s *server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
-	log.Printf("heartbeat: %v", payload)
+	s.logf("heartbeat: %v", payload)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -202,7 +212,7 @@ func (s *server) handleStepComplete(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		ch <- payload
 	} else {
-		log.Printf("handleStepComplete: no pending waiter for %s/%s", runID, stepID)
+		s.logf("handleStepComplete: no pending waiter for %s/%s", runID, stepID)
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -218,7 +228,7 @@ func (s *server) serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("orchestrator listening on %s", addr)
+	s.logf("orchestrator listening on %s", addr)
 	srv := &http.Server{Handler: s.mux}
 	go func() {
 		<-ctx.Done()

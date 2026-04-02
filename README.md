@@ -115,7 +115,14 @@ Each service is a subcommand of the `ktsu` binary.
 | LLM Gateway | `ktsu start gateway` | 8081 |
 | Agent Runtime | `ktsu start runtime` | 8082 |
 
-Every service accepts `--host` (bind interface, default `""` = all interfaces) and `--port`:
+Run all three together in a single process:
+
+```sh
+go run ./cmd/ktsu start --all
+go run ./cmd/ktsu start --all --env environments/dev.env.yaml
+```
+
+Or start each service individually. Every service accepts `--host` (bind interface, default `""` = all interfaces) and `--port`:
 
 ```sh
 # Orchestrator (control plane)

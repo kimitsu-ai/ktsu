@@ -18,10 +18,19 @@ type server struct {
 	loop              *agent.Loop
 	activeInvocations sync.Map // key: "run_id/step_id", value: struct{}
 	mux               *http.ServeMux
+	logger            *log.Logger
+}
+
+func (s *server) logf(format string, args ...any) {
+	if s.logger != nil {
+		s.logger.Printf(format, args...)
+	} else {
+		log.Printf(format, args...)
+	}
 }
 
 func newServer(r *Runtime, loop *agent.Loop) *server {
-	s := &server{r: r, loop: loop, mux: http.NewServeMux()}
+	s := &server{r: r, loop: loop, mux: http.NewServeMux(), logger: r.logger}
 	s.routes()
 	return s
 }
@@ -34,7 +43,7 @@ func (s *server) routes() {
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-		log.Printf("handleHealth: encode failed: %v", err)
+		s.logf("handleHealth: encode failed: %v", err)
 	}
 }
 
@@ -57,7 +66,7 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		payload := s.loop.Run(context.Background(), req)
 		s.activeInvocations.Delete(key)
 		if err := s.postCallback(req.CallbackURL, payload); err != nil {
-			log.Printf("runtime: callback failed for %s/%s: %v", req.RunID, req.StepID, err)
+			s.logf("runtime: callback failed for %s/%s: %v", req.RunID, req.StepID, err)
 		}
 	}()
 
@@ -68,7 +77,7 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		"step_id": req.StepID,
 		"status":  "accepted",
 	}); err != nil {
-		log.Printf("handleInvoke: encode failed: %v", err)
+		s.logf("handleInvoke: encode failed: %v", err)
 	}
 }
 
@@ -95,7 +104,7 @@ func (s *server) serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("runtime listening on %s", addr)
+	s.logf("runtime listening on %s", addr)
 	srv := &http.Server{Handler: s.mux}
 	go func() {
 		<-ctx.Done()

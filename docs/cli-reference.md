@@ -10,6 +10,7 @@ See also: [YAML Spec](yaml-spec/index.md) · [Overview](kimitsu-overview.md) · 
 
 | Command | Purpose | When to use |
 |---|---|---|
+| `ktsu start --all` | Start all core services in one process | Local dev / single-host deployments |
 | `ktsu start orchestrator` | Start the control plane | Running the full stack or orchestrator only |
 | `ktsu start runtime` | Start the agent executor | Running the full stack or runtime only |
 | `ktsu start gateway` | Start the LLM gateway | Running the full stack or gateway only |
@@ -54,6 +55,36 @@ CLI flags take precedence over environment variables. All env vars are optional.
 ## ktsu start
 
 Start a Kimitsu service or shipped tool server. Every service exposes `GET /health` returning `{"status":"ok"}`.
+
+### ktsu start --all
+
+Run orchestrator, gateway, and runtime together in a single process. Service URLs are derived automatically from the configured ports. Log output is prefixed per service (`[orchestrator]`, `[gateway]`, `[runtime]`).
+
+```
+ktsu start --all [flags]
+```
+
+| Flag | Default | Env | Description |
+|---|---|---|---|
+| `--all` | `false` | — | Enable all-in-one mode (required) |
+| `--env` | `""` | — | Path to environment config (e.g. `environments/dev.env.yaml`) |
+| `--workflow-dir` | `./workflows` | — | Directory of `*.workflow.yaml` files |
+| `--own-url` | `""` | `KTSU_OWN_URL` | Orchestrator's own URL for callbacks |
+| `--project-dir` | `.` | `KTSU_PROJECT_DIR` | Project root for resolving agent/server paths |
+| `--orchestrator-host` | `""` | `KTSU_ORCHESTRATOR_HOST` | Orchestrator bind host |
+| `--orchestrator-port` | `8080` | `KTSU_ORCHESTRATOR_PORT` | Orchestrator port |
+| `--gateway-config` | `gateway.yaml` | — | Path to gateway config file |
+| `--gateway-host` | `""` | `KTSU_GATEWAY_HOST` | Gateway bind host |
+| `--gateway-port` | `8081` | `KTSU_GATEWAY_PORT` | Gateway port |
+| `--runtime-host` | `""` | `KTSU_RUNTIME_HOST` | Runtime bind host |
+| `--runtime-port` | `8082` | `KTSU_RUNTIME_PORT` | Runtime port |
+
+```bash
+ktsu start --all
+ktsu start --all --env environments/dev.env.yaml --gateway-config gateway.yaml
+```
+
+---
 
 ### Core Services
 

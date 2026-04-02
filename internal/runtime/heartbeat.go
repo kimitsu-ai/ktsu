@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -57,20 +56,20 @@ func (r *Runtime) sendHeartbeat(ctx context.Context) {
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("heartbeat: marshal failed: %v", err)
+		r.logf("heartbeat: marshal failed: %v", err)
 		return
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.cfg.OrchestratorURL+"/heartbeat", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("heartbeat: create request failed: %v", err)
+		r.logf("heartbeat: create request failed: %v", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("heartbeat: POST failed: %v", err)
+		r.logf("heartbeat: POST failed: %v", err)
 		return
 	}
 	resp.Body.Close()

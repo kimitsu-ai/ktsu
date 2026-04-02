@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/kimitsu-ai/ktsu/internal/runtime/agent"
@@ -15,19 +16,21 @@ type Config struct {
 	LLMGatewayURL   string
 	Host            string // bind interface, "" = all
 	Port            int    // default 8082
+	Logger          *log.Logger
 }
 
 // Runtime is the agent execution service.
 type Runtime struct {
-	cfg  Config
-	srv  *server
+	cfg    Config
+	srv    *server
+	logger *log.Logger
 }
 
 // New creates a Runtime from config.
 func New(cfg Config) *Runtime {
 	mcpClient := mcp.New(http.DefaultClient)
 	loop := agent.NewLoop(cfg.LLMGatewayURL, mcpClient)
-	r := &Runtime{cfg: cfg}
+	r := &Runtime{cfg: cfg, logger: cfg.Logger}
 	r.srv = newServer(r, loop)
 	return r
 }
@@ -36,6 +39,14 @@ func New(cfg Config) *Runtime {
 func (r *Runtime) Start(ctx context.Context) error {
 	go r.heartbeatLoop(ctx)
 	return r.srv.serve(ctx)
+}
+
+func (r *Runtime) logf(format string, args ...any) {
+	if r.logger != nil {
+		r.logger.Printf(format, args...)
+	} else {
+		log.Printf(format, args...)
+	}
 }
 
 func (r *Runtime) String() string {

@@ -127,10 +127,111 @@ func envIntOr(envKey string, defaultVal int) int {
 }
 
 func startCmd() *cobra.Command {
+	var (
+		all bool
+		// orchestrator flags
+		envPath, workflowDir, ownURL, projectDir string
+		orchHost                                  string
+		orchPort                                  int
+		// gateway flags
+		gatewayConfigPath string
+		gwHost            string
+		gwPort            int
+		// runtime flags
+		rtHost string
+		rtPort int
+	)
+
 	start := &cobra.Command{
 		Use:   "start",
 		Short: "Start a Kimitsu service",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !all {
+				return cmd.Help()
+			}
+
+			var envCfg *config.EnvConfig
+			if envPath != "" {
+				var err error
+				envCfg, err = config.LoadEnv(envPath)
+				if err != nil {
+					return fmt.Errorf("load env: %w", err)
+				}
+			}
+
+			gatewayCfg, err := config.LoadGateway(gatewayConfigPath)
+			if err != nil {
+				return fmt.Errorf("load gateway config: %w", err)
+			}
+
+			orchLogger := log.New(os.Stderr, "[orchestrator] ", log.LstdFlags)
+			gwLogger := log.New(os.Stderr, "[gateway]      ", log.LstdFlags)
+			rtLogger := log.New(os.Stderr, "[runtime]      ", log.LstdFlags)
+
+			orchURL := fmt.Sprintf("http://localhost:%d", orchPort)
+			gwURL := fmt.Sprintf("http://localhost:%d", gwPort)
+			rtURL := fmt.Sprintf("http://localhost:%d", rtPort)
+
+			g, err := gateway.New(gateway.Config{
+				ConfigPath:    gatewayConfigPath,
+				GatewayConfig: gatewayCfg,
+				Host:          gwHost,
+				Port:          gwPort,
+				Logger:        gwLogger,
+			})
+			if err != nil {
+				return fmt.Errorf("gateway init: %w", err)
+			}
+
+			o := orchestrator.New(orchestrator.Config{
+				EnvPath:     envPath,
+				Env:         envCfg,
+				WorkflowDir: workflowDir,
+				Host:        orchHost,
+				Port:        orchPort,
+				RuntimeURL:  rtURL,
+				OwnURL:      ownURL,
+				ProjectDir:  projectDir,
+				Logger:      orchLogger,
+			})
+
+			r := runtime.New(runtime.Config{
+				OrchestratorURL: orchURL,
+				LLMGatewayURL:   gwURL,
+				Host:            rtHost,
+				Port:            rtPort,
+				Logger:          rtLogger,
+			})
+
+			ctx := signalCtx()
+			errc := make(chan error, 3)
+			go func() { errc <- g.Start(ctx) }()
+			go func() { errc <- o.Start(ctx) }()
+			go func() { errc <- r.Start(ctx) }()
+
+			var firstErr error
+			for range 3 {
+				if err := <-errc; err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+			return firstErr
+		},
 	}
+
+	start.Flags().BoolVar(&all, "all", false, "Start orchestrator, gateway, and runtime in a single process")
+	start.Flags().StringVar(&envPath, "env", "", "path to environment config (e.g. environments/dev.env.yaml)")
+	start.Flags().StringVar(&workflowDir, "workflow-dir", "./workflows", "path to workflow directory")
+	start.Flags().StringVar(&ownURL, "own-url", envOr("KTSU_OWN_URL", ""), "orchestrator's own URL for callbacks (env: KTSU_OWN_URL)")
+	start.Flags().StringVar(&projectDir, "project-dir", envOr("KTSU_PROJECT_DIR", "."), "project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
+	start.Flags().StringVar(&orchHost, "orchestrator-host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "orchestrator bind host (env: KTSU_ORCHESTRATOR_HOST)")
+	start.Flags().IntVar(&orchPort, "orchestrator-port", envIntOr("KTSU_ORCHESTRATOR_PORT", 8080), "orchestrator port (env: KTSU_ORCHESTRATOR_PORT)")
+	start.Flags().StringVar(&gatewayConfigPath, "gateway-config", "gateway.yaml", "path to gateway config")
+	start.Flags().StringVar(&gwHost, "gateway-host", envOr("KTSU_GATEWAY_HOST", ""), "gateway bind host (env: KTSU_GATEWAY_HOST)")
+	start.Flags().IntVar(&gwPort, "gateway-port", envIntOr("KTSU_GATEWAY_PORT", 8081), "gateway port (env: KTSU_GATEWAY_PORT)")
+	start.Flags().StringVar(&rtHost, "runtime-host", envOr("KTSU_RUNTIME_HOST", ""), "runtime bind host (env: KTSU_RUNTIME_HOST)")
+	start.Flags().IntVar(&rtPort, "runtime-port", envIntOr("KTSU_RUNTIME_PORT", 8082), "runtime port (env: KTSU_RUNTIME_PORT)")
+
 	start.AddCommand(startOrchestratorCmd())
 	start.AddCommand(startRuntimeCmd())
 	start.AddCommand(startGatewayCmd())
