@@ -183,6 +183,11 @@ func startCmd() *cobra.Command {
 				return fmt.Errorf("gateway init: %w", err)
 			}
 
+			orchOwnURL := ownURL
+			if orchOwnURL == "" {
+				orchOwnURL = orchURL
+			}
+
 			o := orchestrator.New(orchestrator.Config{
 				EnvPath:     envPath,
 				Env:         envCfg,
@@ -190,7 +195,7 @@ func startCmd() *cobra.Command {
 				Host:        orchHost,
 				Port:        orchPort,
 				RuntimeURL:  rtURL,
-				OwnURL:      ownURL,
+				OwnURL:      orchOwnURL,
 				ProjectDir:  projectDir,
 				APIKey:      apiKey,
 				Logger:      orchLogger,
@@ -204,19 +209,37 @@ func startCmd() *cobra.Command {
 				Logger:          rtLogger,
 			})
 
-			ctx := signalCtx()
-			errc := make(chan error, 3)
-			go func() { errc <- g.Start(ctx) }()
-			go func() { errc <- o.Start(ctx) }()
-			go func() { errc <- r.Start(ctx) }()
+			ctx, cancel := context.WithCancel(signalCtx())
+			defer cancel()
 
-			var firstErr error
-			for range 3 {
-				if err := <-errc; err != nil && firstErr == nil {
-					firstErr = err
+			errc := make(chan error, 3)
+			go func() {
+				if err := g.Start(ctx); err != nil {
+					cancel()
+					errc <- err
 				}
+			}()
+			go func() {
+				if err := o.Start(ctx); err != nil {
+					cancel()
+					errc <- err
+				}
+			}()
+			go func() {
+				if err := r.Start(ctx); err != nil {
+					cancel()
+					errc <- err
+				}
+			}()
+
+			select {
+			case err := <-errc:
+				return err
+			case <-ctx.Done():
+				// This case handles external signals (SIGINT/SIGTERM)
+				// via signalCtx() which cancel the parent context.
+				return nil
 			}
-			return firstErr
 		},
 	}
 
@@ -256,6 +279,14 @@ func startOrchestratorCmd() *cobra.Command {
 					return fmt.Errorf("load env: %w", err)
 				}
 			}
+			orchOwnURL := ownURL
+			if orchOwnURL == "" {
+				h := host
+				if h == "" {
+					h = "localhost"
+				}
+				orchOwnURL = fmt.Sprintf("http://%s:%d", h, port)
+			}
 			o := orchestrator.New(orchestrator.Config{
 				EnvPath:     envPath,
 				Env:         envCfg,
@@ -263,7 +294,7 @@ func startOrchestratorCmd() *cobra.Command {
 				Host:        host,
 				Port:        port,
 				RuntimeURL:  runtimeURL,
-				OwnURL:      ownURL,
+				OwnURL:      orchOwnURL,
 				ProjectDir:  projectDir,
 				APIKey:      apiKey,
 			})

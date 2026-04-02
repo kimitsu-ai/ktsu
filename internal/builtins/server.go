@@ -2,6 +2,7 @@ package builtins
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -58,8 +59,12 @@ func NewBuiltinHandler(b BuiltinServer) http.Handler {
 
 // ServeHTTP starts an HTTP server for the given BuiltinServer on the given address.
 func ServeHTTP(addr string, b BuiltinServer) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("builtin server %s failed to bind to %s: %w", b.Name(), addr, err)
+	}
 	log.Printf("builtin server %s listening on %s", b.Name(), addr)
-	return http.ListenAndServe(addr, NewBuiltinHandler(b))
+	return http.Serve(ln, NewBuiltinHandler(b))
 }
 
 // StartBuiltin is a helper to start a builtin server on host:port.

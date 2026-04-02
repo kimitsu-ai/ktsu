@@ -245,7 +245,7 @@ func (s *server) serve(ctx context.Context) error {
 	addr := net.JoinHostPort(s.o.cfg.Host, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("orchestrator failed to bind to %s: %w", addr, err)
 	}
 	s.logf("orchestrator listening on %s", addr)
 	srv := &http.Server{Handler: s.mux}

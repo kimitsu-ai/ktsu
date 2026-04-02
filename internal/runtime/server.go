@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -102,7 +103,7 @@ func (s *server) serve(ctx context.Context) error {
 	addr := net.JoinHostPort(s.r.cfg.Host, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("runtime failed to bind to %s: %w", addr, err)
 	}
 	s.logf("runtime listening on %s", addr)
 	srv := &http.Server{Handler: s.mux}

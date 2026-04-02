@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -113,7 +114,7 @@ func (s *server) serve(ctx context.Context) error {
 	addr := net.JoinHostPort(s.g.cfg.Host, strconv.Itoa(port))
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("gateway failed to bind to %s: %w", addr, err)
 	}
 	s.logf("gateway listening on %s", addr)
 	srv := &http.Server{Handler: s.mux}
