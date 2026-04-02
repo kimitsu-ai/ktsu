@@ -42,6 +42,7 @@ CLI flags take precedence over environment variables. All env vars are optional.
 | `KTSU_ORCHESTRATOR_URL` | `http://localhost:8080` | `start runtime`, `start envelope`, `invoke` | Orchestrator URL |
 | `KTSU_OWN_URL` | `""` | `start orchestrator` | Orchestrator's own URL for callbacks |
 | `KTSU_PROJECT_DIR` | `.` | `start orchestrator` | Project root for resolving agent/server paths |
+| `KTSU_API_KEY` | `""` (disabled) | `start orchestrator` | Bearer token required on protected routes; unset = auth disabled |
 | `KTSU_GATEWAY_HOST` | `""` (all interfaces) | `start gateway` | Host interface to bind |
 | `KTSU_GATEWAY_PORT` | `8081` | `start gateway` | Port to listen on |
 | `KTSU_GATEWAY_URL` | `http://localhost:8081` | `start runtime` | LLM gateway URL |
@@ -73,6 +74,7 @@ ktsu start --all [flags]
 | `--project-dir` | `.` | `KTSU_PROJECT_DIR` | Project root for resolving agent/server paths |
 | `--orchestrator-host` | `""` | `KTSU_ORCHESTRATOR_HOST` | Orchestrator bind host |
 | `--orchestrator-port` | `8080` | `KTSU_ORCHESTRATOR_PORT` | Orchestrator port |
+| `--api-key` | `""` | `KTSU_API_KEY` | Orchestrator bearer token; unset = auth disabled |
 | `--gateway-config` | `gateway.yaml` | — | Path to gateway config file |
 | `--gateway-host` | `""` | `KTSU_GATEWAY_HOST` | Gateway bind host |
 | `--gateway-port` | `8081` | `KTSU_GATEWAY_PORT` | Gateway port |
@@ -105,6 +107,7 @@ ktsu start orchestrator [flags]
 | `--runtime-url` | `""` | `KTSU_RUNTIME_URL` | Agent runtime URL |
 | `--own-url` | `""` | `KTSU_OWN_URL` | Orchestrator's own URL for callbacks |
 | `--project-dir` | `.` | `KTSU_PROJECT_DIR` | Project root for resolving agent/server paths |
+| `--api-key` | `""` | `KTSU_API_KEY` | Bearer token required on protected routes; unset = auth disabled |
 
 ```bash
 ktsu start orchestrator
