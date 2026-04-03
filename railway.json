@@ -5,7 +5,7 @@
     "dockerfilePath": "deploy/railway/Dockerfile"
   },
   "deploy": {
-    "startCommand": "ktsu start --all --gateway-config /app/gateway.yaml",
+    "startCommand": "sh -c 'ktsu start --all --gateway-config /app/gateway.yaml'",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
