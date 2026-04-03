@@ -24,11 +24,6 @@
           "title": "Orchestrator Port",
           "description": "The port the orchestrator will listen on (automatically mapped to Railway's PORT).",
           "default": "${{PORT}}"
-        },
-        "KTSU_OWN_URL": {
-          "title": "Own URL",
-          "description": "The public URL of the orchestrator for callbacks.",
-          "default": "https://${{RAILWAY_PUBLIC_DOMAIN}}"
         }
       }
     }
