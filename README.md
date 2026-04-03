@@ -30,7 +30,7 @@ echo 'ANTHROPIC_API_KEY=sk-ant-...' >> .env
 make docker-up
 ```
 
-This launches the gateway, orchestrator, and runtime with the `examples/hello/` project mounted. Verify all services are healthy:
+This launches the gateway, orchestrator, and runtime with the `workflows/` project mounted. Verify all services are healthy:
 
 ```sh
 # Check each service (should return {"status":"ok"})
@@ -51,6 +51,7 @@ Or with curl:
 ```sh
 curl -s -X POST http://localhost:${KTSU_PORT:-5050}/invoke/hello \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${KTSU_API_KEY}" \
   -d '{"name": "World"}'
 # => {"run_id":"run_a1b2c3...","status":"accepted"}
 ```
@@ -58,7 +59,8 @@ curl -s -X POST http://localhost:${KTSU_PORT:-5050}/invoke/hello \
 The invoke endpoint returns immediately with a `run_id`. Poll the run to check progress:
 
 ```sh
-curl -s http://localhost:${KTSU_PORT:-5050}/runs/<run_id>
+```sh
+curl -s -H "Authorization: Bearer ${KTSU_API_KEY}" http://localhost:${KTSU_PORT:-5050}/runs/<run_id>
 ```
 
 The host port is configurable via `KTSU_PORT` in `.env` (default: `5050`).
@@ -174,8 +176,9 @@ All service addresses and peer URLs can be set via `KTSU_*` environment variable
 | `KTSU_GATEWAY_PORT` | `--port` | gateway | `5052` |
 | `KTSU_RUNTIME_HOST` | `--host` | runtime | `""` |
 | `KTSU_RUNTIME_PORT` | `--port` | runtime | `5051` |
-| `KTSU_ORCHESTRATOR_URL` | `--orchestrator` | runtime, builtins | `http://localhost:5050` |
+| `KTSU_ORCHESTRATOR_URL` | `--orchestrator` | runtime, builtins, invoke | `http://localhost:5050` |
 | `KTSU_GATEWAY_URL` | `--gateway` | runtime | `http://localhost:5052` |
+| `KTSU_API_KEY` | `--api-key` | orchestrator, invoke | `""` (auth disabled) |
 
 ```sh
 # Container / multi-host example

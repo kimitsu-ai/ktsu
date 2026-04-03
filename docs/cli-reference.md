@@ -16,6 +16,7 @@ See also: [YAML Spec](yaml-spec/index.md) · [Overview](kimitsu-overview.md) · 
 | `ktsu start gateway` | Start the LLM gateway | Running the full stack or gateway only |
 | `ktsu start envelope` | Start the shipped envelope tool server | Adding the envelope server to a running stack |
 | `ktsu invoke <workflow>` | Invoke a workflow | Development and testing |
+| `ktsu orchestrator envelope <run_id>` | Print the envelope for a run | Query debugging data from orchestrator |
 | `ktsu validate [project-dir]` | Validate config files | CI, pre-deploy checks, local debugging |
 | `ktsu new project <name>` | Scaffold a new project | Starting a new Kimitsu project |
 | `ktsu lock` | Generate ktsu.lock.yaml | *(not yet implemented)* |
@@ -42,7 +43,7 @@ CLI flags take precedence over environment variables. All env vars are optional.
 | `KTSU_ORCHESTRATOR_URL` | `http://localhost:5050` | `start runtime`, `start envelope`, `invoke` | Orchestrator URL |
 | `KTSU_OWN_URL` | `""` | `start orchestrator` | Orchestrator's own URL for callbacks |
 | `KTSU_PROJECT_DIR` | `.` | `start orchestrator` | Project root for resolving agent/server paths |
-| `KTSU_API_KEY` | `""` (disabled) | `start orchestrator` | Bearer token required on protected routes; unset = auth disabled |
+| `KTSU_API_KEY` | `""` (disabled) | `start orchestrator`, `invoke`, `orchestrator envelope` | Bearer token required on protected routes; unset = auth disabled |
 | `KTSU_GATEWAY_HOST` | `""` (all interfaces) | `start gateway` | Host interface to bind |
 | `KTSU_GATEWAY_PORT` | `5052` | `start gateway` | Port to listen on |
 | `KTSU_GATEWAY_URL` | `http://localhost:5052` | `start runtime` | LLM gateway URL |
@@ -197,6 +198,7 @@ ktsu invoke <workflow> [flags]
 | `--input` | `{}` | — | JSON input for the workflow |
 | `--wait` | `false` | — | Poll until the run completes and print result |
 | `--orchestrator` | `http://localhost:5050` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL |
+| `--api-key` | `""` | `KTSU_API_KEY` | Orchestrator bearer token; unset = auth disabled |
 
 **Without `--wait`:** prints `run_id: <id>` immediately and exits.
 
@@ -213,7 +215,31 @@ ktsu invoke hello --input '{"name": "World"}'
 ktsu invoke hello --input '{"name": "World"}' --wait
 
 # Remote orchestrator
-ktsu invoke hello --orchestrator http://example.com:5050 --wait
+ktsu invoke hello --orchestrator http://example.com:5050 --wait --api-key secret-key
+```
+
+---
+
+## ktsu orchestrator
+
+Query and interact with a running orchestrator.
+
+### ktsu orchestrator envelope <run_id>
+
+Print the full envelope (context) for a given run as JSON.
+
+```
+ktsu orchestrator envelope <run_id> [flags]
+```
+
+| Flag | Default | Env | Description |
+|---|---|---|---|
+| `--orchestrator` | `http://localhost:5050` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL |
+| `--api-key` | `""` | `KTSU_API_KEY` | Orchestrator bearer token; unset = auth disabled |
+
+```bash
+ktsu orchestrator envelope run_a1b2c3d4e5f6
+ktsu orc envelope run_a1b2c3d4e5f6 --api-key secret-key
 ```
 
 ---

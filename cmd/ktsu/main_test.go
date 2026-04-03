@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,7 @@ func TestInvokeCmd_postsToOrchestrator(t *testing.T) {
 	defer srv.Close()
 
 	cmd := invokeCmd()
+	cmd.SetContext(context.Background())
 	cmd.Flags().Set("orchestrator", srv.URL)
 	cmd.Flags().Set("input", `{"name":"world"}`)
 
@@ -63,6 +65,7 @@ func TestInvokeCmd_wait_pollsUntilDone(t *testing.T) {
 	defer srv.Close()
 
 	cmd := invokeCmd()
+	cmd.SetContext(context.Background())
 	cmd.Flags().Set("orchestrator", srv.URL)
 	cmd.Flags().Set("input", "{}")
 	cmd.Flags().Set("wait", "true")
@@ -360,6 +363,7 @@ func TestOrchestratorEnvelopeCmd_printsEnvelopeJSON(t *testing.T) {
 
 	var buf strings.Builder
 	cmd := orchestratorEnvelopeCmd()
+	cmd.SetContext(context.Background())
 	cmd.Flags().Set("orchestrator", srv.URL)
 	cmd.SetOut(&buf)
 
@@ -387,6 +391,7 @@ func TestOrchestratorEnvelopeCmd_notFound(t *testing.T) {
 	defer srv.Close()
 
 	cmd := orchestratorEnvelopeCmd()
+	cmd.SetContext(context.Background())
 	cmd.Flags().Set("orchestrator", srv.URL)
 
 	err := cmd.RunE(cmd, []string{"run-missing"})
@@ -395,6 +400,80 @@ func TestOrchestratorEnvelopeCmd_notFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "run not found") {
 		t.Errorf("want error containing 'run not found', got: %v", err)
+	}
+}
+
+// TestInvokeCmd_auth verifies that invoke sends the Bearer token when provided.
+func TestInvokeCmd_auth(t *testing.T) {
+	var authHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"run_id": "run-auth-001"})
+	}))
+	defer srv.Close()
+
+	cmd := invokeCmd()
+	cmd.SetContext(context.Background())
+	cmd.Flags().Set("orchestrator", srv.URL)
+	cmd.Flags().Set("api-key", "secret-token")
+
+	if err := cmd.RunE(cmd, []string{"hello"}); err != nil {
+		t.Fatalf("invokeCmd.RunE with auth: %v", err)
+	}
+
+	if authHeader != "Bearer secret-token" {
+		t.Errorf("want Authorization: Bearer secret-token, got %q", authHeader)
+	}
+
+	// Verify env var fallback
+	authHeader = ""
+	t.Setenv("KTSU_API_KEY", "env-token")
+	cmd2 := invokeCmd()
+	cmd2.SetContext(context.Background())
+	cmd2.Flags().Set("orchestrator", srv.URL)
+	if err := cmd2.RunE(cmd2, []string{"hello"}); err != nil {
+		t.Fatalf("invokeCmd with KTSU_API_KEY: %v", err)
+	}
+	if authHeader != "Bearer env-token" {
+		t.Errorf("want Authorization: Bearer env-token, got %q", authHeader)
+	}
+
+	// Flag overrides env var
+	authHeader = ""
+	cmd3 := invokeCmd()
+	cmd3.SetContext(context.Background())
+	cmd3.Flags().Set("orchestrator", srv.URL)
+	cmd3.Flags().Set("api-key", "flag-token")
+	if err := cmd3.RunE(cmd3, []string{"hello"}); err != nil {
+		t.Fatalf("invokeCmd with flag override: %v", err)
+	}
+	if authHeader != "Bearer flag-token" {
+		t.Errorf("want Authorization: Bearer flag-token, got %q", authHeader)
+	}
+}
+
+// TestOrchestratorEnvelopeCmd_auth verifies that envelope sends the Bearer token when provided.
+func TestOrchestratorEnvelopeCmd_auth(t *testing.T) {
+	var authHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{})
+	}))
+	defer srv.Close()
+
+	cmd := orchestratorEnvelopeCmd()
+	cmd.SetContext(context.Background())
+	cmd.Flags().Set("orchestrator", srv.URL)
+	cmd.Flags().Set("api-key", "secret-token")
+
+	if err := cmd.RunE(cmd, []string{"run-123"}); err != nil {
+		t.Fatalf("envelope with auth: %v", err)
+	}
+
+	if authHeader != "Bearer secret-token" {
+		t.Errorf("want Authorization: Bearer secret-token, got %q", authHeader)
 	}
 }
 
