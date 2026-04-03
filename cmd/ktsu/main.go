@@ -150,8 +150,13 @@ func startCmd() *cobra.Command {
 				return cmd.Help()
 			}
 
+			// Fallback to environment variable if flag wasn't set and default was empty
 			if apiKey == "" {
-				return fmt.Errorf("KTSU_API_KEY is required for 'start --all'. Set it via --api-key or KTSU_API_KEY environment variable.")
+				apiKey = os.Getenv("KTSU_API_KEY")
+			}
+
+			if apiKey == "" {
+				return fmt.Errorf("KTSU_API_KEY is required for 'start --all'. Please ensure it is set as an environment variable or passed via the --api-key flag.")
 			}
 
 			var envCfg *config.EnvConfig
