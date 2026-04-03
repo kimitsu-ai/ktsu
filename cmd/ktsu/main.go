@@ -197,6 +197,7 @@ func startCmd() *cobra.Command {
 			orchURL := fmt.Sprintf("http://localhost:%d", orchPort)
 			gwURL := fmt.Sprintf("http://localhost:%d", gwPort)
 			rtURL := fmt.Sprintf("http://localhost:%d", rtPort)
+			log.Printf("starting all services...")
 
 			g, err := gateway.New(gateway.Config{
 				ConfigPath:    gatewayConfigPath,
@@ -238,35 +239,34 @@ func startCmd() *cobra.Command {
 				Logger:          rtLogger,
 			})
 
-			ctx, cancel := context.WithCancel(signalCtx())
+			sigCtx := signalCtx()
+			ctx, cancel := context.WithCancel(sigCtx)
 			defer cancel()
 
 			errc := make(chan error, 3)
 			go func() {
-				if err := g.Start(ctx); err != nil {
+				if err := g.Start(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					errc <- fmt.Errorf("gateway: %w", err)
 					cancel()
-					errc <- err
 				}
 			}()
 			go func() {
-				if err := o.Start(ctx); err != nil {
+				if err := o.Start(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					errc <- fmt.Errorf("orchestrator: %w", err)
 					cancel()
-					errc <- err
 				}
 			}()
 			go func() {
-				if err := r.Start(ctx); err != nil {
+				if err := r.Start(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					errc <- fmt.Errorf("runtime: %w", err)
 					cancel()
-					errc <- err
 				}
 			}()
 
 			select {
 			case err := <-errc:
 				return err
-			case <-ctx.Done():
-				// This case handles external signals (SIGINT/SIGTERM)
-				// via signalCtx() which cancel the parent context.
+			case <-sigCtx.Done():
 				return nil
 			}
 		},
