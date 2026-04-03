@@ -2,6 +2,18 @@
 
 Go monorepo for the Kimitsu agentic pipeline framework. Kimitsu treats the **tool** as the atomic unit — agents are compositions of tool servers with a prompt. All component boundaries are HTTP contracts.
 
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/deploy?repo=https://github.com/kimitsu-ai/ktsu)
+
+## Quick start (Railway)
+
+The easiest way to get started is to deploy the full stack to Railway with a single click. This includes the Orchestrator, Gateway, and Runtime, pre-configured with the `hello-world` example.
+
+1. Click the **Deploy on Railway** button above.
+2. Provide your `ANTHROPIC_API_KEY`.
+3. Railway will generate a secure `KTSU_API_KEY` for you.
+4. Once deployed, you can invoke the demo workflow immediately.
+
+
 ## Quick start (Docker)
 
 Run the full stack with the included hello-world example:

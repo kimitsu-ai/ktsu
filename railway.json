@@ -1,0 +1,19 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "deploy/railway/Dockerfile"
+  },
+  "deploy": {
+    "startCommand": "ktsu start --all --gateway-config /app/gateway.yaml --workflow-dir /app/workflows --project-dir /app",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10,
+    "env": {
+      "KTSU_ORCHESTRATOR_PORT": "${{PORT}}",
+      "KTSU_API_KEY": "${{RANDOM_HEX_24}}",
+      "ANTHROPIC_API_KEY": "",
+      "KTSU_OWN_URL": "http://${{RAILWAY_PUBLIC_DOMAIN}}",
+      "KTSU_RUNTIME_URL": "http://localhost:5051"
+    }
+  }
+}
