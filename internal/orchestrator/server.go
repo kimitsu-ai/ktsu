@@ -54,8 +54,15 @@ func (s *server) logf(format string, args ...any) {
 	}
 }
 
-func newServer(o *Orchestrator) *server {
-	store := state.NewMemStore()
+func newServer(o *Orchestrator) (*server, error) {
+	store, err := state.NewStore(state.StoreConfig{
+		Type: o.cfg.StoreType,
+		DSN:  o.cfg.StoreDSN,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("init store: %w", err)
+	}
+
 	s := &server{
 		o:                o,
 		store:            store,
@@ -78,7 +85,7 @@ func newServer(o *Orchestrator) *server {
 	}
 	s.runner = r
 	s.routes()
-	return s
+	return s, nil
 }
 
 func (s *server) requireAuth(h http.HandlerFunc) http.HandlerFunc {

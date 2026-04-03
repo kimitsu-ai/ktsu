@@ -179,6 +179,8 @@ All service addresses and peer URLs can be set via `KTSU_*` environment variable
 | `KTSU_ORCHESTRATOR_URL` | `--orchestrator` | runtime, builtins, invoke | `http://localhost:5050` |
 | `KTSU_GATEWAY_URL` | `--gateway` | runtime | `http://localhost:5052` |
 | `KTSU_API_KEY` | `--api-key` | orchestrator, invoke | `""` (auth disabled) |
+| `KTSU_STORE_TYPE` | `--store-type` | orchestrator | `memory` |
+| `KTSU_DB_PATH` | `--db-path` | orchestrator | `ktsu.db` |
 
 ```sh
 # Container / multi-host example

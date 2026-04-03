@@ -50,6 +50,8 @@ CLI flags take precedence over environment variables. All env vars are optional.
 | `KTSU_RUNTIME_HOST` | `""` (all interfaces) | `start runtime` | Host interface to bind |
 | `KTSU_RUNTIME_PORT` | `5051` | `start runtime` | Port to listen on |
 | `KTSU_RUNTIME_URL` | `""` | `start orchestrator` | Agent runtime URL |
+| `KTSU_STORE_TYPE` | `memory` | `start orchestrator` | Orchestrator store type: `memory`, `sqlite` |
+| `KTSU_DB_PATH` | `ktsu.db` | `start orchestrator` | Database path for SQLite |
 | `NO_COLOR` | *(unset)* | `validate` | Set to any value to disable colored output |
 
 ---
@@ -81,6 +83,8 @@ ktsu start --all [flags]
 | `--gateway-port` | `5052` | `KTSU_GATEWAY_PORT` | Gateway port |
 | `--runtime-host` | `""` | `KTSU_RUNTIME_HOST` | Runtime bind host |
 | `--runtime-port` | `5051` | `KTSU_RUNTIME_PORT` | Runtime port |
+| `--store-type` | `memory` | `KTSU_STORE_TYPE` | Orchestrator store type: `memory`, `sqlite` |
+| `--db-path` | `ktsu.db` | `KTSU_DB_PATH` | Database path for SQLite |
 
 ```bash
 ktsu start --all
@@ -109,6 +113,8 @@ ktsu start orchestrator [flags]
 | `--own-url` | `""` | `KTSU_OWN_URL` | Orchestrator's own URL for callbacks |
 | `--project-dir` | `.` | `KTSU_PROJECT_DIR` | Project root for resolving agent/server paths |
 | `--api-key` | `""` | `KTSU_API_KEY` | Bearer token required on protected routes; unset = auth disabled |
+| `--store-type` | `memory` | `KTSU_STORE_TYPE` | Orchestrator store type: `memory`, `sqlite` |
+| `--db-path` | `ktsu.db` | `KTSU_DB_PATH` | Database path for SQLite |
 
 ```bash
 ktsu start orchestrator

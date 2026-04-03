@@ -2,9 +2,25 @@ package state
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/kimitsu-ai/ktsu/pkg/types"
 )
+
+// StoreType identifies the storage backend.
+type StoreType string
+
+const (
+	StoreTypeMemory   StoreType = "memory"
+	StoreTypeSQLite   StoreType = "sqlite"
+	StoreTypePostgres StoreType = "postgres"
+)
+
+// StoreConfig holds the configuration for a state store.
+type StoreConfig struct {
+	Type StoreType
+	DSN  string // Data Source Name (e.g. database file path for SQLite)
+}
 
 // Store is the persistence interface for run and step state.
 type Store interface {
@@ -18,45 +34,22 @@ type Store interface {
 	GetEnvelope(ctx context.Context, runID string) (*types.Envelope, error)
 }
 
-// SQLiteStore is a SQLite-backed implementation of Store.
-type SQLiteStore struct {
-	dsn string
-}
-
-func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
-	return &SQLiteStore{dsn: dsn}, nil
-}
-
-func (s *SQLiteStore) CreateRun(ctx context.Context, run *types.Run) error {
-	return ErrNotImplemented
-}
-
-func (s *SQLiteStore) UpdateRun(ctx context.Context, run *types.Run) error {
-	return ErrNotImplemented
-}
-
-func (s *SQLiteStore) GetRun(ctx context.Context, runID string) (*types.Run, error) {
-	return nil, ErrNotImplemented
-}
-
-func (s *SQLiteStore) CreateStep(ctx context.Context, step *types.Step) error {
-	return ErrNotImplemented
-}
-
-func (s *SQLiteStore) UpdateStep(ctx context.Context, step *types.Step) error {
-	return ErrNotImplemented
-}
-
-func (s *SQLiteStore) GetStep(ctx context.Context, runID, stepID string) (*types.Step, error) {
-	return nil, ErrNotImplemented
-}
-
-func (s *SQLiteStore) ListSteps(ctx context.Context, runID string) ([]*types.Step, error) {
-	return nil, ErrNotImplemented
-}
-
-func (s *SQLiteStore) GetEnvelope(ctx context.Context, runID string) (*types.Envelope, error) {
-	return nil, ErrNotImplemented
+// NewStore initializes a Store based on the provided configuration.
+func NewStore(cfg StoreConfig) (Store, error) {
+	switch cfg.Type {
+	case StoreTypeMemory:
+		return NewMemStore(), nil
+	case StoreTypeSQLite:
+		return NewSQLiteStore(cfg.DSN)
+	case StoreTypePostgres:
+		return nil, fmt.Errorf("postgres store not yet implemented")
+	default:
+		// Default to memory if not specified, but error on unknown types
+		if cfg.Type == "" {
+			return NewMemStore(), nil
+		}
+		return nil, fmt.Errorf("unknown store type: %s", cfg.Type)
+	}
 }
 
 // ErrNotImplemented is returned by store stubs
