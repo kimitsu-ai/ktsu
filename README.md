@@ -107,7 +107,7 @@ The official image is available on GitHub Container Registry:
 
 ## Prerequisites
 
-- Go 1.24+ (for local development)
+- Go 1.25+ (for local development)
 - Docker & Docker Compose (for containerized usage)
 
 ## Build

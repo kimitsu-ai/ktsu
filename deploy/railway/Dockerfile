@@ -1,6 +1,6 @@
 # --- Stage 1: Build binary ---
 # This stage mirrors the build logic from the primary deploy/Dockerfile
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 

@@ -10,6 +10,11 @@
         "branch": "main"
       },
       "generateDomain": true,
+      "volumes": [
+        {
+          "mountPath": "/app/data"
+        }
+      ],
       "variables": {
         "KTSU_API_KEY": {
           "title": "KTSU API Key",
@@ -30,6 +35,16 @@
           "title": "Orchestrator Port",
           "description": "The port the orchestrator will listen on (automatically mapped to Railway's PORT).",
           "default": "${{PORT}}"
+        },
+        "KTSU_STORE_TYPE": {
+          "title": "Store Type",
+          "description": "Orchestrator store type: memory, sqlite.",
+          "default": "sqlite"
+        },
+        "KTSU_DB_PATH": {
+          "title": "Database Path",
+          "description": "Path to the SQLite database file.",
+          "default": "/app/data/ktsu.db"
         }
       }
     }
