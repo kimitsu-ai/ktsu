@@ -9,11 +9,17 @@
         "repo": "https://github.com/kimitsu-ai/ktsu",
         "branch": "main"
       },
+      "generateDomain": true,
       "variables": {
         "KTSU_API_KEY": {
           "title": "KTSU API Key",
           "description": "Orchestrator API key for bearer auth (automatically generated).",
           "default": "${{ secret(24) }}"
+        },
+        "PORT": {
+          "title": "Port",
+          "description": "The port the service will listen on.",
+          "default": "5050"
         },
         "ANTHROPIC_API_KEY": {
           "title": "Anthropic API Key",

@@ -28,5 +28,7 @@ COPY examples/hello/ .
 
 RUN chmod -R 777 /app
 
+EXPOSE 5050
+
 # Ensure ktsu is the entrypoint so arguments are passed to it correctly
 CMD ["ktsu", "start", "--all", "--gateway-config", "/app/gateway.yaml"]
