@@ -15,6 +15,7 @@ type Config struct {
 	Host        string // bind interface, "" = all
 	Port        int    // default 5050
 	RuntimeURL  string // URL of the Agent Runtime (e.g. "http://runtime:5051")
+	GatewayURL  string // URL of the LLM Gateway (e.g. "http://gateway:5052")
 	OwnURL      string // this orchestrator's own URL, for constructing callback_url
 	ProjectDir  string // root dir for resolving agent/server paths (default: ".")
 	APIKey      string // optional bearer token; empty = auth disabled

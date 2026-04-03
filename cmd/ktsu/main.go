@@ -219,6 +219,7 @@ func startCmd() *cobra.Command {
 				Host:        orchHost,
 				Port:        orchPort,
 				RuntimeURL:  rtURL,
+				GatewayURL:  gwURL,
 				OwnURL:      orchOwnURL,
 				ProjectDir:  projectDir,
 				APIKey:      apiKey,
@@ -289,7 +290,7 @@ func startCmd() *cobra.Command {
 }
 
 func startOrchestratorCmd() *cobra.Command {
-	var envPath, workflowDir, host, runtimeURL, ownURL, projectDir, apiKey string
+	var envPath, workflowDir, host, runtimeURL, gatewayURL, ownURL, projectDir, apiKey string
 	var port int
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
@@ -318,6 +319,7 @@ func startOrchestratorCmd() *cobra.Command {
 				Host:        host,
 				Port:        port,
 				RuntimeURL:  runtimeURL,
+				GatewayURL:  gatewayURL,
 				OwnURL:      orchOwnURL,
 				ProjectDir:  projectDir,
 				APIKey:      apiKey,
@@ -333,6 +335,9 @@ func startOrchestratorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtimeURL, "runtime-url",
 		envOr("KTSU_RUNTIME_URL", ""),
 		"agent runtime URL (env: KTSU_RUNTIME_URL)")
+	cmd.Flags().StringVar(&gatewayURL, "gateway-url",
+		envOr("KTSU_GATEWAY_URL", ""),
+		"LLM gateway URL (env: KTSU_GATEWAY_URL)")
 	cmd.Flags().StringVar(&ownURL, "own-url",
 		envOr("KTSU_OWN_URL", ""),
 		"orchestrator's own URL for callbacks (env: KTSU_OWN_URL)")

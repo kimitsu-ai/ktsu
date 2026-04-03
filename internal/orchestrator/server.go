@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kimitsu-ai/ktsu/internal/config"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/airlock"
@@ -108,9 +109,76 @@ func (s *server) routes() {
 	s.mux.HandleFunc("POST /runs/{run_id}/steps/{step_id}/complete", s.handleStepComplete)
 }
 
+type healthResponse struct {
+	Status   string            `json:"status"`
+	Services map[string]string `json:"services"`
+}
+
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	results := make(map[string]string)
+	results["orchestrator"] = "ok"
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	check := func(name, url string) {
+		if url == "" {
+			mu.Lock()
+			results[name] = "unconfigured"
+			mu.Unlock()
+			return
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			status := s.checkService(ctx, url)
+			mu.Lock()
+			results[name] = status
+			mu.Unlock()
+		}()
+	}
+
+	check("runtime", s.o.cfg.RuntimeURL)
+	check("gateway", s.o.cfg.GatewayURL)
+
+	wg.Wait()
+
+	overall := "ok"
+	for _, status := range results {
+		if status != "ok" && status != "unconfigured" {
+			overall = "error"
+			break
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if overall != "ok" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	json.NewEncoder(w).Encode(healthResponse{
+		Status:   overall,
+		Services: results,
+	})
+}
+
+func (s *server) checkService(ctx context.Context, url string) string {
+	// url is already checked for empty in handleHealth
+	req, err := http.NewRequestWithContext(ctx, "GET", url+"/health", nil)
+	if err != nil {
+		return "error"
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "down"
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "unhealthy"
+	}
+	return "ok"
 }
 
 func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
