@@ -27,6 +27,7 @@ import (
 	"github.com/kimitsu-ai/ktsu/internal/gateway"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/dag"
+	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
 	"github.com/kimitsu-ai/ktsu/internal/runtime"
 )
 
@@ -146,6 +147,7 @@ func startCmd() *cobra.Command {
 		all bool
 		// orchestrator flags
 		envPath, workflowDir, ownURL, projectDir, apiKey string
+		storeType, dbPath                                 string
 		orchHost                                          string
 		orchPort                                          int
 		// gateway flags
@@ -223,6 +225,8 @@ func startCmd() *cobra.Command {
 				OwnURL:      orchOwnURL,
 				ProjectDir:  projectDir,
 				APIKey:      apiKey,
+				StoreType:   state.StoreType(storeType),
+				StoreDSN:    dbPath,
 				Logger:      orchLogger,
 			})
 
@@ -276,6 +280,8 @@ func startCmd() *cobra.Command {
 	start.Flags().StringVar(&orchHost, "orchestrator-host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "orchestrator bind host (env: KTSU_ORCHESTRATOR_HOST)")
 	start.Flags().IntVar(&orchPort, "orchestrator-port", envIntOr("KTSU_ORCHESTRATOR_PORT", 5050), "orchestrator port (env: KTSU_ORCHESTRATOR_PORT)")
 	start.Flags().StringVar(&apiKey, "api-key", envOr("KTSU_API_KEY", ""), "orchestrator API key for bearer auth (env: KTSU_API_KEY)")
+	start.Flags().StringVar(&storeType, "store-type", envOr("KTSU_STORE_TYPE", "memory"), "orchestrator store type: memory, sqlite (env: KTSU_STORE_TYPE)")
+	start.Flags().StringVar(&dbPath, "db-path", envOr("KTSU_DB_PATH", "ktsu.db"), "orchestrator database path for sqlite (env: KTSU_DB_PATH)")
 	start.Flags().StringVar(&gatewayConfigPath, "gateway-config", "gateway.yaml", "path to gateway config")
 	start.Flags().StringVar(&gwHost, "gateway-host", envOr("KTSU_GATEWAY_HOST", ""), "gateway bind host (env: KTSU_GATEWAY_HOST)")
 	start.Flags().IntVar(&gwPort, "gateway-port", envIntOr("KTSU_GATEWAY_PORT", 5052), "gateway port (env: KTSU_GATEWAY_PORT)")
@@ -291,6 +297,7 @@ func startCmd() *cobra.Command {
 
 func startOrchestratorCmd() *cobra.Command {
 	var envPath, workflowDir, host, runtimeURL, gatewayURL, ownURL, projectDir, apiKey string
+	var storeType, dbPath string
 	var port int
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
@@ -323,6 +330,8 @@ func startOrchestratorCmd() *cobra.Command {
 				OwnURL:      orchOwnURL,
 				ProjectDir:  projectDir,
 				APIKey:      apiKey,
+				StoreType:   state.StoreType(storeType),
+				StoreDSN:    dbPath,
 			})
 			log.Printf("starting %s", o)
 			return o.Start(signalCtx())
@@ -347,6 +356,12 @@ func startOrchestratorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&apiKey, "api-key",
 		envOr("KTSU_API_KEY", ""),
 		"orchestrator API key for bearer auth (env: KTSU_API_KEY)")
+	cmd.Flags().StringVar(&storeType, "store-type",
+		envOr("KTSU_STORE_TYPE", "memory"),
+		"orchestrator store type: memory, sqlite (env: KTSU_STORE_TYPE)")
+	cmd.Flags().StringVar(&dbPath, "db-path",
+		envOr("KTSU_DB_PATH", "ktsu.db"),
+		"orchestrator database path for sqlite (env: KTSU_DB_PATH)")
 	return cmd
 }
 
