@@ -13,30 +13,20 @@ COPY ./ .
 RUN CGO_ENABLED=0 GOOS=linux go build -o ktsu ./cmd/ktsu
 
 
-# --- Stage 2: Base production-like image ---
+# --- Stage 2 ---
 FROM alpine:latest AS base
-
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
-
-# Copy binary
 COPY --from=builder /app/ktsu /usr/local/bin/ktsu
 
-ENTRYPOINT ["ktsu"]
-
-
-# --- Stage 3: Demo image (Railway Default) ---
-# This stage adds the hello-world example for Railway's one-click demo.
+# --- Stage 3 ---
 FROM base AS demo
 
-# Copy default configuration for the demo
-COPY examples/hello/gateway.yaml /app/gateway.yaml
-COPY examples/hello/workflows /app/workflows
-COPY examples/hello/agents /app/agents
-COPY examples/hello/servers /app/servers
+# Copy the entire hello example into /app. This correctly places
+# /app/gateway.yaml, /app/workflows/, etc.
+COPY examples/hello/ .
 
-# Ensure workspace is writeable for state/logs
 RUN chmod -R 777 /app
 
-# Start all Kimitsu services in a single process
-CMD ["start", "--all", "--gateway-config", "/app/gateway.yaml", "--workflow-dir", "/app/workflows", "--project-dir", "/app"]
+# Ensure ktsu is the entrypoint so arguments are passed to it correctly
+CMD ["ktsu", "start", "--all", "--gateway-config", "/app/gateway.yaml"]
