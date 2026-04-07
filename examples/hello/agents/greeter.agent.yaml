@@ -2,10 +2,11 @@ name: greeter
 description: Generates a friendly greeting from a name.
 model: standard
 max_turns: 1
-system: |
-  You receive a JSON input containing a "name" field under the "input" key.
-  Generate a friendly, one-sentence greeting for that person.
-  Return exactly the JSON output described in your schema — nothing else.
+prompt:
+  system: |
+    You receive a JSON input containing a "name" field under the "input" key.
+    Generate a friendly, one-sentence greeting for that person.
+    Return exactly the JSON output described in your schema — nothing else.
 output:
   schema:
     type: object
