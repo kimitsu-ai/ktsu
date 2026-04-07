@@ -241,3 +241,35 @@ func TestResolveServerParams_missingRequiredReturnsError(t *testing.T) {
 		t.Fatal("expected error for missing required server param, got nil")
 	}
 }
+
+func TestResolveAgentParams_unsetEnvVarReturnsError(t *testing.T) {
+	os.Unsetenv("DEFINITELY_NOT_SET_PARAM")
+	declared := map[string]ParamDecl{
+		"key": {Description: "...", Default: strPtr("env:DEFINITELY_NOT_SET_PARAM")},
+	}
+	_, err := ResolveAgentParams(declared, nil)
+	if err == nil {
+		t.Fatal("expected error for unset env var in default, got nil")
+	}
+}
+
+func TestResolveAgentParams_nonStringStepValueReturnsError(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"count": {Description: "..."},
+	}
+	_, err := ResolveAgentParams(declared, map[string]any{"count": 42})
+	if err == nil {
+		t.Fatal("expected error for non-string step param value, got nil")
+	}
+}
+
+func TestResolveServerParams_unsetEnvVarReturnsError(t *testing.T) {
+	os.Unsetenv("DEFINITELY_NOT_SET_SERVER_PARAM")
+	declared := map[string]ParamDecl{
+		"ns": {Description: "...", Default: strPtr("env:DEFINITELY_NOT_SET_SERVER_PARAM")},
+	}
+	_, err := ResolveServerParams(declared, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for unset env var in server param default, got nil")
+	}
+}

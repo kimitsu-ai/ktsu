@@ -18,6 +18,20 @@ func ResolveEnvValue(v string) string {
 	return v
 }
 
+// lookupEnvValue is like ResolveEnvValue but returns an error when an env:VAR
+// reference names a variable that is not set in the environment.
+func lookupEnvValue(v string) (string, error) {
+	if strings.HasPrefix(v, "env:") {
+		varName := strings.TrimPrefix(v, "env:")
+		val, ok := os.LookupEnv(varName)
+		if !ok {
+			return "", fmt.Errorf("env var %q is not set", varName)
+		}
+		return val, nil
+	}
+	return v, nil
+}
+
 // ValidatePromptRefs returns an error if prompt.system references any {{key}}
 // not declared in params. Call this at boot to catch misconfigured agents.
 func ValidatePromptRefs(system string, params map[string]ParamDecl) error {
@@ -57,11 +71,21 @@ func ResolveAgentParams(declared map[string]ParamDecl, stepAgentParams map[strin
 	result := make(map[string]string, len(declared))
 	for name, decl := range declared {
 		if decl.Default != nil {
-			result[name] = ResolveEnvValue(*decl.Default)
+			val, err := lookupEnvValue(*decl.Default)
+			if err != nil {
+				return nil, fmt.Errorf("agent param %q default: %w", name, err)
+			}
+			result[name] = val
 		}
 		if v, ok := stepAgentParams[name]; ok {
 			if s, ok := v.(string); ok {
-				result[name] = ResolveEnvValue(s)
+				val, err := lookupEnvValue(s)
+				if err != nil {
+					return nil, fmt.Errorf("agent param %q: %w", name, err)
+				}
+				result[name] = val
+			} else {
+				return nil, fmt.Errorf("agent param %q: value must be a string, got %T", name, v)
 			}
 		}
 		if _, ok := result[name]; !ok {
@@ -79,14 +103,28 @@ func ResolveServerParams(declared map[string]ParamDecl, agentRefParams map[strin
 	result := make(map[string]string, len(declared))
 	for name, decl := range declared {
 		if decl.Default != nil {
-			result[name] = ResolveEnvValue(*decl.Default)
+			val, err := lookupEnvValue(*decl.Default)
+			if err != nil {
+				return nil, fmt.Errorf("server param %q default: %w", name, err)
+			}
+			result[name] = val
 		}
 		if v, ok := agentRefParams[name]; ok {
-			result[name] = ResolveEnvValue(v)
+			val, err := lookupEnvValue(v)
+			if err != nil {
+				return nil, fmt.Errorf("server param %q agent ref: %w", name, err)
+			}
+			result[name] = val
 		}
 		if v, ok := stepServerParams[name]; ok {
 			if s, ok := v.(string); ok {
-				result[name] = ResolveEnvValue(s)
+				val, err := lookupEnvValue(s)
+				if err != nil {
+					return nil, fmt.Errorf("server param %q: %w", name, err)
+				}
+				result[name] = val
+			} else {
+				return nil, fmt.Errorf("server param %q: value must be a string, got %T", name, v)
 			}
 		}
 		if _, ok := result[name]; !ok {
