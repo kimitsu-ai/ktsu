@@ -374,8 +374,18 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			return nil, zero, fmt.Errorf("load agent %s: %w", step.Agent, err)
 		}
 		agentName = agentCfg.Name
-		system = agentCfg.Prompt.System
 		modelGroup = agentCfg.Model
+
+		// Resolve agent params and interpolate system prompt.
+		resolvedAgentParams, resolveErr := config.ResolveAgentParams(agentCfg.Params, step.Params.Agent)
+		if resolveErr != nil {
+			return nil, zero, fmt.Errorf("agent %s param resolution: %w", agentCfg.Name, resolveErr)
+		}
+		var interpErr error
+		system, interpErr = config.InterpolatePrompt(agentCfg.Prompt.System, resolvedAgentParams)
+		if interpErr != nil {
+			return nil, zero, fmt.Errorf("agent %s prompt interpolation: %w", agentCfg.Name, interpErr)
+		}
 		if agentCfg.MaxTurns > 0 {
 			maxTurns = agentCfg.MaxTurns
 		}
@@ -404,11 +414,25 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			if strings.HasPrefix(authToken, "env:") {
 				authToken = os.Getenv(strings.TrimPrefix(authToken, "env:"))
 			}
+			// Resolve server params (nil map access on step.Params.Server returns nil safely).
+			resolvedServerParams, serverParamErr := config.ResolveServerParams(
+				serverCfg.Params,
+				srv.Params,
+				step.Params.Server[srv.Name],
+			)
+			if serverParamErr != nil {
+				return nil, zero, fmt.Errorf("server %s param resolution: %w", srv.Name, serverParamErr)
+			}
+			serverParamsAny := make(map[string]any, len(resolvedServerParams))
+			for k, v := range resolvedServerParams {
+				serverParamsAny[k] = v
+			}
 			toolServers = append(toolServers, agent.ToolServerSpec{
 				Name:      serverCfg.Name,
 				URL:       serverCfg.URL,
 				Allowlist: srv.Access.Allowlist,
 				AuthToken: authToken,
+				Params:    serverParamsAny,
 			})
 		}
 	}
