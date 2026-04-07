@@ -114,6 +114,58 @@ func TestCallTool_success(t *testing.T) {
 	}
 }
 
+func TestInitialize_sendsConfigInParams(t *testing.T) {
+	var receivedConfig map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if params, ok := req["params"].(map[string]any); ok {
+			receivedConfig, _ = params["config"].(map[string]any)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result":  map[string]any{},
+		})
+	}))
+	defer srv.Close()
+
+	c := newClient()
+	err := c.Initialize(context.Background(), srv.URL, "", map[string]any{"namespace": "user-123"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if receivedConfig == nil {
+		t.Fatal("expected config to be sent in initialize params")
+	}
+	if receivedConfig["namespace"] != "user-123" {
+		t.Errorf("got config %v, want namespace=user-123", receivedConfig)
+	}
+}
+
+func TestInitialize_withAuthToken(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{}})
+	}))
+	defer srv.Close()
+
+	c := newClient()
+	err := c.Initialize(context.Background(), srv.URL, "my-token", map[string]any{"key": "val"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotAuth != "Bearer my-token" {
+		t.Errorf("got auth %q want %q", gotAuth, "Bearer my-token")
+	}
+}
+
 func TestCallTool_rpcError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -92,6 +92,21 @@ func (c *Client) CallTool(ctx context.Context, url, authToken, name string, argu
 	return result, nil
 }
 
+// Initialize sends an MCP initialize request with optional config params.
+// Use this before DiscoverTools when the server requires per-connection configuration.
+// config is sent under the "config" key in the initialize params.
+// authToken, if non-empty, is sent as Authorization: Bearer <token>.
+func (c *Client) Initialize(ctx context.Context, url, authToken string, config map[string]any) error {
+	params := map[string]any{
+		"protocolVersion": "2024-11-05",
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]any{"name": "ktsu", "version": "1.0"},
+		"config":          config,
+	}
+	_, err := c.rpc(ctx, url, authToken, "initialize", params)
+	return err
+}
+
 // rpc sends a JSON-RPC 2.0 request and returns the raw result bytes.
 // authToken, if non-empty, is sent as Authorization: Bearer <token>.
 func (c *Client) rpc(ctx context.Context, url, authToken, method string, params any) (json.RawMessage, error) {
