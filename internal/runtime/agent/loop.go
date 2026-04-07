@@ -122,6 +122,12 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 		discWg.Add(1)
 		go func(i int, srv ToolServerSpec) {
 			defer discWg.Done()
+			if len(srv.Params) > 0 {
+				if err := l.mcpClient.Initialize(ctx, srv.URL, srv.AuthToken, srv.Params); err != nil {
+					discResults[i] = discoveryResult{srv: srv, err: fmt.Errorf("initialize server %s: %w", srv.Name, err)}
+					return
+				}
+			}
 			discovered, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.AuthToken, srv.Allowlist)
 			discResults[i] = discoveryResult{srv: srv, tools: discovered, err: err}
 		}(i, srv)
