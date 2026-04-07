@@ -22,10 +22,11 @@ type ModelSpec struct {
 
 // ToolServerSpec declares a tool server the agent may call.
 type ToolServerSpec struct {
-	Name      string   `json:"name"`
-	URL       string   `json:"url"`
-	Allowlist []string `json:"allowlist"`
-	AuthToken string   `json:"auth_token,omitempty"` // resolved bearer token
+	Name      string         `json:"name"`
+	URL       string         `json:"url"`
+	Allowlist []string       `json:"allowlist"`
+	AuthToken string         `json:"auth_token,omitempty"` // resolved bearer token
+	Params    map[string]any `json:"params,omitempty"`     // resolved server params for MCP init
 }
 
 const (
