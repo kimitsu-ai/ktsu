@@ -1,0 +1,243 @@
+package config
+
+import (
+	"os"
+	"testing"
+)
+
+// --- ResolveEnvValue ---
+
+func TestResolveEnvValue_envRef(t *testing.T) {
+	os.Setenv("TEST_PARAM_VAR", "resolved-value")
+	defer os.Unsetenv("TEST_PARAM_VAR")
+	got := ResolveEnvValue("env:TEST_PARAM_VAR")
+	if got != "resolved-value" {
+		t.Errorf("got %q want %q", got, "resolved-value")
+	}
+}
+
+func TestResolveEnvValue_literal(t *testing.T) {
+	got := ResolveEnvValue("plain-value")
+	if got != "plain-value" {
+		t.Errorf("got %q want %q", got, "plain-value")
+	}
+}
+
+func TestResolveEnvValue_unsetEnvReturnsEmpty(t *testing.T) {
+	os.Unsetenv("DEFINITELY_NOT_SET_XYZ")
+	got := ResolveEnvValue("env:DEFINITELY_NOT_SET_XYZ")
+	if got != "" {
+		t.Errorf("expected empty string for unset env var, got %q", got)
+	}
+}
+
+// --- ValidatePromptRefs ---
+
+func TestValidatePromptRefs_allDeclared(t *testing.T) {
+	err := ValidatePromptRefs("Hello {{name}}.", map[string]ParamDecl{
+		"name": {Description: "user name"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidatePromptRefs_noRefs(t *testing.T) {
+	err := ValidatePromptRefs("Hello world.", map[string]ParamDecl{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidatePromptRefs_undeclaredRef(t *testing.T) {
+	err := ValidatePromptRefs("Hello {{unknown}}.", map[string]ParamDecl{})
+	if err == nil {
+		t.Fatal("expected error for undeclared ref, got nil")
+	}
+}
+
+func TestValidatePromptRefs_multipleUndeclared(t *testing.T) {
+	err := ValidatePromptRefs("{{a}} and {{b}}", map[string]ParamDecl{"a": {Description: "x"}})
+	if err == nil {
+		t.Fatal("expected error for undeclared ref 'b', got nil")
+	}
+}
+
+// --- InterpolatePrompt ---
+
+func TestInterpolatePrompt_replacesAll(t *testing.T) {
+	got, err := InterpolatePrompt("Hello {{name}}, domain is {{domain}}.", map[string]string{
+		"name":   "Alice",
+		"domain": "billing",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "Hello Alice, domain is billing."
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestInterpolatePrompt_noRefs(t *testing.T) {
+	got, err := InterpolatePrompt("No placeholders here.", map[string]string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "No placeholders here." {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestInterpolatePrompt_missingValueReturnsError(t *testing.T) {
+	_, err := InterpolatePrompt("Hello {{name}}.", map[string]string{})
+	if err == nil {
+		t.Fatal("expected error for missing value, got nil")
+	}
+}
+
+func TestInterpolatePrompt_repeatedRef(t *testing.T) {
+	got, err := InterpolatePrompt("{{name}} and {{name}} again.", map[string]string{"name": "Bob"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "Bob and Bob again."
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+// --- ResolveAgentParams ---
+
+func strPtr(s string) *string { return &s }
+
+func TestResolveAgentParams_usesDefault(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"persona": {Description: "...", Default: strPtr("helpful assistant")},
+	}
+	got, err := ResolveAgentParams(declared, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["persona"] != "helpful assistant" {
+		t.Errorf("got %q want %q", got["persona"], "helpful assistant")
+	}
+}
+
+func TestResolveAgentParams_stepOverridesDefault(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"persona": {Description: "...", Default: strPtr("helpful assistant")},
+	}
+	got, err := ResolveAgentParams(declared, map[string]any{"persona": "support rep"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["persona"] != "support rep" {
+		t.Errorf("got %q want %q", got["persona"], "support rep")
+	}
+}
+
+func TestResolveAgentParams_missingRequiredReturnsError(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"domain": {Description: "..."},
+	}
+	_, err := ResolveAgentParams(declared, nil)
+	if err == nil {
+		t.Fatal("expected error for missing required param, got nil")
+	}
+}
+
+func TestResolveAgentParams_resolvesEnvDefault(t *testing.T) {
+	os.Setenv("TEST_PERSONA", "admin")
+	defer os.Unsetenv("TEST_PERSONA")
+	declared := map[string]ParamDecl{
+		"persona": {Description: "...", Default: strPtr("env:TEST_PERSONA")},
+	}
+	got, err := ResolveAgentParams(declared, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["persona"] != "admin" {
+		t.Errorf("got %q want %q", got["persona"], "admin")
+	}
+}
+
+func TestResolveAgentParams_resolvesEnvStepOverride(t *testing.T) {
+	os.Setenv("TEST_DOMAIN", "finance")
+	defer os.Unsetenv("TEST_DOMAIN")
+	declared := map[string]ParamDecl{
+		"domain": {Description: "..."},
+	}
+	got, err := ResolveAgentParams(declared, map[string]any{"domain": "env:TEST_DOMAIN"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["domain"] != "finance" {
+		t.Errorf("got %q want %q", got["domain"], "finance")
+	}
+}
+
+func TestResolveAgentParams_emptyDeclared(t *testing.T) {
+	got, err := ResolveAgentParams(nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map, got %v", got)
+	}
+}
+
+// --- ResolveServerParams ---
+
+func TestResolveServerParams_usesServerDefault(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"namespace": {Description: "...", Default: strPtr("global")},
+	}
+	got, err := ResolveServerParams(declared, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["namespace"] != "global" {
+		t.Errorf("got %q want %q", got["namespace"], "global")
+	}
+}
+
+func TestResolveServerParams_agentRefOverridesDefault(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"namespace": {Description: "...", Default: strPtr("global")},
+	}
+	got, err := ResolveServerParams(declared, map[string]string{"namespace": "team-ns"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["namespace"] != "team-ns" {
+		t.Errorf("got %q want %q", got["namespace"], "team-ns")
+	}
+}
+
+func TestResolveServerParams_stepOverridesAgentRef(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"namespace": {Description: "...", Default: strPtr("global")},
+	}
+	got, err := ResolveServerParams(
+		declared,
+		map[string]string{"namespace": "team-ns"},
+		map[string]any{"namespace": "user-123"},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["namespace"] != "user-123" {
+		t.Errorf("got %q want %q", got["namespace"], "user-123")
+	}
+}
+
+func TestResolveServerParams_missingRequiredReturnsError(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"namespace": {Description: "..."},
+	}
+	_, err := ResolveServerParams(declared, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for missing required server param, got nil")
+	}
+}

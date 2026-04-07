@@ -1,0 +1,97 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+)
+
+var placeholderRe = regexp.MustCompile(`\{\{(\w+)\}\}`)
+
+// ResolveEnvValue resolves an "env:VAR_NAME" reference to its environment value.
+// Non-env: values are returned unchanged.
+func ResolveEnvValue(v string) string {
+	if strings.HasPrefix(v, "env:") {
+		return os.Getenv(strings.TrimPrefix(v, "env:"))
+	}
+	return v
+}
+
+// ValidatePromptRefs returns an error if prompt.system references any {{key}}
+// not declared in params. Call this at boot to catch misconfigured agents.
+func ValidatePromptRefs(system string, params map[string]ParamDecl) error {
+	matches := placeholderRe.FindAllStringSubmatch(system, -1)
+	for _, m := range matches {
+		key := m[1]
+		if _, ok := params[key]; !ok {
+			return fmt.Errorf("prompt references undeclared param %q", key)
+		}
+	}
+	return nil
+}
+
+// InterpolatePrompt replaces {{key}} placeholders in system with values from resolved.
+// Returns an error if any placeholder key is missing from resolved.
+func InterpolatePrompt(system string, resolved map[string]string) (string, error) {
+	var replaceErr error
+	result := placeholderRe.ReplaceAllStringFunc(system, func(match string) string {
+		key := placeholderRe.FindStringSubmatch(match)[1]
+		v, ok := resolved[key]
+		if !ok && replaceErr == nil {
+			replaceErr = fmt.Errorf("prompt references param %q which has no resolved value", key)
+		}
+		return v
+	})
+	if replaceErr != nil {
+		return "", replaceErr
+	}
+	return result, nil
+}
+
+// ResolveAgentParams resolves final string values for all declared agent params.
+// Resolution order: ParamDecl.Default < stepAgentParams (last wins).
+// Returns an error if any required param (nil Default) has no value in stepAgentParams.
+// Resolves env:VAR_NAME in both defaults and step-provided values.
+func ResolveAgentParams(declared map[string]ParamDecl, stepAgentParams map[string]any) (map[string]string, error) {
+	result := make(map[string]string, len(declared))
+	for name, decl := range declared {
+		if decl.Default != nil {
+			result[name] = ResolveEnvValue(*decl.Default)
+		}
+		if v, ok := stepAgentParams[name]; ok {
+			if s, ok := v.(string); ok {
+				result[name] = ResolveEnvValue(s)
+			}
+		}
+		if _, ok := result[name]; !ok {
+			return nil, fmt.Errorf("required agent param %q has no value", name)
+		}
+	}
+	return result, nil
+}
+
+// ResolveServerParams resolves final string values for all declared server params.
+// Resolution order: ParamDecl.Default < agentRefParams < stepServerParams (last wins).
+// Returns an error if any required param (nil Default) has no value anywhere.
+// Resolves env:VAR_NAME at each level.
+func ResolveServerParams(declared map[string]ParamDecl, agentRefParams map[string]string, stepServerParams map[string]any) (map[string]string, error) {
+	result := make(map[string]string, len(declared))
+	for name, decl := range declared {
+		if decl.Default != nil {
+			result[name] = ResolveEnvValue(*decl.Default)
+		}
+		if v, ok := agentRefParams[name]; ok {
+			result[name] = ResolveEnvValue(v)
+		}
+		if v, ok := stepServerParams[name]; ok {
+			if s, ok := v.(string); ok {
+				result[name] = ResolveEnvValue(s)
+			}
+		}
+		if _, ok := result[name]; !ok {
+			return nil, fmt.Errorf("required server param %q has no value", name)
+		}
+	}
+	return result, nil
+}
