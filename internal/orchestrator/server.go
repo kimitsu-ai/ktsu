@@ -373,6 +373,9 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		if err != nil {
 			return nil, zero, fmt.Errorf("load agent %s: %w", step.Agent, err)
 		}
+		if err := config.ValidatePromptRefs(agentCfg.Prompt.System, agentCfg.Params); err != nil {
+			return nil, zero, fmt.Errorf("agent %s prompt validation: %w", agentCfg.Name, err)
+		}
 		agentName = agentCfg.Name
 		modelGroup = agentCfg.Model
 
@@ -423,9 +426,12 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			if serverParamErr != nil {
 				return nil, zero, fmt.Errorf("server %s param resolution: %w", srv.Name, serverParamErr)
 			}
-			serverParamsAny := make(map[string]any, len(resolvedServerParams))
-			for k, v := range resolvedServerParams {
-				serverParamsAny[k] = v
+			var serverParamsAny map[string]any
+			if len(resolvedServerParams) > 0 {
+				serverParamsAny = make(map[string]any, len(resolvedServerParams))
+				for k, v := range resolvedServerParams {
+					serverParamsAny[k] = v
+				}
 			}
 			toolServers = append(toolServers, agent.ToolServerSpec{
 				Name:      serverCfg.Name,
