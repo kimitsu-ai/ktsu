@@ -374,7 +374,7 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			return nil, zero, fmt.Errorf("load agent %s: %w", step.Agent, err)
 		}
 		agentName = agentCfg.Name
-		system = agentCfg.System
+		system = agentCfg.Prompt.System
 		modelGroup = agentCfg.Model
 		if agentCfg.MaxTurns > 0 {
 			maxTurns = agentCfg.MaxTurns

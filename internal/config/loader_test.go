@@ -267,6 +267,129 @@ func TestLoadServerManifest_errorsOnMalformedYAML(t *testing.T) {
 	}
 }
 
+func TestLoadAgent_promptBlock(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "agent.yaml", `
+name: chat
+model: standard
+max_turns: 5
+params:
+  persona:
+    description: "The persona the agent adopts"
+    default: "helpful assistant"
+  domain:
+    description: "The subject matter domain"
+prompt:
+  system: "You are a {{persona}} assistant focused on {{domain}}."
+output:
+  schema:
+    type: object
+    required: [reply]
+    properties:
+      reply: {type: string}
+`)
+	cfg, err := LoadAgent(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Prompt.System == "" {
+		t.Error("expected prompt.system to be set")
+	}
+	if len(cfg.Params) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(cfg.Params))
+	}
+	if cfg.Params["persona"].Description != "The persona the agent adopts" {
+		t.Errorf("unexpected persona description: %q", cfg.Params["persona"].Description)
+	}
+	if cfg.Params["persona"].Default == nil || *cfg.Params["persona"].Default != "helpful assistant" {
+		t.Errorf("expected persona default %q", "helpful assistant")
+	}
+	if cfg.Params["domain"].Default != nil {
+		t.Error("expected domain to have no default (required)")
+	}
+}
+
+func TestLoadAgent_serverRefParams(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "agent.yaml", `
+name: recall
+model: standard
+servers:
+  - name: memory
+    path: servers/memory.server.yaml
+    params:
+      namespace: "default-ns"
+    access:
+      allowlist: ["*"]
+prompt:
+  system: "You have memory access."
+output:
+  schema:
+    type: object
+    required: [result]
+    properties:
+      result: {type: string}
+`)
+	cfg, err := LoadAgent(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Servers[0].Params["namespace"] != "default-ns" {
+		t.Errorf("unexpected server ref param: %q", cfg.Servers[0].Params["namespace"])
+	}
+}
+
+func TestLoadToolServer_withParams(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "memory.server.yaml", `
+name: memory
+url: "http://localhost:9200"
+params:
+  namespace:
+    description: "The memory namespace"
+    default: "global"
+`)
+	cfg, err := LoadToolServer(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(cfg.Params))
+	}
+	if cfg.Params["namespace"].Description != "The memory namespace" {
+		t.Errorf("unexpected description: %q", cfg.Params["namespace"].Description)
+	}
+	if cfg.Params["namespace"].Default == nil || *cfg.Params["namespace"].Default != "global" {
+		t.Errorf("unexpected default: %v", cfg.Params["namespace"].Default)
+	}
+}
+
+func TestLoadWorkflow_stepParams(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workflow.yaml", `
+kind: workflow
+name: w
+version: "1.0.0"
+pipeline:
+  - id: chat
+    agent: agents/chat.agent.yaml
+    params:
+      agent:
+        persona: "support rep"
+        domain: "billing"
+      server:
+        memory:
+          namespace: "user-123"
+`)
+	cfg, err := LoadWorkflow(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	step := cfg.Pipeline[0]
+	if step.Params.Agent["persona"] != "support rep" {
+		t.Errorf("unexpected agent param: %v", step.Params.Agent["persona"])
+	}
+	if step.Params.Server["memory"]["namespace"] != "user-123" {
+		t.Errorf("unexpected server param: %v", step.Params.Server["memory"]["namespace"])
+	}
+}
+
 // --- StripVersion ---
 
 func TestStripVersion(t *testing.T) {

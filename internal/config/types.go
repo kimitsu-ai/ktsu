@@ -1,5 +1,23 @@
 package config
 
+// ParamDecl declares a named parameter on an agent or server.
+// Default nil means the param is required.
+type ParamDecl struct {
+	Description string  `yaml:"description"`
+	Default     *string `yaml:"default,omitempty"`
+}
+
+// PromptConfig holds the LLM-facing prompt configuration for an agent.
+type PromptConfig struct {
+	System string `yaml:"system"`
+}
+
+// StepParams holds namespaced parameter values for a workflow pipeline step.
+type StepParams struct {
+	Agent  map[string]any            `yaml:"agent,omitempty"`
+	Server map[string]map[string]any `yaml:"server,omitempty"`
+}
+
 // WorkflowConfig represents a workflow.yaml file (kind: workflow)
 type WorkflowConfig struct {
 	Kind        string         `yaml:"kind"`
@@ -12,7 +30,6 @@ type WorkflowConfig struct {
 }
 
 // WorkflowInput declares the expected input schema for a workflow.
-// The orchestrator validates incoming invoke payloads against this schema.
 type WorkflowInput struct {
 	Schema map[string]interface{} `yaml:"schema,omitempty"`
 }
@@ -27,29 +44,26 @@ type PipelineStep struct {
 	DependsOn           []string               `yaml:"depends_on,omitempty"`
 	Condition           string                 `yaml:"condition,omitempty"`
 	ConfidenceThreshold float64                `yaml:"confidence_threshold,omitempty"`
-	Params              map[string]interface{} `yaml:"params,omitempty"`
+	Params              StepParams             `yaml:"params,omitempty"`
 	Model               *ModelSpec             `yaml:"model,omitempty"`
 	Consolidation       string                 `yaml:"consolidation,omitempty"`
 	Output              *OutputSpec            `yaml:"output,omitempty"`
 }
 
 // ForEachSpec configures fanout iteration for an agent step.
-// The agent is invoked once per item in the array resolved from From.
 type ForEachSpec struct {
 	From        string `yaml:"from"`
 	MaxItems    int    `yaml:"max_items,omitempty"`
 	Concurrency int    `yaml:"concurrency,omitempty"`
-	MaxFailures int    `yaml:"max_failures,omitempty"` // 0=fail-fast (default), -1=unlimited, N=tolerate up to N
+	MaxFailures int    `yaml:"max_failures,omitempty"`
 }
 
-// WebhookSpec declares an HTTP webhook call made by the orchestrator when this step runs.
-// The body values are JMESPath expressions evaluated against the accumulated step outputs.
-// The URL may use env:VAR_NAME to resolve from the environment at runtime.
+// WebhookSpec declares an HTTP webhook call.
 type WebhookSpec struct {
-	URL       string                 `yaml:"url"`
-	Method    string                 `yaml:"method,omitempty"` // default: POST
-	Body      map[string]interface{} `yaml:"body,omitempty"`
-	TimeoutS  int                    `yaml:"timeout_s,omitempty"` // default: 30
+	URL      string                 `yaml:"url"`
+	Method   string                 `yaml:"method,omitempty"`
+	Body     map[string]interface{} `yaml:"body,omitempty"`
+	TimeoutS int                    `yaml:"timeout_s,omitempty"`
 }
 
 type TransformSpec struct {
@@ -77,22 +91,25 @@ type OutputSpec struct {
 	Schema map[string]interface{} `yaml:"schema"`
 }
 
-// AgentConfig represents an agent config block
+// AgentConfig represents an agent config block.
+// prompt.system replaces the former top-level system field.
 type AgentConfig struct {
-	Name        string      `yaml:"name"`
-	Description string      `yaml:"description"`
-	Model       string      `yaml:"model"`
-	Servers     []ServerRef `yaml:"servers"`
-	SubAgents   []string    `yaml:"sub_agents"`
-	System      string      `yaml:"system"`
-	MaxTurns    int         `yaml:"max_turns"`
-	Output      *OutputSpec `yaml:"output,omitempty"`
+	Name        string               `yaml:"name"`
+	Description string               `yaml:"description"`
+	Model       string               `yaml:"model"`
+	Params      map[string]ParamDecl `yaml:"params,omitempty"`
+	Prompt      PromptConfig         `yaml:"prompt"`
+	Servers     []ServerRef          `yaml:"servers"`
+	SubAgents   []string             `yaml:"sub_agents"`
+	MaxTurns    int                  `yaml:"max_turns"`
+	Output      *OutputSpec          `yaml:"output,omitempty"`
 }
 
 type ServerRef struct {
-	Name   string       `yaml:"name"`
-	Path   string       `yaml:"path"` // for local servers
-	Access AccessConfig `yaml:"access"`
+	Name   string            `yaml:"name"`
+	Path   string            `yaml:"path"`
+	Params map[string]string `yaml:"params,omitempty"`
+	Access AccessConfig      `yaml:"access"`
 }
 
 type AccessConfig struct {
@@ -109,12 +126,12 @@ type EnvConfig struct {
 
 type ProviderConfig struct {
 	Name   string            `yaml:"name"`
-	Type   string            `yaml:"type"` // anthropic, openai, etc.
+	Type   string            `yaml:"type"`
 	Config map[string]string `yaml:"config"`
 }
 
 type StateConfig struct {
-	Driver string `yaml:"driver"` // sqlite, postgres
+	Driver string `yaml:"driver"`
 	DSN    string `yaml:"dsn"`
 }
 
@@ -127,7 +144,7 @@ type GatewayConfig struct {
 type ModelGroupConfig struct {
 	Name               string          `yaml:"name"`
 	Models             []string        `yaml:"models"`
-	Strategy           string          `yaml:"strategy"` // round_robin, cost_optimized
+	Strategy           string          `yaml:"strategy"`
 	DefaultTemperature float64         `yaml:"default_temperature,omitempty"`
 	Pricing            []PricingConfig `yaml:"pricing,omitempty"`
 }
@@ -143,10 +160,11 @@ type ServerManifest struct {
 	Servers []ToolServerConfig `yaml:"servers"`
 }
 
-// ToolServerConfig represents a tool server definition
+// ToolServerConfig represents a tool server definition.
 type ToolServerConfig struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-	URL         string `yaml:"url"`
-	Auth        string `yaml:"auth,omitempty"` // bearer token or "env:VAR_NAME"
+	Name        string               `yaml:"name"`
+	Description string               `yaml:"description"`
+	URL         string               `yaml:"url"`
+	Auth        string               `yaml:"auth,omitempty"`
+	Params      map[string]ParamDecl `yaml:"params,omitempty"`
 }
