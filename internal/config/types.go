@@ -30,6 +30,7 @@ type WorkflowConfig struct {
 }
 
 // WorkflowInput declares the expected input schema for a workflow.
+// The orchestrator validates incoming invoke payloads against this schema.
 type WorkflowInput struct {
 	Schema map[string]interface{} `yaml:"schema,omitempty"`
 }
@@ -55,15 +56,16 @@ type ForEachSpec struct {
 	From        string `yaml:"from"`
 	MaxItems    int    `yaml:"max_items,omitempty"`
 	Concurrency int    `yaml:"concurrency,omitempty"`
-	MaxFailures int    `yaml:"max_failures,omitempty"`
+	MaxFailures int    `yaml:"max_failures,omitempty"` // 0=fail-fast (default), -1=unlimited, N=tolerate up to N
 }
 
 // WebhookSpec declares an HTTP webhook call.
+// The body values are JMESPath expressions evaluated against the accumulated step outputs. The URL may use env:VAR_NAME to resolve from the environment at runtime.
 type WebhookSpec struct {
 	URL      string                 `yaml:"url"`
-	Method   string                 `yaml:"method,omitempty"`
+	Method   string                 `yaml:"method,omitempty"`   // default: POST
 	Body     map[string]interface{} `yaml:"body,omitempty"`
-	TimeoutS int                    `yaml:"timeout_s,omitempty"`
+	TimeoutS int                    `yaml:"timeout_s,omitempty"` // default: 30
 }
 
 type TransformSpec struct {
@@ -126,12 +128,12 @@ type EnvConfig struct {
 
 type ProviderConfig struct {
 	Name   string            `yaml:"name"`
-	Type   string            `yaml:"type"`
+	Type   string            `yaml:"type"` // anthropic, openai, etc.
 	Config map[string]string `yaml:"config"`
 }
 
 type StateConfig struct {
-	Driver string `yaml:"driver"`
+	Driver string `yaml:"driver"` // sqlite, postgres
 	DSN    string `yaml:"dsn"`
 }
 
@@ -144,7 +146,7 @@ type GatewayConfig struct {
 type ModelGroupConfig struct {
 	Name               string          `yaml:"name"`
 	Models             []string        `yaml:"models"`
-	Strategy           string          `yaml:"strategy"`
+	Strategy           string          `yaml:"strategy"` // round_robin, cost_optimized
 	DefaultTemperature float64         `yaml:"default_temperature,omitempty"`
 	Pricing            []PricingConfig `yaml:"pricing,omitempty"`
 }
