@@ -52,6 +52,28 @@ url: <string>          # base URL of the MCP server (HTTP/SSE)
 auth: <string>         # bearer token or env:VAR_NAME — omit if no auth required
 ```
 
+### Server Params
+
+Tool servers may declare parameters under `params:`. These are passed to the server as MCP initialization config when the agent runtime connects, allowing per-invocation configuration such as storage namespace or region.
+
+```yaml
+name: memory
+url: "http://localhost:9200"
+params:
+  namespace:
+    description: "Storage namespace for this connection"
+    default: "global"
+```
+
+Params are resolved in this order (last wins):
+1. Default declared in `server.yaml`
+2. `params` on the server reference in `agent.yaml`
+3. `params.server.<name>.*` in the workflow pipeline step
+
+Required params (no `default`) must be satisfied somewhere in this chain — a missing value is a boot error. Values support `env:VAR_NAME` syntax.
+
+**Note:** `auth` is separate from `params`. Auth is an HTTP Authorization header; params are MCP protocol-level config sent during the `initialize` handshake.
+
 ### Example
 
 ```yaml

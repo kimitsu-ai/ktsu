@@ -12,14 +12,25 @@ name: triage-agent               # identity — used in logs and metrics
 description: "..."               # optional
 model: standard                  # model group name from gateway.yaml
 max_turns: 10                    # max reasoning turns before forced conclusion; default: 10
-system: |
-  You are a triage agent. The full pipeline envelope is provided as JSON in the first user message.
-  Reference upstream step outputs as <step-id>.<field> (e.g. parse.intent).
-  Workflow input fields are under input.<field> (e.g. input.message).
+params:                          # declared parameters — required unless default is set
+  persona:
+    description: "The role this agent plays"
+    default: "triage specialist"
+  escalation_team:
+    description: "Team name for escalations — required, no default"
+
+prompt:
+  system: |
+    You are a {{persona}}. The full pipeline envelope is provided as JSON in the first user message.
+    Escalate critical issues to the {{escalation_team}} team.
+    Reference upstream step outputs as <step-id>.<field> (e.g. parse.intent).
+    Workflow input fields are under input.<field> (e.g. input.message).
 
 servers:                         # omit entirely for a toolless agent
   - name: wiki-search            # logical name — used in logs
     path: servers/wiki-search.server.yaml  # relative to project root
+    params:                      # values for this server's declared params
+      region: "us-east"
     access:
       allowlist:
         - wiki-search            # exact tool name (plain string)
@@ -54,10 +65,14 @@ output:
 | `description` | string | no | Human-readable description |
 | `model` | string | yes | Model group name from `gateway.yaml` |
 | `max_turns` | number | no | Max reasoning turns before forced conclusion; default: 10 |
-| `system` | string | yes | System prompt; reference upstream outputs as `<step-id>.<field>` and workflow input as `input.<field>` |
+| `params` | map | no | Declared parameters. Each entry requires `description`; `default` is optional. Params without a default are required — missing value is a boot error. Supports `env:VAR_NAME`. |
+| `params.<name>.description` | string | yes | Human-readable explanation of what the param controls |
+| `params.<name>.default` | string | no | Default value. Omit to make the param required. |
+| `prompt.system` | string | yes | System prompt. May reference declared params as `{{param_name}}`. |
 | `servers` | array | no | Tool servers this agent may call; omit for toolless agent |
 | `servers[].name` | string | yes | Logical name — used in logs |
 | `servers[].path` | string | yes | Path to `.server.yaml` file, relative to project root |
+| `servers[].params` | map | no | String values for this server's declared params. Overrides server defaults; can be overridden by workflow step `params.server.<name>.*`. Supports `env:VAR_NAME`. |
 | `servers[].access.allowlist` | string[] or object[] | yes | Permitted tools: exact name, `prefix-*`, or `*`. Each entry may be a plain string or an object `{name, require_approval}` to add an approval policy. |
 | `servers[].access.allowlist[].require_approval.on_reject` | string | yes (if require_approval set) | `fail` — step fails on rejection. `recover` — agent receives a rejection message and may try an alternative. |
 | `servers[].access.allowlist[].require_approval.timeout` | duration | no | Approval deadline (e.g. `30m`, `2h`). If no decision is received in time, `timeout_behavior` applies. |

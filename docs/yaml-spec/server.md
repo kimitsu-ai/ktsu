@@ -11,6 +11,10 @@ name: wiki-search                # identity — used in logs and error messages
 description: "..."               # optional
 url: "https://mcp.internal/wiki" # base URL of the MCP server (HTTP/SSE)
 auth: "env:WIKI_TOKEN"           # bearer token or env:VAR_NAME; omit if no auth required
+params:                          # optional — omit if server needs no configuration
+  region:
+    description: "AWS region to query"
+    default: "us-east-1"
 ```
 
 ## Fields
@@ -21,6 +25,11 @@ auth: "env:WIKI_TOKEN"           # bearer token or env:VAR_NAME; omit if no auth
 | `description` | string | no | Human-readable |
 | `url` | string | yes | Base URL of the MCP server (HTTP/SSE) |
 | `auth` | string | no | Bearer token or `env:VAR_NAME`; omit if no auth required |
+| `params` | map | no | Declared parameters passed as MCP initialization config when the runtime connects. Each entry requires `description`; `default` is optional. Params without a default are required. Supports `env:VAR_NAME` in defaults. |
+| `params.<name>.description` | string | yes | Human-readable explanation |
+| `params.<name>.default` | string | no | Default value. Omit to make the param required. |
+
+`auth` operates at the HTTP transport layer (Authorization header) and is separate from `params`, which are sent as MCP initialization config sent during the `initialize` handshake.
 
 ## Shipped Tool Servers
 

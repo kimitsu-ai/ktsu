@@ -27,10 +27,11 @@ pipeline:
   - id: parse                   # unique step ID — used in depends_on and body references
     agent: ktsu/secure-parser@1.0.0   # built-in: ktsu/<name>@<ver>
                                       # local:    ./agents/foo.agent.yaml  (optional @<ver>)
-    params:                     # parameters for built-in agents only
-      source_field: message
-      extract:
-        intent: { type: string, enum: [billing, technical, legal, other] }
+    params:
+      agent:                     # params.agent.* — values for the agent's declared params
+        source_field: message
+        extract:
+          intent: { type: string, enum: [billing, technical, legal, other] }
     model:                      # optional — overrides agent file's model group
       group: economy            # model group name from gateway.yaml
       max_tokens: 512
@@ -40,6 +41,16 @@ pipeline:
     agent: ./agents/triage.agent.yaml
     depends_on: [parse]         # step IDs this step waits for
     confidence_threshold: 0.7  # min ktsu_confidence; agent output schema must declare ktsu_confidence
+
+  - id: recall
+    agent: ./agents/recall.agent.yaml
+    params:
+      agent:
+        persona: "billing specialist"
+      server:
+        memory:                  # server name as declared in the agent file
+          namespace: "env:USER_NAMESPACE"
+    depends_on: [parse]
 
   # ── Agent step with fanout ────────────────────────────────────────────────
   - id: enrich
@@ -130,7 +141,8 @@ model_policy:
 | `agent` | string | yes | Built-in: `ktsu/<name>@<ver>`; local: `./agents/foo.agent.yaml` (optional `@<ver>`) |
 | `depends_on` | string[] | no | Step IDs to wait for; omit to receive workflow input |
 | `confidence_threshold` | number | no | Min `ktsu_confidence` required; agent output schema must declare `ktsu_confidence` |
-| `params` | object | no | Parameters for built-in agents (e.g. `ktsu/secure-parser`) |
+| `params.agent` | map | no | Values for the agent's declared params. Overrides agent-file defaults. Supports `env:VAR_NAME`. |
+| `params.server.<name>` | map | no | Values for the named server's declared params (`<name>` matches `servers[].name` in the agent file). Overrides agent-file server ref params and server defaults. Supports `env:VAR_NAME`. |
 | `model.group` | string | no | Overrides agent file's model group |
 | `model.max_tokens` | number | no | Token limit override |
 | `for_each.from` | string | no | JMESPath resolving to an array; runs agent once per item |
