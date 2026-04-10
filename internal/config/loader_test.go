@@ -405,3 +405,71 @@ func TestStripVersion(t *testing.T) {
 		}
 	}
 }
+
+// --- HubLockFile / HubManifest ---
+
+func TestLoadHubLock_roundTrip(t *testing.T) {
+	dir := t.TempDir()
+	lock := &HubLockFile{
+		Entries: []HubLockEntry{
+			{
+				Name:    "kyle/support-triage",
+				Version: "1.2.0",
+				Source:  "github.com/kyle/workflows",
+				Ref:     "v1.2.0",
+				SHA:     "abc123def456",
+				Cache:   filepath.Join(dir, "kyle/support-triage"),
+				Mutable: false,
+			},
+		},
+	}
+	path := filepath.Join(dir, "ktsuhub.lock.yaml")
+	if err := SaveHubLock(path, lock); err != nil {
+		t.Fatalf("SaveHubLock: %v", err)
+	}
+	got, err := LoadHubLock(path)
+	if err != nil {
+		t.Fatalf("LoadHubLock: %v", err)
+	}
+	if len(got.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got.Entries))
+	}
+	if got.Entries[0].Name != "kyle/support-triage" {
+		t.Errorf("expected name kyle/support-triage, got %q", got.Entries[0].Name)
+	}
+	if got.Entries[0].SHA != "abc123def456" {
+		t.Errorf("expected SHA abc123def456, got %q", got.Entries[0].SHA)
+	}
+}
+
+func TestLoadHubLock_missingFile(t *testing.T) {
+	_, err := LoadHubLock("/nonexistent/ktsuhub.lock.yaml")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestLoadHubManifest_roundTrip(t *testing.T) {
+	dir := t.TempDir()
+	content := `workflows:
+  - name: kyle/support-triage
+    version: "1.2.0"
+    description: "Triages support tickets"
+    tags: [support, nlp]
+    entrypoint: workflows/support-triage.workflow.yaml
+`
+	path := filepath.Join(dir, "ktsuhub.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	manifest, err := LoadHubManifest(path)
+	if err != nil {
+		t.Fatalf("LoadHubManifest: %v", err)
+	}
+	if len(manifest.Workflows) != 1 {
+		t.Fatalf("expected 1 workflow, got %d", len(manifest.Workflows))
+	}
+	if manifest.Workflows[0].Entrypoint != "workflows/support-triage.workflow.yaml" {
+		t.Errorf("unexpected entrypoint: %q", manifest.Workflows[0].Entrypoint)
+	}
+}
