@@ -748,9 +748,9 @@ pipeline:
 func TestHubCmd_disabledByDefault(t *testing.T) {
 	t.Setenv("KTSU_HUB_ENABLED", "")
 	root := rootCmd()
-	_, _, err := root.Find([]string{"hub"})
-	if err == nil {
-		t.Fatal("expected hub command to not be found when KTSU_HUB_ENABLED is unset")
+	cmd, _, _ := root.Find([]string{"hub"})
+	if cmd != root {
+		t.Fatalf("expected Find to return root (hub not registered), got %q", cmd.Use)
 	}
 }
 
