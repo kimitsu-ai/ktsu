@@ -129,7 +129,7 @@ ktsu start orchestrator --no-hub-lock
 ktsu validate --no-hub-lock
 ```
 
-Workflow names must be unique across all workspaces (local + installed). Duplicate names are a boot error.
+When the same workflow name appears in multiple workspaces, the primary workspace takes precedence, then additional workspaces in the order they are declared (first-match-wins, analogous to PATH resolution). The local project workspace always has highest priority over hub-installed packages.
 
 ---
 

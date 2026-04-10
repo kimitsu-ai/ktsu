@@ -1,14 +1,19 @@
 package hub
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kimitsu-ai/ktsu/internal/config"
 )
+
+// gitTimeout is the maximum duration allowed for any single git network operation.
+const gitTimeout = 2 * time.Minute
 
 // InstallOpts configures a hub install operation.
 type InstallOpts struct {
@@ -35,7 +40,9 @@ func Install(opts InstallOpts) error {
 	}
 
 	// Clone or fetch
+	freshClone := false
 	if _, statErr := os.Stat(cachePath); os.IsNotExist(statErr) {
+		freshClone = true
 		if err := gitClone(cloneURL, cachePath); err != nil {
 			return fmt.Errorf("git clone %s: %w", cloneURL, err)
 		}
@@ -58,10 +65,13 @@ func Install(opts InstallOpts) error {
 		return fmt.Errorf("git rev-parse HEAD: %w", err)
 	}
 
-	// Validate ktsuhub.yaml exists
+	// Validate ktsuhub.yaml exists. Only remove a freshly-cloned directory;
+	// never destroy an existing cache on a re-install.
 	manifestPath := filepath.Join(cachePath, "ktsuhub.yaml")
 	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
-		_ = os.RemoveAll(cachePath)
+		if freshClone {
+			_ = os.RemoveAll(cachePath)
+		}
 		return fmt.Errorf("ktsuhub.yaml not found in %s — not a valid ktsuhub package", source)
 	}
 
@@ -165,8 +175,11 @@ func gitCheckout(dir, ref string) error {
 }
 
 func gitRevParse(dir, ref string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", ref)
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", ref)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%w\n%s", err, out)
@@ -175,10 +188,13 @@ func gitRevParse(dir, ref string) (string, error) {
 }
 
 func gitRun(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w\n%s", err, out)
 	}

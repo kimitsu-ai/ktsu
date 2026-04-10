@@ -207,7 +207,14 @@ func hubInstallCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw := args[0]
-			target, ref, _ := strings.Cut(raw, "@")
+			// Only split on @ for non-URL targets. URLs (https://...) may contain @
+			// as part of the authority (e.g. user@host), not as a ref separator.
+			var target, ref string
+			if strings.Contains(raw, "://") {
+				target = raw
+			} else {
+				target, ref, _ = strings.Cut(raw, "@")
+			}
 			cd := cacheDir
 			if strings.HasPrefix(cd, "~/") {
 				if home, err := os.UserHomeDir(); err == nil {
