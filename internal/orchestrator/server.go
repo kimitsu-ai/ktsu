@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -27,11 +28,15 @@ import (
 
 // expandHome replaces a leading ~/ with the user's home directory.
 func expandHome(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
+	if !strings.HasPrefix(path, "~/") {
+		return path
 	}
-	return path
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("WARNING: expandHome: cannot resolve home directory: %v; using path as-is: %s", err, path)
+		return path
+	}
+	return filepath.Join(home, path[2:])
 }
 
 // defaultProjectDir returns "." when projectDir is empty.
@@ -75,14 +80,18 @@ func newServer(o *Orchestrator) (*server, error) {
 	// Auto-load ktsuhub.lock.yaml workspaces if present and not suppressed.
 	if !o.cfg.NoHubLock {
 		lockPath := filepath.Join(defaultProjectDir(o.cfg.ProjectDir), "ktsuhub.lock.yaml")
-		if lock, loadErr := config.LoadHubLock(lockPath); loadErr == nil {
+		lock, loadErr := config.LoadHubLock(lockPath)
+		if loadErr != nil {
+			if !errors.Is(loadErr, os.ErrNotExist) {
+				log.Printf("WARNING: ktsuhub.lock.yaml could not be parsed (hub workspaces skipped): %v", loadErr)
+			}
+		} else {
 			for _, entry := range lock.Entries {
 				o.cfg.Workspaces = append(o.cfg.Workspaces, Workspace{
 					ProjectDir: expandHome(entry.Cache),
 				})
 			}
 		}
-		// Ignore lock load errors (file may not exist — that's fine)
 	}
 
 	s := &server{

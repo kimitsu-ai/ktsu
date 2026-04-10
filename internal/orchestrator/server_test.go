@@ -610,6 +610,33 @@ pipeline: []
 	}
 }
 
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory available")
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"~/foo/bar", filepath.Join(home, "foo/bar")},
+		{"/absolute/path", "/absolute/path"},
+		{"relative/path", "relative/path"},
+		{"", ""},
+		// bare ~ (no trailing slash) — should NOT be expanded
+		{"~", "~"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := expandHome(tt.input)
+			if got != tt.want {
+				t.Errorf("expandHome(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestRuntimeDispatcher_Dispatch_contextCancellation verifies context cancellation unblocks
 // Dispatch with an error.
 func TestRuntimeDispatcher_Dispatch_contextCancellation(t *testing.T) {

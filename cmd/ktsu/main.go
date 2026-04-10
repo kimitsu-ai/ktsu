@@ -413,6 +413,11 @@ func startOrchestratorCmd() *cobra.Command {
 			}
 			var extraWorkspaces []orchestrator.Workspace
 			for _, ws := range workspaces {
+				if strings.HasPrefix(ws, "~/") {
+					if home, err := os.UserHomeDir(); err == nil {
+						ws = filepath.Join(home, ws[2:])
+					}
+				}
 				extraWorkspaces = append(extraWorkspaces, orchestrator.Workspace{ProjectDir: ws})
 			}
 
