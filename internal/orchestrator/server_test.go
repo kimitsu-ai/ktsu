@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -464,6 +466,147 @@ func TestRuntimeDispatcher_Dispatch_missingOutputSchema(t *testing.T) {
 	}
 	if runtimeCalled {
 		t.Error("runtime should not have been called when agent has no output schema")
+	}
+}
+
+func TestHandleInvoke_secondWorkspace(t *testing.T) {
+	ws1 := t.TempDir()
+	ws2 := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws1, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(ws2, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	wfYAML := `kind: workflow
+name: ws2-flow
+version: "1.0.0"
+pipeline:
+  - id: s1
+    transform:
+      inputs: [{from: input}]
+      ops: [{set: {output: "ok"}}]
+`
+	if err := os.WriteFile(filepath.Join(ws2, "workflows", "ws2-flow.workflow.yaml"), []byte(wfYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	o := New(Config{
+		WorkflowDir: filepath.Join(ws1, "workflows"),
+		ProjectDir:  ws1,
+		Workspaces: []Workspace{
+			{ProjectDir: ws2},
+		},
+	})
+	srv, err := newServer(o)
+	if err != nil {
+		t.Fatalf("newServer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/invoke/ws2-flow", strings.NewReader("{}"))
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleInvoke_lockAutoLoad(t *testing.T) {
+	// Primary workspace (no workflows)
+	primary := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(primary, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hub-installed workspace
+	hubWs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(hubWs, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wfYAML := `kind: workflow
+name: hub-flow
+version: "1.0.0"
+pipeline: []
+`
+	if err := os.WriteFile(filepath.Join(hubWs, "workflows", "hub-flow.workflow.yaml"), []byte(wfYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write ktsuhub.lock.yaml in primary
+	lockContent := fmt.Sprintf(`entries:
+  - name: testorg/hub-flow
+    source: github.com/testorg/hub-flow
+    sha: abc123
+    cache: %s
+    mutable: false
+`, hubWs)
+	if err := os.WriteFile(filepath.Join(primary, "ktsuhub.lock.yaml"), []byte(lockContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	o := New(Config{
+		WorkflowDir: filepath.Join(primary, "workflows"),
+		ProjectDir:  primary,
+		// NoHubLock: false (default) — should auto-load
+	})
+	srv, err := newServer(o)
+	if err != nil {
+		t.Fatalf("newServer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/invoke/hub-flow", strings.NewReader("{}"))
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 (hub-flow found via lock), got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleInvoke_noHubLock(t *testing.T) {
+	primary := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(primary, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	hubWs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(hubWs, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wfYAML := `kind: workflow
+name: hub-flow
+version: "1.0.0"
+pipeline: []
+`
+	os.WriteFile(filepath.Join(hubWs, "workflows", "hub-flow.workflow.yaml"), []byte(wfYAML), 0o644)
+
+	lockContent := fmt.Sprintf(`entries:
+  - name: testorg/hub-flow
+    source: github.com/testorg/hub-flow
+    sha: abc123
+    cache: %s
+    mutable: false
+`, hubWs)
+	os.WriteFile(filepath.Join(primary, "ktsuhub.lock.yaml"), []byte(lockContent), 0o644)
+
+	o := New(Config{
+		WorkflowDir: filepath.Join(primary, "workflows"),
+		ProjectDir:  primary,
+		NoHubLock:   true, // should NOT load the lock
+	})
+	srv, err := newServer(o)
+	if err != nil {
+		t.Fatalf("newServer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/invoke/hub-flow", strings.NewReader("{}"))
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 (lock suppressed), got %d: %s", w.Code, w.Body.String())
 	}
 }
 

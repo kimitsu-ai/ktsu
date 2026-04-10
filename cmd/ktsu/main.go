@@ -389,6 +389,8 @@ func startOrchestratorCmd() *cobra.Command {
 	var envPath, workflowDir, host, runtimeURL, gatewayURL, ownURL, projectDir, apiKey string
 	var storeType, dbPath string
 	var port int
+	var workspaces []string
+	var noHubLock bool
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
 		Short: "Start the Kimitsu orchestrator",
@@ -409,6 +411,11 @@ func startOrchestratorCmd() *cobra.Command {
 				}
 				orchOwnURL = fmt.Sprintf("http://%s:%d", h, port)
 			}
+			var extraWorkspaces []orchestrator.Workspace
+			for _, ws := range workspaces {
+				extraWorkspaces = append(extraWorkspaces, orchestrator.Workspace{ProjectDir: ws})
+			}
+
 			o := orchestrator.New(orchestrator.Config{
 				EnvPath:     envPath,
 				Env:         envCfg,
@@ -422,6 +429,8 @@ func startOrchestratorCmd() *cobra.Command {
 				APIKey:      apiKey,
 				StoreType:   state.StoreType(storeType),
 				StoreDSN:    dbPath,
+				Workspaces:  extraWorkspaces,
+				NoHubLock:   noHubLock,
 			})
 			log.Printf("starting %s", o)
 			return o.Start(signalCtx())
@@ -452,6 +461,8 @@ func startOrchestratorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dbPath, "db-path",
 		envOr("KTSU_DB_PATH", "ktsu.db"),
 		"orchestrator database path for sqlite (env: KTSU_DB_PATH)")
+	cmd.Flags().StringArrayVar(&workspaces, "workspace", nil, "additional workspace root (repeatable)")
+	cmd.Flags().BoolVar(&noHubLock, "no-hub-lock", false, "ignore ktsuhub.lock.yaml even if present")
 	return cmd
 }
 

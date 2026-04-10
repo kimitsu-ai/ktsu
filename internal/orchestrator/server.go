@@ -25,6 +25,15 @@ import (
 	"github.com/kimitsu-ai/ktsu/pkg/types"
 )
 
+// expandHome replaces a leading ~/ with the user's home directory.
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
+
 // defaultProjectDir returns "." when projectDir is empty.
 func defaultProjectDir(d string) string {
 	if d == "" {
@@ -61,6 +70,19 @@ func newServer(o *Orchestrator) (*server, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("init store: %w", err)
+	}
+
+	// Auto-load ktsuhub.lock.yaml workspaces if present and not suppressed.
+	if !o.cfg.NoHubLock {
+		lockPath := filepath.Join(defaultProjectDir(o.cfg.ProjectDir), "ktsuhub.lock.yaml")
+		if lock, loadErr := config.LoadHubLock(lockPath); loadErr == nil {
+			for _, entry := range lock.Entries {
+				o.cfg.Workspaces = append(o.cfg.Workspaces, Workspace{
+					ProjectDir: expandHome(entry.Cache),
+				})
+			}
+		}
+		// Ignore lock load errors (file may not exist — that's fine)
 	}
 
 	s := &server{
@@ -197,7 +219,11 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		input = map[string]interface{}{}
 	}
 
-	wfPath := filepath.Join(s.o.cfg.WorkflowDir, workflow+".workflow.yaml")
+	wfPath, projDir, err := s.resolveWorkflow(workflow)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("workflow not found: %s", workflow), http.StatusNotFound)
+		return
+	}
 	wf, err := config.LoadWorkflow(wfPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("workflow not found: %s", workflow), http.StatusNotFound)
@@ -209,11 +235,24 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runID := generateRunID()
+	// Build a per-request runner with the workspace-specific projectDir.
+	var execRunner *runner.Runner
+	if s.o.cfg.RuntimeURL != "" {
+		execRunner = runner.NewWithDispatcher(s.store, &runtimeDispatcher{
+			runtimeURL:       s.o.cfg.RuntimeURL,
+			ownURL:           s.o.cfg.OwnURL,
+			projectDir:       projDir,
+			pendingMu:        &s.pendingMu,
+			pendingCallbacks: s.pendingCallbacks,
+		})
+	} else {
+		execRunner = s.runner
+	}
 
+	runID := generateRunID()
 	go func() {
 		ctx := context.Background()
-		if err := s.runner.Execute(ctx, workflow, runID, wf, input); err != nil {
+		if err := execRunner.Execute(ctx, workflow, runID, wf, input); err != nil {
 			s.logf("run %s failed: %v", runID, err)
 		}
 	}()
@@ -221,6 +260,28 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{"run_id": runID, "status": "accepted"})
+}
+
+// resolveWorkflow searches all workspaces for a workflow YAML file.
+// Returns the file path and the project dir of the owning workspace.
+func (s *server) resolveWorkflow(name string) (wfPath, projectDir string, err error) {
+	// Check primary workspace first
+	primary := filepath.Join(s.o.cfg.WorkflowDir, name+".workflow.yaml")
+	if _, statErr := os.Stat(primary); statErr == nil {
+		return primary, defaultProjectDir(s.o.cfg.ProjectDir), nil
+	}
+	// Check additional workspaces
+	for _, ws := range s.o.cfg.Workspaces {
+		wfDir := ws.WorkflowDir
+		if wfDir == "" {
+			wfDir = filepath.Join(ws.ProjectDir, "workflows")
+		}
+		p := filepath.Join(wfDir, name+".workflow.yaml")
+		if _, statErr := os.Stat(p); statErr == nil {
+			return p, defaultProjectDir(ws.ProjectDir), nil
+		}
+	}
+	return "", "", fmt.Errorf("workflow not found: %s", name)
 }
 
 // generateRunID creates a random run identifier.

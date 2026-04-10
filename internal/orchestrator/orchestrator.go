@@ -9,6 +9,13 @@ import (
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
 )
 
+// Workspace pairs a project root with its workflow directory.
+// WorkflowDir defaults to ProjectDir/workflows if empty.
+type Workspace struct {
+	ProjectDir  string
+	WorkflowDir string
+}
+
 type Config struct {
 	EnvPath     string
 	Env         *config.EnvConfig
@@ -23,6 +30,8 @@ type Config struct {
 	StoreType   state.StoreType // "memory" (default), "sqlite"
 	StoreDSN    string          // database path for sqlite (default: "ktsu.db")
 	Logger      *log.Logger
+	Workspaces  []Workspace // additional workspaces (from --workspace or ktsuhub.lock.yaml)
+	NoHubLock   bool        // skip ktsuhub.lock.yaml auto-load
 }
 
 type Orchestrator struct {
