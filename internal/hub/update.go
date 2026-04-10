@@ -2,8 +2,6 @@ package hub
 
 import (
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/kimitsu-ai/ktsu/internal/config"
 )
@@ -45,11 +43,12 @@ func Update(opts UpdateOpts) error {
 		if err := gitFetch(cacheDir); err != nil {
 			return fmt.Errorf("fetch %s: %w", entry.Name, err)
 		}
-		// Pull with ff-only; if that fails try a plain pull
-		if err := gitRun(cacheDir, "merge", "--ff-only", "origin/HEAD"); err != nil {
-			if pullErr := gitRun(cacheDir, "pull", "--ff-only"); pullErr != nil {
-				return fmt.Errorf("pull %s: %w", entry.Name, pullErr)
-			}
+		mergeRef := "origin/HEAD"
+		if entry.Ref != "" {
+			mergeRef = "origin/" + entry.Ref
+		}
+		if err := gitRun(cacheDir, "merge", "--ff-only", mergeRef); err != nil {
+			return fmt.Errorf("merge %s (%s): %w", entry.Name, mergeRef, err)
 		}
 
 		newSHA, err := gitRevParse(cacheDir, "HEAD")
@@ -79,13 +78,3 @@ func Update(opts UpdateOpts) error {
 	return nil
 }
 
-// expandHome replaces a leading "~" with the user's home directory.
-func expandHome(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			return home + path[1:]
-		}
-	}
-	return path
-}

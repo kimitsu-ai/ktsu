@@ -152,7 +152,9 @@ func TestUpdate_dryRun(t *testing.T) {
 			{Name: "testorg/hello", Source: repoDir, SHA: sha1, Cache: cacheDir, Mutable: true},
 		},
 	}
-	config.SaveHubLock(lockPath, lock)
+	if err := config.SaveHubLock(lockPath, lock); err != nil {
+		t.Fatalf("SaveHubLock: %v", err)
+	}
 
 	// Add commit to source
 	os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("v2"), 0o644)
@@ -167,5 +169,16 @@ func TestUpdate_dryRun(t *testing.T) {
 	after, _ := config.LoadHubLock(lockPath)
 	if after.Entries[0].SHA != sha1 {
 		t.Errorf("DryRun should not have updated SHA, got %q, want %q", after.Entries[0].SHA, sha1)
+	}
+
+	// Verify the local clone's HEAD was not advanced (fetch was skipped)
+	cloneHead := strings.TrimSpace(func() string {
+		cmd := exec.Command("git", "rev-parse", "HEAD")
+		cmd.Dir = cacheDir
+		out, _ := cmd.Output()
+		return string(out)
+	}())
+	if cloneHead != sha1 {
+		t.Errorf("DryRun should not have advanced cache HEAD: got %s, want %s", cloneHead, sha1)
 	}
 }
