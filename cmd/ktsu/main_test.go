@@ -499,7 +499,7 @@ func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-// TestNewProjectCmd_happyPath verifies that all 5 scaffold files are created and
+// TestNewProjectCmd_happyPath verifies that all 6 scaffold files are created and
 // the workflow YAML has the project name substituted.
 func TestNewProjectCmd_happyPath(t *testing.T) {
 	dir := t.TempDir()
@@ -527,6 +527,7 @@ func TestNewProjectCmd_happyPath(t *testing.T) {
 		"myproject/environments/dev.env.yaml",
 		"myproject/gateway.yaml",
 		"myproject/servers.yaml",
+		"myproject/ktsuhub.yaml",
 	}
 
 	output := buf.String()
