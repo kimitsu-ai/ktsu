@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -742,6 +744,79 @@ pipeline:
 	// Check for Mermaid Graph content
 	if !strings.Contains(output, "[agent-file]") {
 		t.Errorf("want agent file node in graph, got:\n%s", output)
+	}
+}
+
+func TestValidateCmd_multipleWorkspaces(t *testing.T) {
+	ws1 := t.TempDir()
+	ws2 := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws1, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(ws2, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	wf1 := `kind: workflow
+name: flow1
+version: "1.0.0"
+pipeline: []
+`
+	wf2 := `kind: workflow
+name: flow2
+version: "1.0.0"
+pipeline: []
+`
+	os.WriteFile(filepath.Join(ws1, "workflows", "flow1.workflow.yaml"), []byte(wf1), 0o644)
+	os.WriteFile(filepath.Join(ws2, "workflows", "flow2.workflow.yaml"), []byte(wf2), 0o644)
+
+	cmd := validateCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	if err := cmd.Flags().Set("project-dir", ws1); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Flags().Set("workspace", ws2); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateCmd_lockAutoLoad(t *testing.T) {
+	primary := t.TempDir()
+	hubWs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(primary, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(hubWs, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wf := `kind: workflow
+name: hub-flow
+version: "1.0.0"
+pipeline: []
+`
+	os.WriteFile(filepath.Join(hubWs, "workflows", "hub-flow.workflow.yaml"), []byte(wf), 0o644)
+
+	lockContent := fmt.Sprintf(`entries:
+  - name: testorg/hub-flow
+    source: github.com/testorg/hub-flow
+    sha: abc123
+    cache: %s
+    mutable: false
+`, hubWs)
+	os.WriteFile(filepath.Join(primary, "ktsuhub.lock.yaml"), []byte(lockContent), 0o644)
+
+	cmd := validateCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	if err := cmd.Flags().Set("project-dir", primary); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("unexpected error with lock auto-load: %v", err)
 	}
 }
 

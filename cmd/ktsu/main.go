@@ -632,6 +632,8 @@ func invokeCmd() *cobra.Command {
 
 func validateCmd() *cobra.Command {
 	var envPath, workflowDir, projectDir string
+	var workspaces []string
+	var noHubLock bool
 	cmd := &cobra.Command{
 		Use:   "validate [project-dir]",
 		Short: "Validate Kimitsu configuration files",
@@ -658,6 +660,17 @@ func validateCmd() *cobra.Command {
 				workflowDir = filepath.Join(projectDir, "workflows")
 			}
 
+			hasErrors := false
+			var allErrs []string
+			checkErrors := func(list []fileStatus) {
+				for _, f := range list {
+					if len(f.errors) > 0 {
+						hasErrors = true
+						allErrs = append(allErrs, fmt.Sprintf("%s: %v", f.path, f.errors))
+					}
+				}
+			}
+
 			if workflowDir != "" {
 				results, err := validateWorkflows(cmd, workflowDir, projectDir)
 
@@ -674,30 +687,65 @@ func validateCmd() *cobra.Command {
 					// Print grouped summary
 					printProjectSummary(cmd.OutOrStdout(), projectDir, summary)
 
-					// Check if there are any errors in the summary
-					hasErrors := false
-					var allErrs []string
-					checkErrors := func(list []fileStatus) {
-						for _, f := range list {
-							if len(f.errors) > 0 {
-								hasErrors = true
-								allErrs = append(allErrs, fmt.Sprintf("%s: %v", f.path, f.errors))
-							}
-						}
-					}
 					checkErrors(summary.workflows)
 					checkErrors(summary.agents)
 					checkErrors(summary.servers)
 					checkErrors(summary.systems)
-
-					if hasErrors {
-						return errors.New("validation failed")
-					}
 				}
 
 				if err != nil {
 					return err
 				}
+			}
+
+			// Auto-load workspaces from ktsuhub.lock.yaml unless suppressed.
+			if !noHubLock {
+				lockPath := filepath.Join(projectDir, "ktsuhub.lock.yaml")
+				lock, lockErr := config.LoadHubLock(lockPath)
+				if lockErr != nil {
+					if !errors.Is(lockErr, os.ErrNotExist) {
+						fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: ktsuhub.lock.yaml parse error: %v\n", lockErr)
+					}
+				} else {
+					for _, entry := range lock.Entries {
+						ws := entry.Cache
+						if strings.HasPrefix(ws, "~/") {
+							if home, err := os.UserHomeDir(); err == nil {
+								ws = filepath.Join(home, ws[2:])
+							}
+						}
+						workspaces = append(workspaces, ws)
+					}
+				}
+			}
+
+			// Validate each additional workspace.
+			for _, ws := range workspaces {
+				if strings.HasPrefix(ws, "~/") {
+					if home, err := os.UserHomeDir(); err == nil {
+						ws = filepath.Join(home, ws[2:])
+					}
+				}
+				wsWorkflowDir := filepath.Join(ws, "workflows")
+				if _, statErr := os.Stat(wsWorkflowDir); statErr != nil {
+					continue
+				}
+				results, err := validateWorkflows(cmd, wsWorkflowDir, ws)
+				if err != nil {
+					return err
+				}
+				if !showGraph {
+					summary := buildProjectSummary(ws, results)
+					printProjectSummary(cmd.OutOrStdout(), ws, summary)
+					checkErrors(summary.workflows)
+					checkErrors(summary.agents)
+					checkErrors(summary.servers)
+					checkErrors(summary.systems)
+				}
+			}
+
+			if hasErrors {
+				return errors.New("validation failed")
 			}
 
 			return nil
@@ -709,6 +757,8 @@ func validateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&projectDir, "project-dir",
 		envOr("KTSU_PROJECT_DIR", "."),
 		"project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
+	cmd.Flags().StringArrayVar(&workspaces, "workspace", nil, "additional workspace root to validate (repeatable)")
+	cmd.Flags().BoolVar(&noHubLock, "no-hub-lock", false, "ignore ktsuhub.lock.yaml even if present")
 	return cmd
 }
 
