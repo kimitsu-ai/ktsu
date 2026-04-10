@@ -719,7 +719,8 @@ func validateCmd() *cobra.Command {
 				}
 			}
 
-			// Validate each additional workspace.
+			// Validate additional workspaces. In graph mode, errors are not enforced
+			// (matching the primary workspace's graph-mode behavior — output only).
 			for _, ws := range workspaces {
 				if strings.HasPrefix(ws, "~/") {
 					if home, err := os.UserHomeDir(); err == nil {

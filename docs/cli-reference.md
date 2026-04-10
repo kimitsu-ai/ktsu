@@ -264,6 +264,8 @@ ktsu validate [project-dir] [flags]
 | `--env` | `""` | Path to environment config to validate |
 | `--workflow-dir` | `""` | Directory of `*.workflow.yaml` files (defaults to `<project-dir>/workflows`) |
 | `--graph` | `false` | Output Mermaid graph of workflows instead of text summary |
+| `--workspace` | *(none)* | Additional workspace root to include in validation. Repeatable. |
+| `--no-hub-lock` | `false` | Ignore `ktsuhub.lock.yaml` even if present |
 
 Note: `--workflow-dir` defaults to `""` and derives the path from `[project-dir]` at runtime — unlike `ktsu start orchestrator`, which defaults to `./workflows` literally.
 
@@ -288,6 +290,12 @@ ktsu validate --graph
 
 # Custom workflow directory
 ktsu validate --workflow-dir ./my-workflows
+
+# Include an additional workspace in validation
+ktsu validate --workspace ~/shared-workflows
+
+# Ignore hub lock file
+ktsu validate --no-hub-lock
 ```
 
 ---
