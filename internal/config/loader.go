@@ -94,7 +94,7 @@ func StripVersion(ref string) string {
 func LoadHubLock(path string) (*HubLockFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read hub lock: %w", err)
 	}
 	var lock HubLockFile
 	if err := yaml.Unmarshal(data, &lock); err != nil {
@@ -106,11 +106,11 @@ func LoadHubLock(path string) (*HubLockFile, error) {
 // SaveHubLock writes lock to path as YAML, creating parent directories as needed.
 func SaveHubLock(path string, lock *HubLockFile) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		return fmt.Errorf("mkdir: %w", err)
 	}
 	data, err := yaml.Marshal(lock)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal hub lock: %w", err)
 	}
 	return os.WriteFile(path, data, 0o644)
 }
@@ -119,7 +119,7 @@ func SaveHubLock(path string, lock *HubLockFile) error {
 func LoadHubManifest(path string) (*HubManifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read hub manifest: %w", err)
 	}
 	var manifest HubManifest
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
