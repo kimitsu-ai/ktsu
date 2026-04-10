@@ -37,6 +37,10 @@ func main() {
 	}
 }
 
+func hubEnabled() bool {
+	return os.Getenv("KTSU_HUB_ENABLED") == "true"
+}
+
 func rootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:          "ktsu",
@@ -49,7 +53,93 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(lockCmd())
 	root.AddCommand(newCmd())
 	root.AddCommand(orchestratorGroupCmd())
+	root.AddCommand(workflowCmd())
+	if hubEnabled() {
+		root.AddCommand(hubCmd())
+	}
 	return root
+}
+
+func workflowCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "workflow",
+		Short: "Commands for inspecting and working with workflow files",
+	}
+	return cmd
+}
+
+func hubCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "hub",
+		Short: "Interact with the ktsuhub workflow registry",
+	}
+	cmd.AddCommand(hubLoginCmd())
+	cmd.AddCommand(hubInstallCmd())
+	cmd.AddCommand(hubUpdateCmd())
+	cmd.AddCommand(hubPublishCmd())
+	cmd.AddCommand(hubSearchCmd())
+	return cmd
+}
+
+func hubLoginCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "login",
+		Short: "Authenticate with GitHub",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("hub login: not yet implemented")
+		},
+	}
+}
+
+func hubInstallCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "install <target>[@ref]",
+		Short: "Install a workflow from ktsuhub or a git repo",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("hub install: not yet implemented")
+		},
+	}
+	cmd.Flags().String("cache-dir", "~/.ktsu/cache", "local cache directory (env: KTSU_CACHE_DIR)")
+	cmd.Flags().Bool("dry-run", false, "preview without making changes")
+	return cmd
+}
+
+func hubUpdateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Re-resolve all entries in ktsuhub.lock.yaml",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("hub update: not yet implemented")
+		},
+	}
+	cmd.Flags().Bool("latest", false, "also update pinned version entries")
+	cmd.Flags().Bool("dry-run", false, "preview changes without writing")
+	return cmd
+}
+
+func hubPublishCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "publish",
+		Short: "Publish workflows to ktsuhub",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("hub publish: not yet implemented")
+		},
+	}
+}
+
+func hubSearchCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search ktsuhub from the CLI",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("hub search: not yet implemented")
+		},
+	}
+	cmd.Flags().String("tag", "", "filter by tag")
+	cmd.Flags().Int("limit", 10, "number of results to return")
+	return cmd
 }
 
 func orchestratorGroupCmd() *cobra.Command {

@@ -744,3 +744,24 @@ pipeline:
 		t.Errorf("want agent file node in graph, got:\n%s", output)
 	}
 }
+
+func TestHubCmd_disabledByDefault(t *testing.T) {
+	t.Setenv("KTSU_HUB_ENABLED", "")
+	root := rootCmd()
+	_, _, err := root.Find([]string{"hub"})
+	if err == nil {
+		t.Fatal("expected hub command to not be found when KTSU_HUB_ENABLED is unset")
+	}
+}
+
+func TestHubCmd_enabledWithFlag(t *testing.T) {
+	t.Setenv("KTSU_HUB_ENABLED", "true")
+	root := rootCmd()
+	cmd, _, err := root.Find([]string{"hub"})
+	if err != nil {
+		t.Fatalf("expected hub command to be found: %v", err)
+	}
+	if cmd.Use != "hub" {
+		t.Fatalf("expected hub command, got %q", cmd.Use)
+	}
+}
