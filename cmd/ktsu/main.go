@@ -1359,6 +1359,15 @@ model_groups: []
 `
 			serversTmpl := `servers: []
 `
+			ktsuhubTmpl := `workflows: []
+# Uncomment and fill in to publish this project to ktsuhub:
+# workflows:
+#   - name: {{.Name}}/my-workflow
+#     version: "1.0.0"
+#     description: ""
+#     tags: []
+#     entrypoint: workflows/{{.Name}}.workflow.yaml
+`
 
 			files := []fileSpec{
 				{path: filepath.Join(name, "workflows", name+".workflow.yaml"), tmplSrc: workflowTmpl},
@@ -1366,6 +1375,7 @@ model_groups: []
 				{path: filepath.Join(name, "environments", "dev.env.yaml"), tmplSrc: envTmpl},
 				{path: filepath.Join(name, "gateway.yaml"), tmplSrc: gatewayTmpl},
 				{path: filepath.Join(name, "servers.yaml"), tmplSrc: serversTmpl},
+				{path: filepath.Join(name, "ktsuhub.yaml"), tmplSrc: ktsuhubTmpl},
 			}
 
 			data := struct{ Name string }{Name: name}

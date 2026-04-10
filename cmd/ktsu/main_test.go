@@ -590,6 +590,36 @@ func TestNewProjectCmd_missingName(t *testing.T) {
 	}
 }
 
+func TestNewProjectCmd_createsKtsuhubYaml(t *testing.T) {
+	dir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	cmd := newProjectCmd()
+	cmd.SetOut(io.Discard)
+	if err := cmd.RunE(cmd, []string{"myapp"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hubYaml := filepath.Join(dir, "myapp", "ktsuhub.yaml")
+	if _, err := os.Stat(hubYaml); os.IsNotExist(err) {
+		t.Error("expected ktsuhub.yaml to be created by new project scaffold")
+	}
+	data, err := os.ReadFile(hubYaml)
+	if err != nil {
+		t.Fatalf("read ktsuhub.yaml: %v", err)
+	}
+	if !strings.Contains(string(data), "workflows:") {
+		t.Errorf("expected ktsuhub.yaml to contain 'workflows:', got:\n%s", data)
+	}
+}
+
 func TestValidateCmd_graphOutput(t *testing.T) {
 	dir := t.TempDir()
 
