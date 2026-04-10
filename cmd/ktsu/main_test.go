@@ -859,6 +859,9 @@ pipeline:
 		t.Fatalf("unexpected error: %v", err)
 	}
 	output := out.String()
+	if !strings.Contains(output, "workflows/hello.workflow.yaml") {
+		t.Errorf("expected workflow file in output, got:\n%s", output)
+	}
 	if !strings.Contains(output, "agents/greeter.agent.yaml") {
 		t.Errorf("expected agent in output, got:\n%s", output)
 	}

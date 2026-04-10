@@ -83,11 +83,14 @@ func workflowTreeCmd() *cobra.Command {
 				return err
 			}
 			if jsonOut {
-				data, _ := json.Marshal(paths)
+				data, err := json.Marshal(paths)
+				if err != nil {
+					return fmt.Errorf("marshal paths: %w", err)
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), string(data))
 				return nil
 			}
-			printWorkflowTree(cmd.OutOrStdout(), wfFile, paths, projectDir)
+			printWorkflowTree(cmd.OutOrStdout(), paths)
 			return nil
 		},
 	}
@@ -157,13 +160,12 @@ func buildWorkflowTree(wfFile, projectDir string) ([]string, error) {
 	return paths, nil
 }
 
-func printWorkflowTree(w io.Writer, wfFile string, paths []string, projectDir string) {
-	relWf, _ := filepath.Rel(projectDir, wfFile)
-	if relWf == "" {
-		relWf = wfFile
+func printWorkflowTree(w io.Writer, paths []string) {
+	if len(paths) == 0 {
+		return
 	}
-	fmt.Fprintln(w, relWf)
-	for i, p := range paths[1:] { // paths[0] is the workflow file itself
+	fmt.Fprintln(w, paths[0])
+	for i, p := range paths[1:] {
 		prefix := "├── "
 		if i == len(paths)-2 {
 			prefix = "└── "
