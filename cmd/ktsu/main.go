@@ -65,7 +65,111 @@ func workflowCmd() *cobra.Command {
 		Use:   "workflow",
 		Short: "Commands for inspecting and working with workflow files",
 	}
+	cmd.AddCommand(workflowTreeCmd())
 	return cmd
+}
+
+func workflowTreeCmd() *cobra.Command {
+	var projectDir string
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "tree <workflow-file>",
+		Short: "Emit the full dependency tree for a workflow",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			wfFile := args[0]
+			paths, err := buildWorkflowTree(wfFile, projectDir)
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				data, _ := json.Marshal(paths)
+				fmt.Fprintln(cmd.OutOrStdout(), string(data))
+				return nil
+			}
+			printWorkflowTree(cmd.OutOrStdout(), wfFile, paths, projectDir)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&projectDir, "project-dir", ".", "project root for resolving relative paths")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "output a flat JSON array of relative paths")
+	return cmd
+}
+
+func buildWorkflowTree(wfFile, projectDir string) ([]string, error) {
+	seen := map[string]bool{}
+	var paths []string
+
+	addPath := func(absPath string) {
+		rel, err := filepath.Rel(projectDir, absPath)
+		if err != nil {
+			rel = absPath
+		}
+		if !seen[rel] {
+			seen[rel] = true
+			paths = append(paths, rel)
+		}
+	}
+
+	abs, err := filepath.Abs(wfFile)
+	if err != nil {
+		return nil, err
+	}
+	addPath(abs)
+
+	wf, err := config.LoadWorkflow(abs)
+	if err != nil {
+		return nil, fmt.Errorf("load workflow: %w", err)
+	}
+
+	for _, step := range wf.Pipeline {
+		if step.Agent == "" {
+			continue
+		}
+		agentPath := step.Agent
+		if !filepath.IsAbs(agentPath) {
+			agentPath = filepath.Join(projectDir, agentPath)
+		}
+		addPath(agentPath)
+
+		agent, err := config.LoadAgent(agentPath)
+		if err != nil {
+			continue // skip unresolvable agents gracefully
+		}
+		for _, sref := range agent.Servers {
+			if sref.Path == "" {
+				continue
+			}
+			srvPath := sref.Path
+			if !filepath.IsAbs(srvPath) {
+				srvPath = filepath.Join(projectDir, srvPath)
+			}
+			addPath(srvPath)
+		}
+	}
+
+	// Include gateway.yaml if it exists
+	gw := filepath.Join(projectDir, "gateway.yaml")
+	if _, err := os.Stat(gw); err == nil {
+		addPath(gw)
+	}
+
+	return paths, nil
+}
+
+func printWorkflowTree(w io.Writer, wfFile string, paths []string, projectDir string) {
+	relWf, _ := filepath.Rel(projectDir, wfFile)
+	if relWf == "" {
+		relWf = wfFile
+	}
+	fmt.Fprintln(w, relWf)
+	for i, p := range paths[1:] { // paths[0] is the workflow file itself
+		prefix := "├── "
+		if i == len(paths)-2 {
+			prefix = "└── "
+		}
+		fmt.Fprintf(w, "%s%s\n", prefix, p)
+	}
 }
 
 func hubCmd() *cobra.Command {

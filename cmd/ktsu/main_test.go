@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -817,6 +818,102 @@ pipeline: []
 	}
 	if err := cmd.RunE(cmd, nil); err != nil {
 		t.Fatalf("unexpected error with lock auto-load: %v", err)
+	}
+}
+
+func TestWorkflowTreeCmd_outputsFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "workflows"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "agents"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "servers"), 0o755)
+
+	agentYAML := `name: greeter
+model: default
+max_turns: 1
+servers:
+  - name: wiki
+    path: servers/wiki.server.yaml
+`
+	serverYAML := `name: wiki
+description: wiki search
+`
+	wfYAML := `kind: workflow
+name: hello
+version: "1.0.0"
+pipeline:
+  - id: s1
+    agent: agents/greeter.agent.yaml
+`
+	os.WriteFile(filepath.Join(dir, "workflows", "hello.workflow.yaml"), []byte(wfYAML), 0o644)
+	os.WriteFile(filepath.Join(dir, "agents", "greeter.agent.yaml"), []byte(agentYAML), 0o644)
+	os.WriteFile(filepath.Join(dir, "servers", "wiki.server.yaml"), []byte(serverYAML), 0o644)
+	os.WriteFile(filepath.Join(dir, "gateway.yaml"), []byte("providers: []\nmodel_groups: []\n"), 0o644)
+
+	cmd := workflowTreeCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := cmd.Flags().Set("project-dir", dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, []string{filepath.Join(dir, "workflows", "hello.workflow.yaml")}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "agents/greeter.agent.yaml") {
+		t.Errorf("expected agent in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "servers/wiki.server.yaml") {
+		t.Errorf("expected server in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "gateway.yaml") {
+		t.Errorf("expected gateway.yaml in output, got:\n%s", output)
+	}
+}
+
+func TestWorkflowTreeCmd_jsonOutput(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "workflows"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "agents"), 0o755)
+
+	agentYAML := `name: greeter
+model: default
+max_turns: 1
+servers: []
+`
+	wfYAML := `kind: workflow
+name: hello
+version: "1.0.0"
+pipeline:
+  - id: s1
+    agent: agents/greeter.agent.yaml
+`
+	os.WriteFile(filepath.Join(dir, "workflows", "hello.workflow.yaml"), []byte(wfYAML), 0o644)
+	os.WriteFile(filepath.Join(dir, "agents", "greeter.agent.yaml"), []byte(agentYAML), 0o644)
+
+	cmd := workflowTreeCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := cmd.Flags().Set("project-dir", dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Flags().Set("json", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, []string{filepath.Join(dir, "workflows", "hello.workflow.yaml")}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var jsonPaths []string
+	if err := json.Unmarshal(out.Bytes(), &jsonPaths); err != nil {
+		t.Fatalf("expected JSON array, got: %s\nerr: %v", out.String(), err)
+	}
+	found := false
+	for _, p := range jsonPaths {
+		if p == "agents/greeter.agent.yaml" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected agents/greeter.agent.yaml in JSON output: %v", jsonPaths)
 	}
 }
 
