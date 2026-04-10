@@ -28,6 +28,7 @@ import (
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/dag"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
+	"github.com/kimitsu-ai/ktsu/internal/hub"
 	"github.com/kimitsu-ai/ktsu/internal/runtime"
 )
 
@@ -198,16 +199,34 @@ func hubLoginCmd() *cobra.Command {
 }
 
 func hubInstallCmd() *cobra.Command {
+	var cacheDir string
+	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "install <target>[@ref]",
 		Short: "Install a workflow from ktsuhub or a git repo",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("hub install: not yet implemented")
+			raw := args[0]
+			target, ref, _ := strings.Cut(raw, "@")
+			cd := cacheDir
+			if strings.HasPrefix(cd, "~/") {
+				if home, err := os.UserHomeDir(); err == nil {
+					cd = filepath.Join(home, cd[2:])
+				}
+			}
+			return hub.Install(hub.InstallOpts{
+				Target:   target,
+				Ref:      ref,
+				CacheDir: cd,
+				LockPath: "ktsuhub.lock.yaml",
+				DryRun:   dryRun,
+			})
 		},
 	}
-	cmd.Flags().String("cache-dir", "~/.ktsu/cache", "local cache directory (env: KTSU_CACHE_DIR)")
-	cmd.Flags().Bool("dry-run", false, "preview without making changes")
+	cmd.Flags().StringVar(&cacheDir, "cache-dir",
+		envOr("KTSU_CACHE_DIR", "~/.ktsu/cache"),
+		"local cache directory (env: KTSU_CACHE_DIR)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without making changes")
 	return cmd
 }
 
