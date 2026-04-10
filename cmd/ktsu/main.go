@@ -231,15 +231,20 @@ func hubInstallCmd() *cobra.Command {
 }
 
 func hubUpdateCmd() *cobra.Command {
+	var latest, dryRun bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Re-resolve all entries in ktsuhub.lock.yaml",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("hub update: not yet implemented")
+			return hub.Update(hub.UpdateOpts{
+				LockPath: "ktsuhub.lock.yaml",
+				Latest:   latest,
+				DryRun:   dryRun,
+			})
 		},
 	}
-	cmd.Flags().Bool("latest", false, "also update pinned version entries")
-	cmd.Flags().Bool("dry-run", false, "preview changes without writing")
+	cmd.Flags().BoolVar(&latest, "latest", false, "also update pinned version entries")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview changes without writing")
 	return cmd
 }
 
