@@ -126,7 +126,10 @@ func resolveTarget(target, ref string) (source, cloneURL string, mutable bool, e
 	}
 }
 
-// sourceToName converts a source string to a safe relative directory name.
+// sourceToName converts a source string to a safe relative directory name for the cache.
+// For local paths, only the last two path components are used — note that paths sharing
+// the same final two components will collide in the cache. Local paths are intended for
+// development and testing only.
 func sourceToName(source string) string {
 	s := strings.TrimPrefix(source, "https://")
 	s = strings.TrimPrefix(s, "http://")
@@ -164,9 +167,9 @@ func gitCheckout(dir, ref string) error {
 func gitRevParse(dir, ref string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", ref)
 	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w\n%s", err, out)
 	}
 	return strings.TrimSpace(string(out)), nil
 }

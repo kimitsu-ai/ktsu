@@ -46,13 +46,16 @@ version: "1.0.0"
 pipeline: []
 `), 0o644)
 
-	run := func(args ...string) {
+	runFatal := func(args ...string) {
+		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repoDir
-		cmd.CombinedOutput()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
 	}
-	run("add", ".")
-	run("commit", "-m", "init")
+	runFatal("add", ".")
+	runFatal("commit", "-m", "init")
 
 	cacheDir := t.TempDir()
 	lockPath := filepath.Join(t.TempDir(), "ktsuhub.lock.yaml")
