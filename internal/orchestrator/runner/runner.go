@@ -201,6 +201,12 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 				return failRun(stepRec, err.Error())
 			}
 
+			// Set Reflected flag for agent steps.
+			if step.Agent != "" {
+				reflected := stepMetrics.Reflected
+				stepRec.Reflected = &reflected
+			}
+
 			now := time.Now()
 			stepRec.Status = types.StepStatusComplete
 			stepRec.Output = cleanOutput

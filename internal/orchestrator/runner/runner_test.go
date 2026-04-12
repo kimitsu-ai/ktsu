@@ -1261,3 +1261,70 @@ func TestRunner_metrics_preserved_on_airlock_fail(t *testing.T) {
 		t.Error("expected non-zero CostUSD on airlock-failed step — metrics must be preserved")
 	}
 }
+
+// reflectingDispatcher always returns StepMetrics with Reflected=true.
+type reflectingDispatcher struct{}
+
+func (d *reflectingDispatcher) Dispatch(_ context.Context, _, _ string, _ *config.PipelineStep, _ map[string]interface{}) (map[string]interface{}, types.StepMetrics, error) {
+	return map[string]interface{}{"result": "done"}, types.StepMetrics{
+		LLMCalls:     2,
+		Reflected:    true,
+		ReflectCalls: 1,
+	}, nil
+}
+
+func TestRunner_agentStep_setsReflected(t *testing.T) {
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, &reflectingDispatcher{})
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "step-a",
+		Agent: "agents/foo.agent.yaml",
+	})
+
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-wf", "run-reflect", wf, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	step, err := store.GetStep(ctx, "run-reflect", "step-a")
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	if step.Reflected == nil {
+		t.Fatal("want Reflected non-nil for agent step, got nil")
+	}
+	if !*step.Reflected {
+		t.Errorf("want Reflected=true, got false")
+	}
+}
+
+func TestRunner_nonAgentStep_nilReflected(t *testing.T) {
+	// Use a webhook step — avoids needing to know valid transform ops.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer srv.Close()
+
+	store := state.NewMemStore()
+	runner := New(store)
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:      "hook",
+		Webhook: &config.WebhookSpec{URL: srv.URL},
+	})
+
+	ctx := context.Background()
+	if err := runner.Execute(ctx, "test-wf", "run-webhook", wf, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	step, err := store.GetStep(ctx, "run-webhook", "hook")
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	if step.Reflected != nil {
+		t.Errorf("want Reflected=nil for webhook step, got %v", step.Reflected)
+	}
+}
