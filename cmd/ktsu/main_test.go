@@ -744,3 +744,125 @@ pipeline:
 		t.Errorf("want agent file node in graph, got:\n%s", output)
 	}
 }
+
+func TestValidateCmd_reflect_whitespaceOnlyErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	agentContent := `
+name: my-agent
+model: standard
+prompt:
+  system: "You are helpful."
+reflect: "   "
+output:
+  schema:
+    type: object
+    properties:
+      result: { type: string }
+`
+	if err := writeFile(filepath.Join(dir, "agents/my.agent.yaml"), agentContent); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+	if err := writeFile(filepath.Join(dir, "workflows/wf.workflow.yaml"), `
+name: wf
+pipeline:
+  - id: step1
+    agent: agents/my.agent.yaml
+`); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.Flags().Set("workflow-dir", filepath.Join(dir, "workflows"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	if err := cmd.RunE(cmd, []string{dir}); err == nil {
+		t.Error("want error for whitespace-only reflect, got nil")
+	}
+	output := buf.String()
+	if !strings.Contains(output, "reflect prompt is empty or whitespace") {
+		t.Errorf("missing reflect error in output: %s", output)
+	}
+}
+
+func TestValidateCmd_reflect_validPromptPasses(t *testing.T) {
+	dir := t.TempDir()
+
+	agentContent := `
+name: my-agent
+model: standard
+prompt:
+  system: "You are helpful."
+reflect: |
+  Review your answer. Is it correct?
+output:
+  schema:
+    type: object
+    properties:
+      result: { type: string }
+`
+	if err := writeFile(filepath.Join(dir, "agents/my.agent.yaml"), agentContent); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+	if err := writeFile(filepath.Join(dir, "workflows/wf.workflow.yaml"), `
+name: wf
+pipeline:
+  - id: step1
+    agent: agents/my.agent.yaml
+`); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.Flags().Set("workflow-dir", filepath.Join(dir, "workflows"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	if err := cmd.RunE(cmd, []string{dir}); err != nil {
+		t.Errorf("want no error for valid reflect, got: %v (output: %s)", err, buf.String())
+	}
+}
+
+func TestValidateCmd_reflect_maxTurns1Warns(t *testing.T) {
+	dir := t.TempDir()
+
+	agentContent := `
+name: my-agent
+model: standard
+max_turns: 1
+prompt:
+  system: "You are helpful."
+reflect: |
+  Review your answer.
+output:
+  schema:
+    type: object
+    properties:
+      result: { type: string }
+`
+	if err := writeFile(filepath.Join(dir, "agents/my.agent.yaml"), agentContent); err != nil {
+		t.Fatalf("write agent: %v", err)
+	}
+	if err := writeFile(filepath.Join(dir, "workflows/wf.workflow.yaml"), `
+name: wf
+pipeline:
+  - id: step1
+    agent: agents/my.agent.yaml
+`); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.Flags().Set("workflow-dir", filepath.Join(dir, "workflows"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	// Should pass validation (not an error).
+	if err := cmd.RunE(cmd, []string{dir}); err != nil {
+		t.Errorf("want no error for reflect+max_turns:1, got: %v", err)
+	}
+}

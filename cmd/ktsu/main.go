@@ -741,6 +741,18 @@ func validateExternalRef(res *ValidationResult, path, kind string, projectDir st
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: agent has no output schema defined", path))
 			}
 
+			// Validate reflect field.
+			if strings.TrimSpace(agentCfg.Reflect) != "" {
+				// Valid reflect — warn if max_turns is 1.
+				if agentCfg.MaxTurns == 1 {
+					fmt.Fprintf(os.Stderr, "WARNING: %s: reflect declared with max_turns: 1 — reflect will operate on single-turn output\n", path)
+				}
+			} else if agentCfg.Reflect != "" {
+				// Set but whitespace-only.
+				ext.Errors = append(ext.Errors, "reflect prompt is empty or whitespace")
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: reflect prompt is empty or whitespace", path))
+			}
+
 			// Check for servers
 			for _, srv := range agentCfg.Servers {
 				if srv.Path != "" {
