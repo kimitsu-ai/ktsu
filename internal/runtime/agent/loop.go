@@ -355,3 +355,54 @@ func stripCodeFence(s string) string {
 	}
 	return strings.TrimSpace(s)
 }
+
+// checkFatalReservedFields returns an error if the output contains any fatal
+// ktsu reserved field set to true. Called on the draft before the reflect turn.
+func checkFatalReservedFields(output map[string]any) error {
+	if v, ok := output["ktsu_injection_attempt"]; ok {
+		if b, ok := v.(bool); ok && b {
+			return fmt.Errorf("injection attempt detected")
+		}
+	}
+	if v, ok := output["ktsu_untrusted_content"]; ok {
+		if b, ok := v.(bool); ok && b {
+			return fmt.Errorf("untrusted content detected")
+		}
+	}
+	if v, ok := output["ktsu_low_quality"]; ok {
+		if b, ok := v.(bool); ok && b {
+			return fmt.Errorf("low quality output")
+		}
+	}
+	if v, ok := output["ktsu_needs_human"]; ok {
+		if b, ok := v.(bool); ok && b {
+			return fmt.Errorf("needs_human_review")
+		}
+	}
+	return nil
+}
+
+// shouldReflect returns true if the reflect turn should run given the draft output,
+// the agent's output schema, and the step's confidence threshold.
+func shouldReflect(output map[string]any, outputSchema map[string]any, threshold float64) bool {
+	// If ktsu_confidence is not declared in the output schema, always reflect.
+	props, ok := outputSchema["properties"].(map[string]any)
+	if !ok {
+		return true
+	}
+	if _, hasConfidence := props["ktsu_confidence"]; !hasConfidence {
+		return true
+	}
+	// ktsu_confidence is declared. If no threshold set, always reflect.
+	if threshold <= 0 {
+		return true
+	}
+	// Reflect only if draft confidence is below threshold.
+	var confidence float64
+	if v, ok := output["ktsu_confidence"]; ok {
+		if f, ok := v.(float64); ok {
+			confidence = f
+		}
+	}
+	return confidence < threshold
+}
