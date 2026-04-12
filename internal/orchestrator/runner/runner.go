@@ -321,6 +321,7 @@ func (r *Runner) executeFanout(ctx context.Context, step *config.PipelineStep, s
 		totals.CostUSD += res.metrics.CostUSD
 		totals.LLMCalls += res.metrics.LLMCalls
 		totals.ToolCalls += res.metrics.ToolCalls
+		totals.ReflectCalls += res.metrics.ReflectCalls
 		if res.metrics.Reflected {
 			totals.Reflected = true
 		}

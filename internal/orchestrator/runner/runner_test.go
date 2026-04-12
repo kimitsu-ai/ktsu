@@ -1330,6 +1330,10 @@ func TestRunner_fanoutAgentStep_setsReflected(t *testing.T) {
 	if !*got.Reflected {
 		t.Errorf("want Reflected=true for fanout with reflecting sub-dispatches, got false")
 	}
+	// ReflectCalls should be the sum across all sub-dispatches (2 items × 1 call each).
+	if got.Metrics.ReflectCalls != 2 {
+		t.Errorf("want ReflectCalls=2 for fanout with 2 items, got %d", got.Metrics.ReflectCalls)
+	}
 }
 
 func TestRunner_nonAgentStep_nilReflected(t *testing.T) {
