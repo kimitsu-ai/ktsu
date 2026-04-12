@@ -357,13 +357,14 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 
 	// Load agent config and resolve tool servers when an agent path is provided.
 	var (
-		agentName    string
-		system       string
-		maxTurns     = 10
-		modelGroup   string
-		maxTokens    = 1024
-		toolServers  []agent.ToolServerSpec
-		outputSchema map[string]any
+		agentName     string
+		system        string
+		reflectPrompt string
+		maxTurns      = 10
+		modelGroup    string
+		maxTokens     = 1024
+		toolServers   []agent.ToolServerSpec
+		outputSchema  map[string]any
 	)
 
 	var zero types.StepMetrics
@@ -388,6 +389,13 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		system, interpErr = config.InterpolatePrompt(agentCfg.Prompt.System, resolvedAgentParams)
 		if interpErr != nil {
 			return nil, zero, fmt.Errorf("agent %s prompt interpolation: %w", agentCfg.Name, interpErr)
+		}
+		if agentCfg.Reflect != "" {
+			var reflectErr error
+			reflectPrompt, reflectErr = config.InterpolatePrompt(agentCfg.Reflect, resolvedAgentParams)
+			if reflectErr != nil {
+				return nil, zero, fmt.Errorf("agent %s reflect interpolation: %w", agentCfg.Name, reflectErr)
+			}
 		}
 		if agentCfg.MaxTurns > 0 {
 			maxTurns = agentCfg.MaxTurns
@@ -453,17 +461,24 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		}
 	}
 
+	var confidenceThreshold float64
+	if step != nil {
+		confidenceThreshold = step.ConfidenceThreshold
+	}
+
 	req := agent.InvokeRequest{
-		RunID:        runID,
-		StepID:       stepID,
-		AgentName:    agentName,
-		System:       system,
-		MaxTurns:     maxTurns,
-		Model:        agent.ModelSpec{Group: modelGroup, MaxTokens: maxTokens},
-		ToolServers:  toolServers,
-		Input:        input,
-		CallbackURL:  callbackURL,
-		OutputSchema: outputSchema,
+		RunID:               runID,
+		StepID:              stepID,
+		AgentName:           agentName,
+		System:              system,
+		Reflect:             reflectPrompt,
+		ConfidenceThreshold: confidenceThreshold,
+		MaxTurns:            maxTurns,
+		Model:               agent.ModelSpec{Group: modelGroup, MaxTokens: maxTokens},
+		ToolServers:         toolServers,
+		Input:               input,
+		CallbackURL:         callbackURL,
+		OutputSchema:        outputSchema,
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -491,12 +506,14 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 	case payload := <-ch:
 		m := payload.Metrics
 		metrics := types.StepMetrics{
-			DurationMS: m.DurationMS,
-			TokensIn:   m.TokensIn,
-			TokensOut:  m.TokensOut,
-			CostUSD:    m.CostUSD,
-			LLMCalls:   m.LLMCalls,
-			ToolCalls:  m.ToolCalls,
+			DurationMS:   m.DurationMS,
+			TokensIn:     m.TokensIn,
+			TokensOut:    m.TokensOut,
+			CostUSD:      m.CostUSD,
+			LLMCalls:     m.LLMCalls,
+			ToolCalls:    m.ToolCalls,
+			Reflected:    m.ReflectCalls > 0,
+			ReflectCalls: m.ReflectCalls,
 		}
 		if payload.Status == "failed" {
 			return nil, metrics, fmt.Errorf("agent step failed: %s", payload.Error)

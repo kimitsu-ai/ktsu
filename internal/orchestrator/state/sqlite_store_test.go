@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"testing"
 	"time"
@@ -92,4 +93,144 @@ func TestSQLiteStore_CRUD(t *testing.T) {
 	if env.RunID != "run-1" || len(env.Steps) != 1 || env.Totals.TokensIn != 10 {
 		t.Errorf("GetEnvelope mismatch: %+v", env)
 	}
+}
+
+func TestSQLiteStore_reflected_roundtrip(t *testing.T) {
+	ctx := context.Background()
+	dbFile := "test_reflected.db"
+	defer os.Remove(dbFile)
+
+	s, err := NewSQLiteStore(dbFile)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+
+	// Create a run for foreign-key satisfaction.
+	run := &types.Run{
+		ID:           "run-ref",
+		WorkflowName: "wf",
+		Status:       types.RunStatusRunning,
+		CreatedAt:    time.Now().Round(time.Second),
+		UpdatedAt:    time.Now().Round(time.Second),
+	}
+	if err := s.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	trueVal := true
+	falseVal := false
+	now := time.Now().Round(time.Second)
+
+	// Agent step that reflected.
+	stepReflected := &types.Step{
+		ID:        "s-reflected",
+		RunID:     "run-ref",
+		Status:    types.StepStatusComplete,
+		Output:    map[string]interface{}{"r": 1},
+		StartedAt: &now,
+		EndedAt:   &now,
+		Reflected: &trueVal,
+	}
+	if err := s.CreateStep(ctx, stepReflected); err != nil {
+		t.Fatalf("CreateStep reflected: %v", err)
+	}
+
+	// Agent step that did not reflect.
+	stepNotReflected := &types.Step{
+		ID:        "s-not-reflected",
+		RunID:     "run-ref",
+		Status:    types.StepStatusComplete,
+		Output:    map[string]interface{}{"r": 2},
+		StartedAt: &now,
+		EndedAt:   &now,
+		Reflected: &falseVal,
+	}
+	if err := s.CreateStep(ctx, stepNotReflected); err != nil {
+		t.Fatalf("CreateStep not-reflected: %v", err)
+	}
+
+	// Non-agent step (nil reflected).
+	stepNil := &types.Step{
+		ID:        "s-nil",
+		RunID:     "run-ref",
+		Status:    types.StepStatusComplete,
+		Output:    map[string]interface{}{"r": 3},
+		StartedAt: &now,
+		EndedAt:   &now,
+		Reflected: nil,
+	}
+	if err := s.CreateStep(ctx, stepNil); err != nil {
+		t.Fatalf("CreateStep nil: %v", err)
+	}
+
+	got, err := s.GetStep(ctx, "run-ref", "s-reflected")
+	if err != nil {
+		t.Fatalf("GetStep reflected: %v", err)
+	}
+	if got.Reflected == nil || *got.Reflected != true {
+		t.Errorf("s-reflected: want Reflected=true, got %v", got.Reflected)
+	}
+
+	got, err = s.GetStep(ctx, "run-ref", "s-not-reflected")
+	if err != nil {
+		t.Fatalf("GetStep not-reflected: %v", err)
+	}
+	if got.Reflected == nil || *got.Reflected != false {
+		t.Errorf("s-not-reflected: want Reflected=false, got %v", got.Reflected)
+	}
+
+	got, err = s.GetStep(ctx, "run-ref", "s-nil")
+	if err != nil {
+		t.Fatalf("GetStep nil: %v", err)
+	}
+	if got.Reflected != nil {
+		t.Errorf("s-nil: want Reflected=nil, got %v", got.Reflected)
+	}
+
+	// UpdateStep: flip reflected from true to false.
+	stepReflected.Reflected = &falseVal
+	if err := s.UpdateStep(ctx, stepReflected); err != nil {
+		t.Fatalf("UpdateStep: %v", err)
+	}
+	got, err = s.GetStep(ctx, "run-ref", "s-reflected")
+	if err != nil {
+		t.Fatalf("GetStep after update: %v", err)
+	}
+	if got.Reflected == nil || *got.Reflected != false {
+		t.Errorf("after update: want Reflected=false, got %v", got.Reflected)
+	}
+}
+
+func TestSQLiteStore_reflected_migration(t *testing.T) {
+	// Simulate a pre-existing DB without the reflected column.
+	dbFile := "test_migration.db"
+	defer os.Remove(dbFile)
+
+	// Create DB with old schema manually.
+	db, err := sql.Open("sqlite", dbFile)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE steps (
+		run_id TEXT,
+		id TEXT,
+		status TEXT,
+		error TEXT,
+		output TEXT,
+		metrics TEXT,
+		started_at DATETIME,
+		ended_at DATETIME,
+		PRIMARY KEY (run_id, id)
+	)`)
+	db.Close()
+	if err != nil {
+		t.Fatalf("create old schema: %v", err)
+	}
+
+	// Open via NewSQLiteStore — migration must succeed.
+	s, err := NewSQLiteStore(dbFile)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore migration failed: %v", err)
+	}
+	_ = s
 }

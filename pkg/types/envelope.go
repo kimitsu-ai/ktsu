@@ -38,8 +38,10 @@ type StepMetrics struct {
 	TokensIn   int     `json:"tokens_in"`
 	TokensOut  int     `json:"tokens_out"`
 	CostUSD    float64 `json:"cost_usd"`
-	LLMCalls   int     `json:"llm_calls"`
-	ToolCalls  int     `json:"tool_calls"`
+	LLMCalls    int     `json:"llm_calls"`
+	ToolCalls   int     `json:"tool_calls"`
+	Reflected   bool    `json:"reflected,omitempty"`
+	ReflectCalls int   `json:"reflect_calls,omitempty"`
 }
 
 // RunTotals aggregates metrics across all steps

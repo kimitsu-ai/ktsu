@@ -252,6 +252,52 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 			messages = append(messages, Message{Role: "user", Content: jsonCorrectionMessage})
 			continue
 		}
+
+		// Reflect turn: if a reflect prompt is set, check fatal fields on the draft
+		// then optionally run a single additional LLM pass before returning.
+		if req.Reflect != "" {
+			if err := checkFatalReservedFields(output); err != nil {
+				return nil, "", metrics, err
+			}
+			if shouldReflect(output, req.OutputSchema, req.ConfidenceThreshold) {
+				// The reflect context is input-only: only the original request input and
+				// the draft JSON are sent. Tool-call results from the reasoning loop are
+				// intentionally excluded — reflect is a schema/confidence check, not a
+				// reasoning replay.
+				draftJSON, _ := json.Marshal(output)
+				reflectMsgs := []Message{
+					{Role: "system", Content: req.Reflect},
+					{Role: "user", Content: string(inputJSON)},
+					{Role: "user", Content: string(draftJSON)},
+				}
+				gwResp, err := l.callGateway(ctx, req.RunID, req.StepID, req.Model.Group, req.Model.MaxTokens, reflectMsgs, nil)
+				if err != nil {
+					return nil, "", metrics, err
+				}
+				metrics.add(gwResp)
+				metrics.ReflectCalls++
+
+				reflected, parseErr := parseOutput(gwResp.Content)
+				if parseErr != nil {
+					// Free JSON correction: append bad response + correction message and retry once.
+					reflectMsgs = append(reflectMsgs,
+						Message{Role: "assistant", Content: gwResp.Content},
+						Message{Role: "user", Content: jsonCorrectionMessage},
+					)
+					gwResp2, err := l.callGateway(ctx, req.RunID, req.StepID, req.Model.Group, req.Model.MaxTokens, reflectMsgs, nil)
+					if err != nil {
+						return nil, gwResp.Content, metrics, fmt.Errorf("reflect correction gateway: %w", err)
+					}
+					metrics.add(gwResp2)
+					metrics.ReflectCalls++
+					reflected, parseErr = parseOutput(gwResp2.Content)
+					if parseErr != nil {
+						return nil, gwResp2.Content, metrics, fmt.Errorf("reflect_output_invalid")
+					}
+				}
+				output = reflected
+			}
+		}
 		return output, "", metrics, nil
 	}
 
@@ -354,4 +400,61 @@ func stripCodeFence(s string) string {
 		s = s[:idx]
 	}
 	return strings.TrimSpace(s)
+}
+
+// checkFatalReservedFields returns an error if the output contains any fatal
+// ktsu reserved field set to true. Called on the draft before the reflect turn.
+func checkFatalReservedFields(output map[string]any) error {
+	if v, ok := output["ktsu_injection_attempt"]; ok {
+		b, isBool := v.(bool)
+		if !isBool || b {
+			return fmt.Errorf("injection attempt detected")
+		}
+	}
+	if v, ok := output["ktsu_untrusted_content"]; ok {
+		b, isBool := v.(bool)
+		if !isBool || b {
+			return fmt.Errorf("untrusted content detected")
+		}
+	}
+	if v, ok := output["ktsu_low_quality"]; ok {
+		b, isBool := v.(bool)
+		if !isBool || b {
+			return fmt.Errorf("low quality output")
+		}
+	}
+	if v, ok := output["ktsu_needs_human"]; ok {
+		b, isBool := v.(bool)
+		if !isBool || b {
+			return fmt.Errorf("needs_human_review")
+		}
+	}
+	return nil
+}
+
+// shouldReflect returns true if the reflect turn should run given the draft output,
+// the agent's output schema, and the step's confidence threshold.
+func shouldReflect(output map[string]any, outputSchema map[string]any, threshold float64) bool {
+	// If ktsu_confidence is not declared in the output schema, always reflect.
+	props, ok := outputSchema["properties"].(map[string]any)
+	if !ok {
+		return true
+	}
+	if _, hasConfidence := props["ktsu_confidence"]; !hasConfidence {
+		return true
+	}
+	// ktsu_confidence is declared. If no threshold set, always reflect.
+	if threshold <= 0 {
+		return true
+	}
+	// If field is absent or not a float64, must reflect.
+	v, present := output["ktsu_confidence"]
+	if !present {
+		return true
+	}
+	f, ok := v.(float64)
+	if !ok {
+		return true
+	}
+	return f < threshold
 }

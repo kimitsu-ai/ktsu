@@ -73,4 +73,8 @@
 
 ---
 
+## Reflect Is a Single Pass
+
+When `reflect` is declared on an agent, the Agent Runtime performs one additional LLM call after the initial output draft. There is no loop, no reflection-on-reflection, and no further reflection on retried outputs beyond what the trigger logic dictates. The reflected output is a complete replacement of the draft — there is no merging.
+
 *Revised from design session — March 2026*

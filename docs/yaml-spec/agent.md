@@ -26,6 +26,13 @@ prompt:
     Reference upstream step outputs as <step-id>.<field> (e.g. parse.intent).
     Workflow input fields are under input.<field> (e.g. input.message).
 
+reflect: |
+  Review your classification above.
+  1. Is the category unambiguous given the input?
+  2. Is your confidence score justified by the evidence?
+  If you would classify differently, return a complete revised output.
+  If confident in your original output, return it unchanged.
+
 servers:                         # omit entirely for a toolless agent
   - name: wiki-search            # logical name — used in logs
     path: servers/wiki-search.server.yaml  # relative to project root
@@ -69,6 +76,7 @@ output:
 | `params.<name>.description` | string | yes | Human-readable explanation of what the param controls |
 | `params.<name>.default` | string | no | Default value. Omit to make the param required. |
 | `prompt.system` | string | yes | System prompt. May reference declared params as `{{param_name}}`. |
+| `reflect` | string | no | Reflection prompt. After the reasoning loop produces a draft output, the agent evaluates it in a single additional LLM turn before Air-Lock runs. The reflected output replaces the draft entirely. Supports `{{param}}` interpolation with the same resolved agent params as `prompt.system`. See Reflect Trigger Logic. |
 | `servers` | array | no | Tool servers this agent may call; omit for toolless agent |
 | `servers[].name` | string | yes | Logical name — used in logs |
 | `servers[].path` | string | yes | Path to `.server.yaml` file, relative to project root |
@@ -79,6 +87,18 @@ output:
 | `servers[].access.allowlist[].require_approval.timeout_behavior` | string | yes (if timeout set) | `fail` — step fails on timeout. `reject` — treated as a rejection (respects `on_reject`). |
 | `sub_agents` | string[] | no | Paths to `.agent.yaml` files this agent may invoke, relative to project root |
 | `output.schema` | JSON Schema | yes | Air-Lock validated before downstream steps can read this agent's output |
+
+## Reflect Trigger Logic
+
+The reflect turn does not always run. Whether it fires depends on `ktsu_confidence` in the output schema and `confidence_threshold` on the pipeline step.
+
+| `ktsu_confidence` in schema | `confidence_threshold` on step | Reflect runs when |
+|---|---|---|
+| No | — | Always |
+| Yes | Not set | Always |
+| Yes | Set | Draft confidence < threshold only |
+
+This creates a natural incentive: agents that declare `ktsu_confidence` and configure a threshold skip the reflect turn — and its token cost — on high-confidence outputs.
 
 ## Reserved Output Fields (`ktsu_` prefix)
 

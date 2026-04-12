@@ -201,6 +201,12 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 				return failRun(stepRec, err.Error())
 			}
 
+			// Set Reflected flag for agent steps.
+			if step.Agent != "" {
+				reflected := stepMetrics.Reflected
+				stepRec.Reflected = &reflected
+			}
+
 			now := time.Now()
 			stepRec.Status = types.StepStatusComplete
 			stepRec.Output = cleanOutput
@@ -315,6 +321,10 @@ func (r *Runner) executeFanout(ctx context.Context, step *config.PipelineStep, s
 		totals.CostUSD += res.metrics.CostUSD
 		totals.LLMCalls += res.metrics.LLMCalls
 		totals.ToolCalls += res.metrics.ToolCalls
+		totals.ReflectCalls += res.metrics.ReflectCalls
+		if res.metrics.Reflected {
+			totals.Reflected = true
+		}
 		if res.err != nil {
 			failCount++
 			if firstErr == nil {

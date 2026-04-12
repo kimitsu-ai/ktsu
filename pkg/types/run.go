@@ -51,4 +51,5 @@ type Step struct {
 	Error     string                 `json:"error,omitempty"`
 	Output    map[string]interface{} `json:"output,omitempty"`
 	Metrics   StepMetrics            `json:"metrics,omitempty"`
+	Reflected *bool                  `json:"reflected,omitempty"`
 }

@@ -858,3 +858,231 @@ func TestLoop_toolDiscoveryError(t *testing.T) {
 		t.Fatalf("expected failed, got %s", payload.Status)
 	}
 }
+
+func TestLoop_reflect_basicTurn(t *testing.T) {
+	// First gateway call: initial reasoning → draft output.
+	// Second gateway call: reflect turn → revised output.
+	responses := []map[string]any{
+		{
+			"content":        `{"category":"billing","ktsu_confidence":0.5}`,
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      100,
+			"tokens_out":     20,
+			"cost_usd":       0.001,
+		},
+		{
+			"content":        `{"category":"technical","ktsu_confidence":0.9}`,
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      80,
+			"tokens_out":     15,
+			"cost_usd":       0.0008,
+		},
+	}
+	var capturedBodies []map[string]any
+	idx := 0
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		capturedBodies = append(capturedBodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(responses[idx])
+		idx++
+	}))
+	defer gw.Close()
+
+	req := baseReq()
+	req.Reflect = "Review your answer. If it seems wrong, revise it."
+	req.OutputSchema = map[string]any{
+		"properties": map[string]any{
+			"category":        map[string]any{"type": "string"},
+			"ktsu_confidence": map[string]any{"type": "number"},
+		},
+	}
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "ok" {
+		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
+	}
+	// Reflected output replaces draft
+	if payload.Output["category"] != "technical" {
+		t.Errorf("expected reflected category technical, got %v", payload.Output["category"])
+	}
+	if payload.Metrics.ReflectCalls != 1 {
+		t.Errorf("expected 1 reflect call, got %d", payload.Metrics.ReflectCalls)
+	}
+	if payload.Metrics.LLMCalls != 2 {
+		t.Errorf("expected 2 total LLM calls, got %d", payload.Metrics.LLMCalls)
+	}
+	if len(capturedBodies) != 2 {
+		t.Fatalf("expected 2 gateway calls, got %d", len(capturedBodies))
+	}
+	// Reflect turn uses reflect prompt as system message
+	reflectMsgs, _ := capturedBodies[1]["messages"].([]any)
+	firstMsg, _ := reflectMsgs[0].(map[string]any)
+	if firstMsg["role"] != "system" || firstMsg["content"] != req.Reflect {
+		t.Errorf("reflect turn system message wrong: %v", firstMsg)
+	}
+}
+
+func TestLoop_reflect_skippedOnHighConfidence(t *testing.T) {
+	// Only one gateway call expected — reflect should be skipped.
+	gw := fakeGateway(t, []map[string]any{
+		{
+			"content":        `{"category":"billing","ktsu_confidence":0.95}`,
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      100,
+			"tokens_out":     20,
+			"cost_usd":       0.001,
+		},
+	})
+	defer gw.Close()
+
+	req := baseReq()
+	req.Reflect = "Review your answer."
+	req.ConfidenceThreshold = 0.8
+	req.OutputSchema = map[string]any{
+		"properties": map[string]any{
+			"category":        map[string]any{"type": "string"},
+			"ktsu_confidence": map[string]any{"type": "number"},
+		},
+	}
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "ok" {
+		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
+	}
+	if payload.Metrics.ReflectCalls != 0 {
+		t.Errorf("expected 0 reflect calls, got %d", payload.Metrics.ReflectCalls)
+	}
+}
+
+func TestLoop_reflect_jsonCorrectionSucceeds(t *testing.T) {
+	// Call 1: draft. Call 2: reflect → bad JSON. Call 3: correction → valid JSON.
+	responses := []map[string]any{
+		{"content": `{"category":"billing"}`, "model_resolved": "m", "tokens_in": 10, "tokens_out": 5, "cost_usd": 0.001},
+		{"content": "I cannot produce JSON right now.", "model_resolved": "m", "tokens_in": 10, "tokens_out": 5, "cost_usd": 0.001},
+		{"content": `{"category":"technical"}`, "model_resolved": "m", "tokens_in": 10, "tokens_out": 5, "cost_usd": 0.001},
+	}
+	gw := fakeGateway(t, responses)
+	defer gw.Close()
+
+	req := baseReq()
+	req.Reflect = "Review your answer."
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "ok" {
+		t.Fatalf("expected ok after reflect correction, got %s: %s", payload.Status, payload.Error)
+	}
+	if payload.Output["category"] != "technical" {
+		t.Errorf("expected technical, got %v", payload.Output["category"])
+	}
+	if payload.Metrics.ReflectCalls != 2 {
+		t.Errorf("expected 2 reflect calls (reflect + correction), got %d", payload.Metrics.ReflectCalls)
+	}
+}
+
+func TestLoop_reflect_jsonCorrectionFails(t *testing.T) {
+	// Call 1: draft. Call 2: reflect → bad JSON. Call 3: correction → still bad JSON.
+	responses := []map[string]any{
+		{"content": `{"category":"billing"}`, "model_resolved": "m", "tokens_in": 10, "tokens_out": 5, "cost_usd": 0.001},
+		{"content": "Not JSON.", "model_resolved": "m", "tokens_in": 10, "tokens_out": 5, "cost_usd": 0.001},
+		{"content": "Still not JSON.", "model_resolved": "m", "tokens_in": 10, "tokens_out": 5, "cost_usd": 0.001},
+	}
+	gw := fakeGateway(t, responses)
+	defer gw.Close()
+
+	req := baseReq()
+	req.Reflect = "Review your answer."
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "failed" {
+		t.Fatalf("expected failed, got %s", payload.Status)
+	}
+	if payload.Error != "reflect_output_invalid" {
+		t.Errorf("expected reflect_output_invalid error, got %s", payload.Error)
+	}
+	if payload.Metrics.ReflectCalls != 2 {
+		t.Errorf("expected 2 reflect calls, got %d", payload.Metrics.ReflectCalls)
+	}
+}
+
+func TestLoop_reflect_fatalReservedFieldAborts(t *testing.T) {
+	// Draft contains ktsu_injection_attempt: true — reflect must not run.
+	gw := fakeGateway(t, []map[string]any{
+		{
+			"content":        `{"category":"billing","ktsu_injection_attempt":true}`,
+			"model_resolved": "m",
+			"tokens_in":      50,
+			"tokens_out":     10,
+			"cost_usd":       0.001,
+		},
+	})
+	defer gw.Close()
+
+	req := baseReq()
+	req.Reflect = "Review your answer."
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "failed" {
+		t.Fatalf("expected failed, got %s", payload.Status)
+	}
+	if payload.Error != "injection attempt detected" {
+		t.Errorf("expected injection attempt error, got %s", payload.Error)
+	}
+	if payload.Metrics.ReflectCalls != 0 {
+		t.Errorf("expected 0 reflect calls, got %d", payload.Metrics.ReflectCalls)
+	}
+}
+
+func TestLoop_reflect_gatewayErrorOnReflect(t *testing.T) {
+	// Call 1: draft succeeds. Call 2: reflect gateway fails (server closes).
+	idx := 0
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if idx == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"content":        `{"category":"billing"}`,
+				"model_resolved": "m",
+				"tokens_in":      10,
+				"tokens_out":     5,
+				"cost_usd":       0.001,
+			})
+		} else {
+			// Simulate gateway failure on reflect call.
+			hj, ok := w.(http.Hijacker)
+			if ok {
+				conn, _, _ := hj.Hijack()
+				conn.Close()
+			}
+		}
+		idx++
+	}))
+	defer gw.Close()
+
+	req := baseReq()
+	req.Reflect = "Review your answer."
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "failed" {
+		t.Fatalf("expected failed on reflect gateway error, got %s", payload.Status)
+	}
+	// Should NOT be the reflect_output_invalid sentinel — should be a real error.
+	if payload.Error == "reflect_output_invalid" {
+		t.Errorf("expected real error, got the sentinel reflect_output_invalid")
+	}
+	if payload.Error == "" {
+		t.Errorf("expected non-empty error")
+	}
+}

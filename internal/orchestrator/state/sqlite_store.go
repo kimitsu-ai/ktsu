@@ -63,6 +63,35 @@ func (s *SQLiteStore) init() error {
 			return fmt.Errorf("init sqlite schema: %w", err)
 		}
 	}
+
+	// Migrate: add reflected column if it doesn't already exist.
+	rows, err := s.db.Query(`PRAGMA table_info(steps)`)
+	if err != nil {
+		return fmt.Errorf("check steps schema: %w", err)
+	}
+	hasReflected := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt interface{}
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("check steps schema: %w", err)
+		}
+		if name == "reflected" {
+			hasReflected = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("check steps schema: %w", err)
+	}
+	if !hasReflected {
+		if _, err := s.db.Exec(`ALTER TABLE steps ADD COLUMN reflected BOOLEAN`); err != nil {
+			return fmt.Errorf("migrate steps.reflected: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -116,9 +145,10 @@ func (s *SQLiteStore) CreateStep(ctx context.Context, step *types.Step) error {
 	output, _ := json.Marshal(step.Output)
 	metrics, _ := json.Marshal(step.Metrics)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO steps (run_id, id, status, error, output, metrics, started_at, ended_at) 
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		step.RunID, step.ID, step.Status, step.Error, string(output), string(metrics), step.StartedAt, step.EndedAt)
+		`INSERT INTO steps (run_id, id, status, error, output, metrics, started_at, ended_at, reflected)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		step.RunID, step.ID, step.Status, step.Error, string(output), string(metrics),
+		step.StartedAt, step.EndedAt, step.Reflected)
 	if err != nil {
 		return fmt.Errorf("create step: %w", err)
 	}
@@ -129,9 +159,10 @@ func (s *SQLiteStore) UpdateStep(ctx context.Context, step *types.Step) error {
 	output, _ := json.Marshal(step.Output)
 	metrics, _ := json.Marshal(step.Metrics)
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE steps SET status = ?, error = ?, output = ?, metrics = ?, started_at = ?, ended_at = ? 
+		`UPDATE steps SET status = ?, error = ?, output = ?, metrics = ?, started_at = ?, ended_at = ?, reflected = ?
 		 WHERE run_id = ? AND id = ?`,
-		step.Status, step.Error, string(output), string(metrics), step.StartedAt, step.EndedAt, step.RunID, step.ID)
+		step.Status, step.Error, string(output), string(metrics), step.StartedAt, step.EndedAt,
+		step.Reflected, step.RunID, step.ID)
 	if err != nil {
 		return fmt.Errorf("update step: %w", err)
 	}
@@ -143,15 +174,23 @@ func (s *SQLiteStore) UpdateStep(ctx context.Context, step *types.Step) error {
 }
 
 func (s *SQLiteStore) GetStep(ctx context.Context, runID, stepID string) (*types.Step, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT run_id, id, status, error, output, metrics, started_at, ended_at FROM steps WHERE run_id = ? AND id = ?`, runID, stepID)
+	row := s.db.QueryRowContext(ctx,
+		`SELECT run_id, id, status, error, output, metrics, started_at, ended_at, reflected
+		 FROM steps WHERE run_id = ? AND id = ?`, runID, stepID)
 	var step types.Step
 	var status, output, metrics string
-	err := row.Scan(&step.RunID, &step.ID, &status, &step.Error, &output, &metrics, &step.StartedAt, &step.EndedAt)
+	var reflected sql.NullBool
+	err := row.Scan(&step.RunID, &step.ID, &status, &step.Error, &output, &metrics,
+		&step.StartedAt, &step.EndedAt, &reflected)
 	if err == sql.ErrNoRows {
 		return nil, errStepNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get step: %w", err)
+	}
+	if reflected.Valid {
+		v := reflected.Bool
+		step.Reflected = &v
 	}
 	step.Status = types.StepStatus(status)
 	if output != "" {
@@ -164,7 +203,9 @@ func (s *SQLiteStore) GetStep(ctx context.Context, runID, stepID string) (*types
 }
 
 func (s *SQLiteStore) ListSteps(ctx context.Context, runID string) ([]*types.Step, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT run_id, id, status, error, output, metrics, started_at, ended_at FROM steps WHERE run_id = ?`, runID)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT run_id, id, status, error, output, metrics, started_at, ended_at, reflected
+		 FROM steps WHERE run_id = ?`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("list steps query: %w", err)
 	}
@@ -174,8 +215,14 @@ func (s *SQLiteStore) ListSteps(ctx context.Context, runID string) ([]*types.Ste
 	for rows.Next() {
 		var step types.Step
 		var status, output, metrics string
-		if err := rows.Scan(&step.RunID, &step.ID, &status, &step.Error, &output, &metrics, &step.StartedAt, &step.EndedAt); err != nil {
+		var reflected sql.NullBool
+		if err := rows.Scan(&step.RunID, &step.ID, &status, &step.Error, &output, &metrics,
+			&step.StartedAt, &step.EndedAt, &reflected); err != nil {
 			return nil, fmt.Errorf("list steps scan: %w", err)
+		}
+		if reflected.Valid {
+			v := reflected.Bool
+			step.Reflected = &v
 		}
 		step.Status = types.StepStatus(status)
 		if output != "" {
