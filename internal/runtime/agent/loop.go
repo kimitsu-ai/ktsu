@@ -252,6 +252,48 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 			messages = append(messages, Message{Role: "user", Content: jsonCorrectionMessage})
 			continue
 		}
+
+		// Reflect turn: if a reflect prompt is set, check fatal fields on the draft
+		// then optionally run a single additional LLM pass before returning.
+		if req.Reflect != "" {
+			if err := checkFatalReservedFields(output); err != nil {
+				return nil, "", metrics, err
+			}
+			if shouldReflect(output, req.OutputSchema, req.ConfidenceThreshold) {
+				draftJSON, _ := json.Marshal(output)
+				reflectMsgs := []Message{
+					{Role: "system", Content: req.Reflect},
+					{Role: "user", Content: string(inputJSON)},
+					{Role: "user", Content: string(draftJSON)},
+				}
+				gwResp, err := l.callGateway(ctx, req.RunID, req.StepID, req.Model.Group, req.Model.MaxTokens, reflectMsgs, nil)
+				if err != nil {
+					return nil, "", metrics, err
+				}
+				metrics.add(gwResp)
+				metrics.ReflectCalls++
+
+				reflected, parseErr := parseOutput(gwResp.Content)
+				if parseErr != nil {
+					// Free JSON correction: append bad response + correction message and retry once.
+					reflectMsgs = append(reflectMsgs,
+						Message{Role: "assistant", Content: gwResp.Content},
+						Message{Role: "user", Content: jsonCorrectionMessage},
+					)
+					gwResp2, err := l.callGateway(ctx, req.RunID, req.StepID, req.Model.Group, req.Model.MaxTokens, reflectMsgs, nil)
+					if err != nil {
+						return nil, gwResp.Content, metrics, fmt.Errorf("reflect_output_invalid")
+					}
+					metrics.add(gwResp2)
+					metrics.ReflectCalls++
+					reflected, parseErr = parseOutput(gwResp2.Content)
+					if parseErr != nil {
+						return nil, gwResp2.Content, metrics, fmt.Errorf("reflect_output_invalid")
+					}
+				}
+				output = reflected
+			}
+		}
 		return output, "", metrics, nil
 	}
 
