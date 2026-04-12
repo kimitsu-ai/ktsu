@@ -467,6 +467,37 @@ func TestRuntimeDispatcher_Dispatch_missingOutputSchema(t *testing.T) {
 	}
 }
 
+func TestHandleStepComplete_reflectCallsPassThrough(t *testing.T) {
+	s := newHandlerServer()
+	key := stepCallbackKey{"run-r", "step-r"}
+	ch := make(chan agent.CallbackPayload, 1)
+	s.pendingCallbacks[key] = ch
+
+	payload := agent.CallbackPayload{
+		RunID:  "run-r",
+		StepID: "step-r",
+		Status: "ok",
+		Output: map[string]any{"result": "reflected"},
+		Metrics: agent.Metrics{
+			LLMCalls:     3,
+			ReflectCalls: 1,
+		},
+	}
+
+	rr := postComplete(t, s, "run-r", "step-r", payload)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rr.Code)
+	}
+
+	received := <-ch
+	if received.Metrics.ReflectCalls != 1 {
+		t.Errorf("want ReflectCalls=1 in channel payload, got %d", received.Metrics.ReflectCalls)
+	}
+	if received.Metrics.LLMCalls != 3 {
+		t.Errorf("want LLMCalls=3, got %d", received.Metrics.LLMCalls)
+	}
+}
+
 // TestRuntimeDispatcher_Dispatch_contextCancellation verifies context cancellation unblocks
 // Dispatch with an error.
 func TestRuntimeDispatcher_Dispatch_contextCancellation(t *testing.T) {
