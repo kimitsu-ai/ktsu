@@ -260,6 +260,10 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 				return nil, "", metrics, err
 			}
 			if shouldReflect(output, req.OutputSchema, req.ConfidenceThreshold) {
+				// The reflect context is input-only: only the original request input and
+				// the draft JSON are sent. Tool-call results from the reasoning loop are
+				// intentionally excluded — reflect is a schema/confidence check, not a
+				// reasoning replay.
 				draftJSON, _ := json.Marshal(output)
 				reflectMsgs := []Message{
 					{Role: "system", Content: req.Reflect},
@@ -282,7 +286,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 					)
 					gwResp2, err := l.callGateway(ctx, req.RunID, req.StepID, req.Model.Group, req.Model.MaxTokens, reflectMsgs, nil)
 					if err != nil {
-						return nil, gwResp.Content, metrics, fmt.Errorf("reflect_output_invalid")
+						return nil, gwResp.Content, metrics, fmt.Errorf("reflect correction gateway: %w", err)
 					}
 					metrics.add(gwResp2)
 					metrics.ReflectCalls++

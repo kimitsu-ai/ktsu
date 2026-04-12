@@ -1043,3 +1043,46 @@ func TestLoop_reflect_fatalReservedFieldAborts(t *testing.T) {
 		t.Errorf("expected 0 reflect calls, got %d", payload.Metrics.ReflectCalls)
 	}
 }
+
+func TestLoop_reflect_gatewayErrorOnReflect(t *testing.T) {
+	// Call 1: draft succeeds. Call 2: reflect gateway fails (server closes).
+	idx := 0
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if idx == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"content":        `{"category":"billing"}`,
+				"model_resolved": "m",
+				"tokens_in":      10,
+				"tokens_out":     5,
+				"cost_usd":       0.001,
+			})
+		} else {
+			// Simulate gateway failure on reflect call.
+			hj, ok := w.(http.Hijacker)
+			if ok {
+				conn, _, _ := hj.Hijack()
+				conn.Close()
+			}
+		}
+		idx++
+	}))
+	defer gw.Close()
+
+	req := baseReq()
+	req.Reflect = "Review your answer."
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "failed" {
+		t.Fatalf("expected failed on reflect gateway error, got %s", payload.Status)
+	}
+	// Should NOT be the reflect_output_invalid sentinel — should be a real error.
+	if payload.Error == "reflect_output_invalid" {
+		t.Errorf("expected real error, got the sentinel reflect_output_invalid")
+	}
+	if payload.Error == "" {
+		t.Errorf("expected non-empty error")
+	}
+}
