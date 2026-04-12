@@ -74,12 +74,18 @@ func (s *SQLiteStore) init() error {
 		var cid, notnull, pk int
 		var name, typ string
 		var dflt interface{}
-		rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk)
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("check steps schema: %w", err)
+		}
 		if name == "reflected" {
 			hasReflected = true
 		}
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("check steps schema: %w", err)
+	}
 	if !hasReflected {
 		if _, err := s.db.Exec(`ALTER TABLE steps ADD COLUMN reflected BOOLEAN`); err != nil {
 			return fmt.Errorf("migrate steps.reflected: %w", err)
@@ -173,13 +179,18 @@ func (s *SQLiteStore) GetStep(ctx context.Context, runID, stepID string) (*types
 		 FROM steps WHERE run_id = ? AND id = ?`, runID, stepID)
 	var step types.Step
 	var status, output, metrics string
+	var reflected sql.NullBool
 	err := row.Scan(&step.RunID, &step.ID, &status, &step.Error, &output, &metrics,
-		&step.StartedAt, &step.EndedAt, &step.Reflected)
+		&step.StartedAt, &step.EndedAt, &reflected)
 	if err == sql.ErrNoRows {
 		return nil, errStepNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get step: %w", err)
+	}
+	if reflected.Valid {
+		v := reflected.Bool
+		step.Reflected = &v
 	}
 	step.Status = types.StepStatus(status)
 	if output != "" {
@@ -204,9 +215,14 @@ func (s *SQLiteStore) ListSteps(ctx context.Context, runID string) ([]*types.Ste
 	for rows.Next() {
 		var step types.Step
 		var status, output, metrics string
+		var reflected sql.NullBool
 		if err := rows.Scan(&step.RunID, &step.ID, &status, &step.Error, &output, &metrics,
-			&step.StartedAt, &step.EndedAt, &step.Reflected); err != nil {
+			&step.StartedAt, &step.EndedAt, &reflected); err != nil {
 			return nil, fmt.Errorf("list steps scan: %w", err)
+		}
+		if reflected.Valid {
+			v := reflected.Bool
+			step.Reflected = &v
 		}
 		step.Status = types.StepStatus(status)
 		if output != "" {
