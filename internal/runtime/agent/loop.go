@@ -360,22 +360,26 @@ func stripCodeFence(s string) string {
 // ktsu reserved field set to true. Called on the draft before the reflect turn.
 func checkFatalReservedFields(output map[string]any) error {
 	if v, ok := output["ktsu_injection_attempt"]; ok {
-		if b, ok := v.(bool); ok && b {
+		b, isBool := v.(bool)
+		if !isBool || b {
 			return fmt.Errorf("injection attempt detected")
 		}
 	}
 	if v, ok := output["ktsu_untrusted_content"]; ok {
-		if b, ok := v.(bool); ok && b {
+		b, isBool := v.(bool)
+		if !isBool || b {
 			return fmt.Errorf("untrusted content detected")
 		}
 	}
 	if v, ok := output["ktsu_low_quality"]; ok {
-		if b, ok := v.(bool); ok && b {
+		b, isBool := v.(bool)
+		if !isBool || b {
 			return fmt.Errorf("low quality output")
 		}
 	}
 	if v, ok := output["ktsu_needs_human"]; ok {
-		if b, ok := v.(bool); ok && b {
+		b, isBool := v.(bool)
+		if !isBool || b {
 			return fmt.Errorf("needs_human_review")
 		}
 	}
@@ -397,12 +401,14 @@ func shouldReflect(output map[string]any, outputSchema map[string]any, threshold
 	if threshold <= 0 {
 		return true
 	}
-	// Reflect only if draft confidence is below threshold.
-	var confidence float64
-	if v, ok := output["ktsu_confidence"]; ok {
-		if f, ok := v.(float64); ok {
-			confidence = f
-		}
+	// If field is absent or not a float64, must reflect.
+	v, present := output["ktsu_confidence"]
+	if !present {
+		return true
 	}
-	return confidence < threshold
+	f, ok := v.(float64)
+	if !ok {
+		return true
+	}
+	return f < threshold
 }

@@ -31,6 +31,11 @@ func TestCheckFatalReservedFields(t *testing.T) {
 			wantErr: "needs_human_review",
 		},
 		{
+			name:    "injection attempt non-bool (float64) — error",
+			output:  map[string]any{"ktsu_injection_attempt": float64(1)},
+			wantErr: "injection attempt detected",
+		},
+		{
 			name:    "all false — no error",
 			output:  map[string]any{"ktsu_injection_attempt": false, "result": "ok"},
 			wantErr: "",
@@ -100,6 +105,20 @@ func TestShouldReflect(t *testing.T) {
 			outputSchema: map[string]any{"properties": map[string]any{"ktsu_confidence": map[string]any{"type": "number"}}},
 			threshold:    0.8,
 			want:         false,
+		},
+		{
+			name:         "confidence declared but absent from output — reflect",
+			output:       map[string]any{"category": "billing"},
+			outputSchema: map[string]any{"properties": map[string]any{"ktsu_confidence": map[string]any{"type": "number"}}},
+			threshold:    0.8,
+			want:         true,
+		},
+		{
+			name:         "confidence declared but wrong type — reflect",
+			output:       map[string]any{"ktsu_confidence": "high"},
+			outputSchema: map[string]any{"properties": map[string]any{"ktsu_confidence": map[string]any{"type": "number"}}},
+			threshold:    0.8,
+			want:         true,
 		},
 		{
 			name:         "no output schema — always reflect",
