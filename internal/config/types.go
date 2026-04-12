@@ -101,6 +101,7 @@ type AgentConfig struct {
 	Model       string               `yaml:"model"`
 	Params      map[string]ParamDecl `yaml:"params,omitempty"`
 	Prompt      PromptConfig         `yaml:"prompt"`
+	Reflect     string               `yaml:"reflect,omitempty"`
 	Servers     []ServerRef          `yaml:"servers"`
 	SubAgents   []string             `yaml:"sub_agents"`
 	MaxTurns    int                  `yaml:"max_turns"`

@@ -5,8 +5,10 @@ type InvokeRequest struct {
 	RunID        string           `json:"run_id"`
 	StepID       string           `json:"step_id"`
 	AgentName    string           `json:"agent_name"`
-	System       string           `json:"system"`
-	MaxTurns     int              `json:"max_turns"`
+	System              string           `json:"system"`
+	Reflect             string           `json:"reflect,omitempty"`
+	ConfidenceThreshold float64          `json:"confidence_threshold,omitempty"`
+	MaxTurns            int              `json:"max_turns"`
 	Model        ModelSpec        `json:"model"`
 	Input        map[string]any   `json:"input"`
 	ToolServers  []ToolServerSpec `json:"tool_servers"`
@@ -54,4 +56,5 @@ type Metrics struct {
 	DurationMS    int64   `json:"duration_ms"`
 	LLMCalls      int     `json:"llm_calls"`
 	ToolCalls     int     `json:"tool_calls"`
+	ReflectCalls  int     `json:"reflect_calls,omitempty"`
 }
