@@ -1299,6 +1299,39 @@ func TestRunner_agentStep_setsReflected(t *testing.T) {
 	}
 }
 
+func TestRunner_fanoutAgentStep_setsReflected(t *testing.T) {
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, &reflectingDispatcher{})
+
+	step := config.PipelineStep{
+		ID:    "step-fanout",
+		Agent: "agents/foo.agent.yaml",
+		ForEach: &config.ForEachSpec{
+			From: "input.items",
+		},
+	}
+	wf := makeWorkflow(step)
+
+	ctx := context.Background()
+	input := map[string]interface{}{
+		"items": []interface{}{"a", "b"},
+	}
+	if err := r.Execute(ctx, "test-wf", "run-fanout", wf, input); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	got, err := store.GetStep(ctx, "run-fanout", "step-fanout")
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	if got.Reflected == nil {
+		t.Fatal("want Reflected non-nil for fanout agent step, got nil")
+	}
+	if !*got.Reflected {
+		t.Errorf("want Reflected=true for fanout with reflecting sub-dispatches, got false")
+	}
+}
+
 func TestRunner_nonAgentStep_nilReflected(t *testing.T) {
 	// Use a webhook step — avoids needing to know valid transform ops.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
