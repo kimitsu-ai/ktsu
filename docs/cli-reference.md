@@ -20,6 +20,12 @@ See also: [YAML Spec](yaml-spec/index.md) · [Overview](kimitsu-overview.md) · 
 | `ktsu workflow tree <workflow-file>` | Print full dependency tree | Auditing sub-workflow, agent, and server references |
 | `ktsu validate [project-dir]` | Validate config files | CI, pre-deploy checks, local debugging |
 | `ktsu new project <name>` | Scaffold a new project | Starting a new Kimitsu project |
+| `ktsu workflow tree <file>` | Emit dependency tree for a workflow | Auditing dependencies, bundling for publish |
+| `ktsu hub install <target>` | Install a workflow from ktsuhub or a git repo | Adding hub workflows to a project. Requires `KTSU_HUB_ENABLED=true` |
+| `ktsu hub update` | Re-resolve all entries in ktsuhub.lock.yaml | Updating installed workflows. Requires `KTSU_HUB_ENABLED=true` |
+| `ktsu hub publish` | Publish workflows to ktsuhub | Sharing your workflows. Requires `KTSU_HUB_ENABLED=true` |
+| `ktsu hub login` | Authenticate with GitHub | Required before publish. Requires `KTSU_HUB_ENABLED=true` |
+| `ktsu hub search <query>` | Search ktsuhub from the CLI | Discovering workflows. Requires `KTSU_HUB_ENABLED=true` |
 | `ktsu lock` | Generate ktsu.lock.yaml | *(not yet implemented)* |
 | `ktsu completion <shell>` | Generate shell completion script | One-time shell setup |
 
@@ -53,6 +59,8 @@ CLI flags take precedence over environment variables. All env vars are optional.
 | `KTSU_RUNTIME_URL` | `""` | `start orchestrator` | Agent runtime URL |
 | `KTSU_STORE_TYPE` | `memory` | `start orchestrator` | Orchestrator store type: `memory`, `sqlite` |
 | `KTSU_DB_PATH` | `ktsu.db` | `start orchestrator` | Database path for SQLite |
+| `KTSU_HUB_ENABLED` | `false` | all | Enable hub commands (`ktsu hub *`) |
+| `KTSU_CACHE_DIR` | `~/.ktsu/cache` | `hub install`, `hub update` | Local cache directory for installed workflows |
 | `NO_COLOR` | *(unset)* | `validate` | Set to any value to disable colored output |
 
 ---
@@ -116,6 +124,8 @@ ktsu start orchestrator [flags]
 | `--api-key` | `""` | `KTSU_API_KEY` | Bearer token required on protected routes; unset = auth disabled |
 | `--store-type` | `memory` | `KTSU_STORE_TYPE` | Orchestrator store type: `memory`, `sqlite` |
 | `--db-path` | `ktsu.db` | `KTSU_DB_PATH` | Database path for SQLite |
+| `--workspace` | *(none)* | — | Additional workspace root. Repeatable. |
+| `--no-hub-lock` | `false` | — | Ignore `ktsuhub.lock.yaml` even if present |
 
 ```bash
 ktsu start orchestrator
@@ -265,6 +275,8 @@ ktsu validate [project-dir] [flags]
 | `--env` | `""` | Path to environment config to validate |
 | `--workflow-dir` | `""` | Directory of `*.workflow.yaml` files (defaults to `<project-dir>/workflows`) |
 | `--graph` | `false` | Output Mermaid graph of workflows instead of text summary |
+| `--workspace` | *(none)* | Additional workspace root to include in validation. Repeatable. |
+| `--no-hub-lock` | `false` | Ignore `ktsuhub.lock.yaml` even if present |
 
 Note: `--workflow-dir` defaults to `""` and derives the path from `[project-dir]` at runtime — unlike `ktsu start orchestrator`, which defaults to `./workflows` literally.
 
@@ -289,6 +301,12 @@ ktsu validate --graph
 
 # Custom workflow directory
 ktsu validate --workflow-dir ./my-workflows
+
+# Include an additional workspace in validation
+ktsu validate --workspace ~/shared-workflows
+
+# Ignore hub lock file
+ktsu validate --no-hub-lock
 ```
 
 ---
@@ -313,7 +331,8 @@ Creates:
 ├── agents/placeholder.agent.yaml   # placeholder agent
 ├── environments/dev.env.yaml        # dev environment config (SQLite state)
 ├── gateway.yaml                     # empty gateway config
-└── servers.yaml                     # empty server manifest
+├── servers.yaml                     # empty server manifest
+└── ktsuhub.yaml                     # empty hub manifest, ready to fill in
 ```
 
 ```bash
@@ -324,34 +343,131 @@ ktsu validate
 
 ---
 
-## ktsu workflow tree
+## ktsu workflow
 
-Print the full dependency tree of a workflow, including all sub-workflows, agents, and servers it references.
+Commands for inspecting and working with workflow files.
 
-**Usage:**
+### ktsu workflow tree
 
-```
-ktsu workflow tree <workflow-file> [--json]
-```
-
-**Arguments:**
-
-- `<workflow-file>`: Path to a `.workflow.yaml` file
-
-**Flags:**
-
-- `--json`: Output as JSON instead of tree format
-
-**Example:**
+Walk a workflow file and emit the full dependency tree: the workflow file, all referenced agent files, all referenced local server files, and `gateway.yaml`. Paths are deduplicated and relative to `--project-dir`.
 
 ```
-$ ktsu workflow tree workflows/support-bot.workflow.yaml
-/path/to/workflows/support-bot.workflow.yaml
-├── ktsu/slack-input (workflow)
-├── respond.workflow.yaml (workflow)
-│   └── agents/support-agent.agent.yaml (agent)
-│       └── servers/crm.server.yaml (server)
-└── ktsu/slack-reply (workflow)
+ktsu workflow tree <workflow-file> [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--json` | `false` | Output a flat JSON array of relative paths |
+| `--project-dir` | `.` | Project root for resolving relative paths |
+
+```bash
+# Human-readable tree
+ktsu workflow tree workflows/my-workflow.workflow.yaml
+
+# JSON output for tooling
+ktsu workflow tree workflows/my-workflow.workflow.yaml --json
+```
+
+---
+
+## ktsu hub
+
+Commands for interacting with the ktsuhub workflow registry.
+
+> **Requires `KTSU_HUB_ENABLED=true`.** Hub commands are hidden and unavailable unless this environment variable is set.
+
+```bash
+KTSU_HUB_ENABLED=true ktsu hub install github.com/kyle/workflows
+```
+
+### ktsu hub install
+
+Install a workflow from a git repository into the local project. Clones the source into `KTSU_CACHE_DIR` (default `~/.ktsu/cache`) and writes an entry to `ktsuhub.lock.yaml`.
+
+```
+ktsu hub install <target>[@ref] [flags]
+```
+
+**Supported target formats:**
+
+| Format | Example |
+|---|---|
+| `github.com/owner/repo[@ref]` | `github.com/kyle/workflows@v1.2.0` |
+| `https://...[@ref]` | `https://gitlab.com/org/repo@main` |
+| Local path | `./local-workflows` |
+| `owner/name` (short form) | `kyle/support-triage` — **not yet implemented** |
+
+Short-form `owner/name` targets return an error: `registry install (short form "owner/name") not yet implemented — use github.com/owner/repo or https://...`
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dry-run` | `false` | Show what would be installed without making changes |
+| `--cache-dir` | `~/.ktsu/cache` | Override the local cache directory |
+
+```bash
+ktsu hub install github.com/kyle/workflows
+ktsu hub install github.com/kyle/workflows@v1.2.0
+ktsu hub install https://gitlab.com/org/repo@main
+ktsu hub install github.com/kyle/workflows --dry-run
+```
+
+After install, `ktsu start orchestrator` automatically picks up the new workflow from `ktsuhub.lock.yaml`.
+
+---
+
+### ktsu hub update
+
+Re-resolve all entries in `ktsuhub.lock.yaml`. For mutable branch refs, fetches the latest commit. For pinned version/SHA entries, this is a no-op unless `--latest` is passed.
+
+```
+ktsu hub update [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--latest` | `false` | Also update pinned version entries to the latest published version |
+| `--dry-run` | `false` | Show what would change without writing |
+
+```bash
+ktsu hub update
+ktsu hub update --latest
+ktsu hub update --dry-run
+```
+
+---
+
+### ktsu hub login
+
+> **Not yet implemented.** Returns `hub login: not yet implemented`.
+
+Authenticate with GitHub for publishing workflows to the registry.
+
+```
+ktsu hub login
+```
+
+---
+
+### ktsu hub publish
+
+> **Not yet implemented.** Returns `hub publish: not yet implemented`.
+
+Publish workflows declared in `ktsuhub.yaml` to the ktsuhub registry.
+
+```
+ktsu hub publish [flags]
+```
+
+---
+
+### ktsu hub search
+
+> **Not yet implemented.** Returns `hub search: not yet implemented`.
+
+Search the ktsuhub registry from the CLI.
+
+```
+ktsu hub search <query> [flags]
 ```
 
 ---

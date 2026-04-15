@@ -246,3 +246,33 @@ type ToolServerConfig struct {
 	Auth        string               `yaml:"auth,omitempty"`
 	Params      map[string]ParamDecl `yaml:"params,omitempty"`
 }
+
+// HubLockFile represents ktsuhub.lock.yaml — tracks installed workflow packages.
+type HubLockFile struct {
+	Entries []HubLockEntry `yaml:"entries"`
+}
+
+// HubLockEntry is one installed workflow package.
+type HubLockEntry struct {
+	Name    string `yaml:"name"`              // e.g. "kyle/support-triage"
+	Version string `yaml:"version,omitempty"` // semver if known
+	Source  string `yaml:"source"`            // "ktsuhub", "github.com/owner/repo", "https://..."
+	Ref     string `yaml:"ref,omitempty"`     // tag, branch, or SHA used at install time
+	SHA     string `yaml:"sha,omitempty"`     // resolved commit SHA
+	Cache   string `yaml:"cache"`             // absolute path to local cache dir
+	Mutable bool   `yaml:"mutable"`           // true if installed from a branch (not pinned)
+}
+
+// HubManifest represents ktsuhub.yaml — declares which workflows a repo publishes.
+type HubManifest struct {
+	Workflows []HubManifestEntry `yaml:"workflows"`
+}
+
+// HubManifestEntry declares a single publishable workflow.
+type HubManifestEntry struct {
+	Name        string   `yaml:"name"`
+	Version     string   `yaml:"version"`
+	Description string   `yaml:"description,omitempty"`
+	Tags        []string `yaml:"tags,omitempty"`
+	Entrypoint  string   `yaml:"entrypoint"`
+}

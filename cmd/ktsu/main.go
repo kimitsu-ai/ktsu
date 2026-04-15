@@ -31,6 +31,7 @@ import (
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/dag"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
+	"github.com/kimitsu-ai/ktsu/internal/hub"
 	"github.com/kimitsu-ai/ktsu/internal/runtime"
 )
 
@@ -38,6 +39,10 @@ func main() {
 	if err := rootCmd().Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func hubEnabled() bool {
+	return os.Getenv("KTSU_HUB_ENABLED") == "true"
 }
 
 func rootCmd() *cobra.Command {
@@ -53,7 +58,114 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(newCmd())
 	root.AddCommand(orchestratorGroupCmd())
 	root.AddCommand(workflowGroupCmd())
+	if hubEnabled() {
+		root.AddCommand(hubCmd())
+	}
 	return root
+}
+
+func hubCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "hub",
+		Short: "Interact with the ktsuhub workflow registry",
+	}
+	cmd.AddCommand(hubLoginCmd())
+	cmd.AddCommand(hubInstallCmd())
+	cmd.AddCommand(hubUpdateCmd())
+	cmd.AddCommand(hubPublishCmd())
+	cmd.AddCommand(hubSearchCmd())
+	return cmd
+}
+
+func hubLoginCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "login",
+		Short: "Authenticate with GitHub",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("hub login: not yet implemented")
+		},
+	}
+}
+
+func hubInstallCmd() *cobra.Command {
+	var cacheDir string
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use:   "install <target>[@ref]",
+		Short: "Install a workflow from ktsuhub or a git repo",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			raw := args[0]
+			// Only split on @ for non-URL targets. URLs (https://...) may contain @
+			// as part of the authority (e.g. user@host), not as a ref separator.
+			var target, ref string
+			if strings.Contains(raw, "://") {
+				target = raw
+			} else {
+				target, ref, _ = strings.Cut(raw, "@")
+			}
+			cd := cacheDir
+			if strings.HasPrefix(cd, "~/") {
+				if home, err := os.UserHomeDir(); err == nil {
+					cd = filepath.Join(home, cd[2:])
+				}
+			}
+			return hub.Install(hub.InstallOpts{
+				Target:   target,
+				Ref:      ref,
+				CacheDir: cd,
+				LockPath: "ktsuhub.lock.yaml",
+				DryRun:   dryRun,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&cacheDir, "cache-dir",
+		envOr("KTSU_CACHE_DIR", "~/.ktsu/cache"),
+		"local cache directory (env: KTSU_CACHE_DIR)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without making changes")
+	return cmd
+}
+
+func hubUpdateCmd() *cobra.Command {
+	var latest, dryRun bool
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Re-resolve all entries in ktsuhub.lock.yaml",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return hub.Update(hub.UpdateOpts{
+				LockPath: "ktsuhub.lock.yaml",
+				Latest:   latest,
+				DryRun:   dryRun,
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&latest, "latest", false, "also update pinned version entries")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview changes without writing")
+	return cmd
+}
+
+func hubPublishCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "publish",
+		Short: "Publish workflows to ktsuhub",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("hub publish: not yet implemented")
+		},
+	}
+}
+
+func hubSearchCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search ktsuhub from the CLI",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fmt.Errorf("hub search: not yet implemented")
+		},
+	}
+	cmd.Flags().String("tag", "", "filter by tag")
+	cmd.Flags().Int("limit", 10, "number of results to return")
+	return cmd
 }
 
 func orchestratorGroupCmd() *cobra.Command {
@@ -303,6 +415,8 @@ func startOrchestratorCmd() *cobra.Command {
 	var envPath, workflowDir, host, runtimeURL, gatewayURL, ownURL, projectDir, apiKey string
 	var storeType, dbPath string
 	var port int
+	var workspaces []string
+	var noHubLock bool
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
 		Short: "Start the Kimitsu orchestrator",
@@ -323,6 +437,16 @@ func startOrchestratorCmd() *cobra.Command {
 				}
 				orchOwnURL = fmt.Sprintf("http://%s:%d", h, port)
 			}
+			var extraWorkspaces []orchestrator.Workspace
+			for _, ws := range workspaces {
+				if strings.HasPrefix(ws, "~/") {
+					if home, err := os.UserHomeDir(); err == nil {
+						ws = filepath.Join(home, ws[2:])
+					}
+				}
+				extraWorkspaces = append(extraWorkspaces, orchestrator.Workspace{ProjectDir: ws})
+			}
+
 			o := orchestrator.New(orchestrator.Config{
 				EnvPath:     envPath,
 				Env:         envCfg,
@@ -336,6 +460,8 @@ func startOrchestratorCmd() *cobra.Command {
 				APIKey:      apiKey,
 				StoreType:   state.StoreType(storeType),
 				StoreDSN:    dbPath,
+				Workspaces:  extraWorkspaces,
+				NoHubLock:   noHubLock,
 			})
 			log.Printf("starting %s", o)
 			return o.Start(signalCtx())
@@ -366,6 +492,8 @@ func startOrchestratorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dbPath, "db-path",
 		envOr("KTSU_DB_PATH", "ktsu.db"),
 		"orchestrator database path for sqlite (env: KTSU_DB_PATH)")
+	cmd.Flags().StringArrayVar(&workspaces, "workspace", nil, "additional workspace root (repeatable)")
+	cmd.Flags().BoolVar(&noHubLock, "no-hub-lock", false, "ignore ktsuhub.lock.yaml even if present")
 	return cmd
 }
 
@@ -530,6 +658,8 @@ func invokeCmd() *cobra.Command {
 
 func validateCmd() *cobra.Command {
 	var envPath, workflowDir, projectDir string
+	var workspaces []string
+	var noHubLock bool
 	cmd := &cobra.Command{
 		Use:   "validate [project-dir]",
 		Short: "Validate Kimitsu configuration files",
@@ -556,6 +686,17 @@ func validateCmd() *cobra.Command {
 				workflowDir = filepath.Join(projectDir, "workflows")
 			}
 
+			hasErrors := false
+			var allErrs []string
+			checkErrors := func(list []fileStatus) {
+				for _, f := range list {
+					if len(f.errors) > 0 {
+						hasErrors = true
+						allErrs = append(allErrs, fmt.Sprintf("%s: %v", f.path, f.errors))
+					}
+				}
+			}
+
 			if workflowDir != "" {
 				results, err := validateWorkflows(cmd, workflowDir, projectDir)
 
@@ -572,30 +713,66 @@ func validateCmd() *cobra.Command {
 					// Print grouped summary
 					printProjectSummary(cmd.OutOrStdout(), projectDir, summary)
 
-					// Check if there are any errors in the summary
-					hasErrors := false
-					var allErrs []string
-					checkErrors := func(list []fileStatus) {
-						for _, f := range list {
-							if len(f.errors) > 0 {
-								hasErrors = true
-								allErrs = append(allErrs, fmt.Sprintf("%s: %v", f.path, f.errors))
-							}
-						}
-					}
 					checkErrors(summary.workflows)
 					checkErrors(summary.agents)
 					checkErrors(summary.servers)
 					checkErrors(summary.systems)
-
-					if hasErrors {
-						return errors.New("validation failed")
-					}
 				}
 
 				if err != nil {
 					return err
 				}
+			}
+
+			// Auto-load workspaces from ktsuhub.lock.yaml unless suppressed.
+			if !noHubLock {
+				lockPath := filepath.Join(projectDir, "ktsuhub.lock.yaml")
+				lock, lockErr := config.LoadHubLock(lockPath)
+				if lockErr != nil {
+					if !errors.Is(lockErr, os.ErrNotExist) {
+						fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: ktsuhub.lock.yaml parse error: %v\n", lockErr)
+					}
+				} else {
+					for _, entry := range lock.Entries {
+						ws := entry.Cache
+						if strings.HasPrefix(ws, "~/") {
+							if home, err := os.UserHomeDir(); err == nil {
+								ws = filepath.Join(home, ws[2:])
+							}
+						}
+						workspaces = append(workspaces, ws)
+					}
+				}
+			}
+
+			// Validate additional workspaces. In graph mode, errors are not enforced
+			// (matching the primary workspace's graph-mode behavior — output only).
+			for _, ws := range workspaces {
+				if strings.HasPrefix(ws, "~/") {
+					if home, err := os.UserHomeDir(); err == nil {
+						ws = filepath.Join(home, ws[2:])
+					}
+				}
+				wsWorkflowDir := filepath.Join(ws, "workflows")
+				if _, statErr := os.Stat(wsWorkflowDir); statErr != nil {
+					continue
+				}
+				results, err := validateWorkflows(cmd, wsWorkflowDir, ws)
+				if err != nil {
+					return err
+				}
+				if !showGraph {
+					summary := buildProjectSummary(ws, results)
+					printProjectSummary(cmd.OutOrStdout(), ws, summary)
+					checkErrors(summary.workflows)
+					checkErrors(summary.agents)
+					checkErrors(summary.servers)
+					checkErrors(summary.systems)
+				}
+			}
+
+			if hasErrors {
+				return errors.New("validation failed")
 			}
 
 			return nil
@@ -607,6 +784,8 @@ func validateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&projectDir, "project-dir",
 		envOr("KTSU_PROJECT_DIR", "."),
 		"project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
+	cmd.Flags().StringArrayVar(&workspaces, "workspace", nil, "additional workspace root to validate (repeatable)")
+	cmd.Flags().BoolVar(&noHubLock, "no-hub-lock", false, "ignore ktsuhub.lock.yaml even if present")
 	return cmd
 }
 
@@ -1230,6 +1409,15 @@ model_groups: []
 `
 			serversTmpl := `servers: []
 `
+			ktsuhubTmpl := `workflows: []
+# Uncomment and fill in to publish this project to ktsuhub:
+# workflows:
+#   - name: {{.Name}}/my-workflow
+#     version: "1.0.0"
+#     description: ""
+#     tags: []
+#     entrypoint: workflows/{{.Name}}.workflow.yaml
+`
 
 			files := []fileSpec{
 				{path: filepath.Join(name, "workflows", name+".workflow.yaml"), tmplSrc: workflowTmpl},
@@ -1237,6 +1425,7 @@ model_groups: []
 				{path: filepath.Join(name, "environments", "dev.env.yaml"), tmplSrc: envTmpl},
 				{path: filepath.Join(name, "gateway.yaml"), tmplSrc: gatewayTmpl},
 				{path: filepath.Join(name, "servers.yaml"), tmplSrc: serversTmpl},
+				{path: filepath.Join(name, "ktsuhub.yaml"), tmplSrc: ktsuhubTmpl},
 			}
 
 			data := struct{ Name string }{Name: name}

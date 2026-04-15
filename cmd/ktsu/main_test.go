@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -496,7 +498,7 @@ func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-// TestNewProjectCmd_happyPath verifies that all 5 scaffold files are created and
+// TestNewProjectCmd_happyPath verifies that all 6 scaffold files are created and
 // the workflow YAML has the project name substituted.
 func TestNewProjectCmd_happyPath(t *testing.T) {
 	dir := t.TempDir()
@@ -524,6 +526,7 @@ func TestNewProjectCmd_happyPath(t *testing.T) {
 		"myproject/environments/dev.env.yaml",
 		"myproject/gateway.yaml",
 		"myproject/servers.yaml",
+		"myproject/ktsuhub.yaml",
 	}
 
 	output := buf.String()
@@ -584,6 +587,36 @@ func TestNewProjectCmd_missingName(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("want error for missing name argument, got nil")
+	}
+}
+
+func TestNewProjectCmd_createsKtsuhubYaml(t *testing.T) {
+	dir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	cmd := newProjectCmd()
+	cmd.SetOut(io.Discard)
+	if err := cmd.RunE(cmd, []string{"myapp"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hubYaml := filepath.Join(dir, "myapp", "ktsuhub.yaml")
+	if _, err := os.Stat(hubYaml); os.IsNotExist(err) {
+		t.Error("expected ktsuhub.yaml to be created by new project scaffold")
+	}
+	data, err := os.ReadFile(hubYaml)
+	if err != nil {
+		t.Fatalf("read ktsuhub.yaml: %v", err)
+	}
+	if !strings.Contains(string(data), "workflows:") {
+		t.Errorf("expected ktsuhub.yaml to contain 'workflows:', got:\n%s", data)
 	}
 }
 
@@ -1102,5 +1135,147 @@ pipeline:
 	}
 	if !strings.Contains(result["path"].(string), "parent.workflow.yaml") {
 		t.Errorf("expected path to contain parent.workflow.yaml, got: %v", result["path"])
+	}
+}
+
+func TestValidateCmd_multipleWorkspaces(t *testing.T) {
+	ws1 := t.TempDir()
+	ws2 := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws1, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(ws2, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	wf1 := `kind: workflow
+name: flow1
+version: "1.0.0"
+pipeline: []
+`
+	wf2 := `kind: workflow
+name: flow2
+version: "1.0.0"
+pipeline: []
+`
+	os.WriteFile(filepath.Join(ws1, "workflows", "flow1.workflow.yaml"), []byte(wf1), 0o644)
+	os.WriteFile(filepath.Join(ws2, "workflows", "flow2.workflow.yaml"), []byte(wf2), 0o644)
+
+	cmd := validateCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	if err := cmd.Flags().Set("project-dir", ws1); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Flags().Set("workspace", ws2); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateCmd_lockAutoLoad(t *testing.T) {
+	primary := t.TempDir()
+	hubWs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(primary, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(hubWs, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wf := `kind: workflow
+name: hub-flow
+version: "1.0.0"
+pipeline: []
+`
+	os.WriteFile(filepath.Join(hubWs, "workflows", "hub-flow.workflow.yaml"), []byte(wf), 0o644)
+
+	lockContent := fmt.Sprintf(`entries:
+  - name: testorg/hub-flow
+    source: github.com/testorg/hub-flow
+    sha: abc123
+    cache: %s
+    mutable: false
+`, hubWs)
+	os.WriteFile(filepath.Join(primary, "ktsuhub.lock.yaml"), []byte(lockContent), 0o644)
+
+	cmd := validateCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	if err := cmd.Flags().Set("project-dir", primary); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("unexpected error with lock auto-load: %v", err)
+	}
+}
+
+func TestWorkflowTreeCmd_outputsFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "workflows"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "agents"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "servers"), 0o755)
+
+	agentYAML := `name: greeter
+model: default
+max_turns: 1
+servers:
+  - name: wiki
+    path: ../servers/wiki.server.yaml
+`
+	serverYAML := `name: wiki
+description: wiki search
+`
+	wfYAML := `kind: workflow
+name: hello
+version: "1.0.0"
+pipeline:
+  - id: s1
+    agent: ../agents/greeter.agent.yaml
+`
+	os.WriteFile(filepath.Join(dir, "workflows", "hello.workflow.yaml"), []byte(wfYAML), 0o644)
+	os.WriteFile(filepath.Join(dir, "agents", "greeter.agent.yaml"), []byte(agentYAML), 0o644)
+	os.WriteFile(filepath.Join(dir, "servers", "wiki.server.yaml"), []byte(serverYAML), 0o644)
+
+	wfPath := filepath.Join(dir, "workflows", "hello.workflow.yaml")
+	var buf strings.Builder
+	root := rootCmd()
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs([]string{"workflow", "tree", wfPath})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "hello.workflow.yaml") {
+		t.Errorf("expected workflow file in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "greeter.agent.yaml") {
+		t.Errorf("expected agent in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "wiki.server.yaml") {
+		t.Errorf("expected server in output, got:\n%s", output)
+	}
+}
+
+func TestHubCmd_disabledByDefault(t *testing.T) {
+	t.Setenv("KTSU_HUB_ENABLED", "")
+	root := rootCmd()
+	cmd, _, _ := root.Find([]string{"hub"})
+	if cmd != root {
+		t.Fatalf("expected Find to return root (hub not registered), got %q", cmd.Use)
+	}
+}
+
+func TestHubCmd_enabledWithFlag(t *testing.T) {
+	t.Setenv("KTSU_HUB_ENABLED", "true")
+	root := rootCmd()
+	cmd, _, err := root.Find([]string{"hub"})
+	if err != nil {
+		t.Fatalf("expected hub command to be found: %v", err)
+	}
+	if cmd.Use != "hub" {
+		t.Fatalf("expected hub command, got %q", cmd.Use)
 	}
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -89,3 +90,40 @@ func StripVersion(ref string) string {
 	return ref
 }
 
+// LoadHubLock reads ktsuhub.lock.yaml from path.
+func LoadHubLock(path string) (*HubLockFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read hub lock: %w", err)
+	}
+	var lock HubLockFile
+	if err := yaml.Unmarshal(data, &lock); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return &lock, nil
+}
+
+// SaveHubLock writes lock to path as YAML, creating parent directories as needed.
+func SaveHubLock(path string, lock *HubLockFile) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	data, err := yaml.Marshal(lock)
+	if err != nil {
+		return fmt.Errorf("marshal hub lock: %w", err)
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// LoadHubManifest reads ktsuhub.yaml from path.
+func LoadHubManifest(path string) (*HubManifest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read hub manifest: %w", err)
+	}
+	var manifest HubManifest
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return &manifest, nil
+}
