@@ -166,3 +166,39 @@ func ResolveServerParams(declared map[string]ParamDecl, agentRefParams map[strin
 	}
 	return result, nil
 }
+
+// ParseParamsSchema converts a JSON Schema params declaration to the internal
+// map[string]ParamDecl used by resolution functions.
+// Required params (listed in "required") have nil Default.
+// Optional params without an explicit "default" get an empty string default (not required).
+func ParseParamsSchema(schema map[string]interface{}) (map[string]ParamDecl, error) {
+	if schema == nil {
+		return nil, nil
+	}
+	props, _ := schema["properties"].(map[string]interface{})
+	requiredRaw, _ := schema["required"].([]interface{})
+	required := make(map[string]bool, len(requiredRaw))
+	for _, r := range requiredRaw {
+		if s, ok := r.(string); ok {
+			required[s] = true
+		}
+	}
+	result := make(map[string]ParamDecl, len(props))
+	for name, propRaw := range props {
+		prop, _ := propRaw.(map[string]interface{})
+		pd := ParamDecl{}
+		if desc, ok := prop["description"].(string); ok {
+			pd.Description = desc
+		}
+		if def, ok := prop["default"].(string); ok {
+			pd.Default = &def
+		} else if !required[name] {
+			// Optional param with no explicit default: use empty string so it isn't treated as required.
+			empty := ""
+			pd.Default = &empty
+		}
+		// required[name] && pd.Default == nil → param is required (nil Default = required in ParamDecl)
+		result[name] = pd
+	}
+	return result, nil
+}

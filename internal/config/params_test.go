@@ -368,3 +368,131 @@ func TestResolveValue_emptyString(t *testing.T) {
 		t.Errorf("got %q want empty", got)
 	}
 }
+
+// --- ParseParamsSchema ---
+
+func TestParseParamsSchema_requiredParam(t *testing.T) {
+	schema := map[string]interface{}{
+		"type":     "object",
+		"required": []interface{}{"webhook_url"},
+		"properties": map[string]interface{}{
+			"webhook_url": map[string]interface{}{
+				"type":        "string",
+				"description": "Slack webhook URL",
+			},
+		},
+	}
+	got, err := ParseParamsSchema(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	decl, ok := got["webhook_url"]
+	if !ok {
+		t.Fatal("expected webhook_url in result")
+	}
+	if decl.Default != nil {
+		t.Error("required param should have nil Default")
+	}
+}
+
+func TestParseParamsSchema_optionalWithDefault(t *testing.T) {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"username": map[string]interface{}{
+				"type":    "string",
+				"default": "kimitsu",
+			},
+		},
+	}
+	got, err := ParseParamsSchema(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	decl, ok := got["username"]
+	if !ok {
+		t.Fatal("expected username")
+	}
+	if decl.Default == nil || *decl.Default != "kimitsu" {
+		t.Errorf("expected default 'kimitsu', got %v", decl.Default)
+	}
+}
+
+func TestParseParamsSchema_optionalNoDefault(t *testing.T) {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"tag": map[string]interface{}{"type": "string"},
+		},
+	}
+	got, err := ParseParamsSchema(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	decl := got["tag"]
+	// optional with no explicit default gets empty string default (not required)
+	if decl.Default == nil {
+		t.Error("optional param with no default should get empty string default")
+	}
+	if *decl.Default != "" {
+		t.Errorf("expected empty string default, got %q", *decl.Default)
+	}
+}
+
+func TestParseParamsSchema_nilSchema(t *testing.T) {
+	got, err := ParseParamsSchema(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map for nil schema")
+	}
+}
+
+func TestParseParamsSchema_description(t *testing.T) {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"token": map[string]interface{}{
+				"type":        "string",
+				"description": "API token",
+			},
+		},
+	}
+	got, err := ParseParamsSchema(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["token"].Description != "API token" {
+		t.Errorf("expected description 'API token', got %q", got["token"].Description)
+	}
+}
+
+func TestParseParamsSchema_multipleParams(t *testing.T) {
+	schema := map[string]interface{}{
+		"type":     "object",
+		"required": []interface{}{"token"},
+		"properties": map[string]interface{}{
+			"token": map[string]interface{}{
+				"type": "string",
+			},
+			"username": map[string]interface{}{
+				"type":    "string",
+				"default": "bot",
+			},
+		},
+	}
+	got, err := ParseParamsSchema(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 params, got %d", len(got))
+	}
+	if got["token"].Default != nil {
+		t.Error("token should be required (nil Default)")
+	}
+	if got["username"].Default == nil || *got["username"].Default != "bot" {
+		t.Error("username should have default 'bot'")
+	}
+}
