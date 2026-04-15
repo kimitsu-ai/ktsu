@@ -204,6 +204,12 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sub-workflow visibility: direct invocation via /invoke is forbidden.
+	if wf.Visibility == "sub-workflow" {
+		http.Error(w, fmt.Sprintf("workflow not found: %s", workflow), http.StatusNotFound)
+		return
+	}
+
 	if err := airlock.ValidateInput(input, wf.Input.Schema); err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -536,5 +537,40 @@ func TestRuntimeDispatcher_Dispatch_contextCancellation(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("want error wrapping context.Canceled, got %v", err)
+	}
+}
+
+// TestHandleInvoke_subWorkflowVisibility_returns404 verifies that invoking
+// a sub-workflow directly via /invoke returns 404.
+func TestHandleInvoke_subWorkflowVisibility_returns404(t *testing.T) {
+	// Write a minimal sub-workflow workflow YAML to a temp dir
+	dir := t.TempDir()
+	wfContent := `kind: workflow
+name: test-sub
+version: "1.0.0"
+visibility: sub-workflow
+pipeline: []
+`
+	wfPath := filepath.Join(dir, "test-sub.workflow.yaml")
+	if err := os.WriteFile(wfPath, []byte(wfContent), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	o := &Orchestrator{cfg: Config{
+		WorkflowDir: dir,
+		StoreType:   "memory",
+	}}
+	srv, err := newServer(o)
+	if err != nil {
+		t.Fatalf("newServer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/invoke/test-sub", strings.NewReader("{}"))
+	req.SetPathValue("workflow", "test-sub")
+	w := httptest.NewRecorder()
+	srv.handleInvoke(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for sub-workflow invocation, got %d", w.Code)
 	}
 }
