@@ -32,6 +32,39 @@ func lookupEnvValue(v string) (string, error) {
 	return v, nil
 }
 
+// ResolveValue resolves a value string using env and invocation params contexts.
+// Handles: "env:VAR_NAME" (root-only), "param:NAME" (from invocationParams),
+// "`literal`" (JMESPath backtick literal), plain strings (returned as-is).
+// allowEnv must be true for env: references to succeed; false models sub-workflow context.
+func ResolveValue(v string, allowEnv bool, invocationParams map[string]string) (string, error) {
+	switch {
+	case strings.HasPrefix(v, "env:"):
+		if !allowEnv {
+			return "", fmt.Errorf("env: reference %q not permitted outside root workflow context", v)
+		}
+		varName := strings.TrimPrefix(v, "env:")
+		val, ok := os.LookupEnv(varName)
+		if !ok {
+			return "", fmt.Errorf("env var %q is not set", varName)
+		}
+		return val, nil
+	case strings.HasPrefix(v, "param:"):
+		name := strings.TrimPrefix(v, "param:")
+		if invocationParams == nil {
+			return "", fmt.Errorf("param %q referenced but no params context is available", name)
+		}
+		val, ok := invocationParams[name]
+		if !ok {
+			return "", fmt.Errorf("param %q is not available in this invocation", name)
+		}
+		return val, nil
+	case len(v) >= 2 && v[0] == '`' && v[len(v)-1] == '`':
+		return v[1 : len(v)-1], nil
+	default:
+		return v, nil
+	}
+}
+
 // ValidatePromptRefs returns an error if prompt.system references any {{key}}
 // not declared in params. Call this at boot to catch misconfigured agents.
 func ValidatePromptRefs(system string, params map[string]ParamDecl) error {

@@ -273,3 +273,98 @@ func TestResolveServerParams_unsetEnvVarReturnsError(t *testing.T) {
 		t.Fatal("expected error for unset env var in server param default, got nil")
 	}
 }
+
+// --- ResolveValue ---
+
+func TestResolveValue_envRef_allowed(t *testing.T) {
+	os.Setenv("TEST_RESOLVE_VAR", "hello")
+	defer os.Unsetenv("TEST_RESOLVE_VAR")
+	got, err := ResolveValue("env:TEST_RESOLVE_VAR", true, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "hello" {
+		t.Errorf("got %q want %q", got, "hello")
+	}
+}
+
+func TestResolveValue_envRef_forbidden(t *testing.T) {
+	os.Setenv("TEST_RESOLVE_VAR", "hello")
+	defer os.Unsetenv("TEST_RESOLVE_VAR")
+	_, err := ResolveValue("env:TEST_RESOLVE_VAR", false, nil)
+	if err == nil {
+		t.Fatal("expected error when env: used in non-root context")
+	}
+}
+
+func TestResolveValue_envRef_unset(t *testing.T) {
+	os.Unsetenv("DEFINITELY_NOT_SET_XYZ2")
+	_, err := ResolveValue("env:DEFINITELY_NOT_SET_XYZ2", true, nil)
+	if err == nil {
+		t.Fatal("expected error for unset env var")
+	}
+}
+
+func TestResolveValue_paramRef_found(t *testing.T) {
+	got, err := ResolveValue("param:webhook_url", false, map[string]string{"webhook_url": "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://example.com" {
+		t.Errorf("got %q want %q", got, "https://example.com")
+	}
+}
+
+func TestResolveValue_paramRef_missing(t *testing.T) {
+	_, err := ResolveValue("param:missing", false, map[string]string{})
+	if err == nil {
+		t.Fatal("expected error for missing param")
+	}
+}
+
+func TestResolveValue_paramRef_nilContext(t *testing.T) {
+	_, err := ResolveValue("param:anything", false, nil)
+	if err == nil {
+		t.Fatal("expected error when invocationParams is nil")
+	}
+}
+
+func TestResolveValue_backtickLiteral(t *testing.T) {
+	got, err := ResolveValue("`support-bot`", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "support-bot" {
+		t.Errorf("got %q want %q", got, "support-bot")
+	}
+}
+
+func TestResolveValue_backtickSingle(t *testing.T) {
+	got, err := ResolveValue("`x`", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "x" {
+		t.Errorf("got %q want %q", got, "x")
+	}
+}
+
+func TestResolveValue_plainString(t *testing.T) {
+	got, err := ResolveValue("hello", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "hello" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestResolveValue_emptyString(t *testing.T) {
+	got, err := ResolveValue("", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("got %q want empty", got)
+	}
+}
