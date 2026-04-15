@@ -20,6 +20,8 @@ import (
 	"text/template"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/spf13/cobra"
 	"github.com/kimitsu-ai/ktsu/internal/builtins"
 	envelopepkg "github.com/kimitsu-ai/ktsu/internal/builtins/envelope"
@@ -685,6 +687,16 @@ func checkWorkflow(file string, wf *config.WorkflowConfig, projectDir string) Va
 			absPath := filepath.Join(projectDir, agentPath)
 			validateExternalRef(&res, absPath, "agent", projectDir)
 		}
+
+		// Check sub-workflow env: scoping
+		if step.Workflow != "" && !strings.HasPrefix(step.Workflow, "ktsu/") {
+			// For local workflow refs, check for env: references in the sub-workflow file
+			wfPath := step.Workflow
+			if !filepath.IsAbs(wfPath) {
+				wfPath = filepath.Join(projectDir, wfPath)
+			}
+			checkEnvScoping(wfPath, "sub-workflow", &res.Errors)
+		}
 	}
 
 	// DAG cycle check
@@ -722,6 +734,54 @@ func useColor(out io.Writer) bool {
 	return false
 }
 
+// envRefLocations recursively finds all "env:*" string values in a YAML-decoded structure.
+// Returns descriptive location strings like "auth: \"env:MY_VAR\"".
+func envRefLocations(v interface{}, path string) []string {
+	var found []string
+	switch val := v.(type) {
+	case string:
+		if strings.HasPrefix(val, "env:") {
+			if path != "" {
+				found = append(found, fmt.Sprintf("%s: %q", path, val))
+			} else {
+				found = append(found, fmt.Sprintf("%q", val))
+			}
+		}
+	case map[string]interface{}:
+		for k, child := range val {
+			childPath := k
+			if path != "" {
+				childPath = path + "." + k
+			}
+			found = append(found, envRefLocations(child, childPath)...)
+		}
+	case []interface{}:
+		for i, child := range val {
+			found = append(found, envRefLocations(child, fmt.Sprintf("%s[%d]", path, i))...)
+		}
+	}
+	return found
+}
+
+// checkEnvScoping reads filePath, scans for env: references, and appends errors to errs.
+// fileKind is a human-readable label like "Agent" or "Server file".
+func checkEnvScoping(filePath, fileKind string, errs *[]string) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return // file not found is already reported elsewhere
+	}
+	var raw interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return
+	}
+	for _, ref := range envRefLocations(raw, "") {
+		*errs = append(*errs, fmt.Sprintf(
+			"env: reference outside root workflow context in %s file %s — %s — use param: instead",
+			fileKind, filePath, ref,
+		))
+	}
+}
+
 func validateExternalRef(res *ValidationResult, path, kind string, projectDir string) {
 	if _, ok := res.ExternalRefs[path]; ok {
 		return
@@ -735,6 +795,8 @@ func validateExternalRef(res *ValidationResult, path, kind string, projectDir st
 			ext.Errors = append(ext.Errors, err.Error())
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", path, err))
 		} else {
+			checkEnvScoping(path, "agent", &res.Errors)
+
 			// Check for output schema
 			if agentCfg.Output == nil || len(agentCfg.Output.Schema) == 0 {
 				ext.Errors = append(ext.Errors, "agent has no output schema defined")
@@ -792,7 +854,11 @@ func validateExternalRef(res *ValidationResult, path, kind string, projectDir st
 			if err2 != nil {
 				ext.Errors = append(ext.Errors, err.Error())
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", path, err))
+			} else {
+				checkEnvScoping(path, "server", &res.Errors)
 			}
+		} else {
+			checkEnvScoping(path, "server", &res.Errors)
 		}
 	}
 	res.ExternalRefs[path] = ext
