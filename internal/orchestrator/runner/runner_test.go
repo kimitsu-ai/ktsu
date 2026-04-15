@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -90,7 +92,7 @@ func TestRunner_workflowInput(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-input", wf, map[string]interface{}{"message": "hello"})
+	err := r.Execute(ctx, "test-workflow", "run-input", wf, map[string]interface{}{"message": "hello"}, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -139,7 +141,7 @@ func TestRunner_transformStep_merge(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-merge", wf, nil)
+	err := r.Execute(ctx, "test-workflow", "run-merge", wf, nil, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -194,7 +196,7 @@ func TestRunner_transformStep_filter(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-filter", wf, input)
+	err := r.Execute(ctx, "test-workflow", "run-filter", wf, input, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -247,7 +249,7 @@ func TestRunner_transformStep_sort(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-sort", wf, input)
+	err := r.Execute(ctx, "test-workflow", "run-sort", wf, input, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -297,7 +299,7 @@ func TestRunner_webhookStep_success(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-webhook", wf, map[string]interface{}{"msg": "hello world"})
+	err := r.Execute(ctx, "test-workflow", "run-webhook", wf, map[string]interface{}{"msg": "hello world"}, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -339,7 +341,7 @@ func TestRunner_webhookStep_non2xx(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-webhook-fail", wf, nil)
+	err := r.Execute(ctx, "test-workflow", "run-webhook-fail", wf, nil, nil)
 	if err == nil {
 		t.Fatal("expected Execute to fail on non-2xx webhook, but it succeeded")
 	}
@@ -371,7 +373,7 @@ func TestRunner_webhookStep_condition_false(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-cond", wf, nil)
+	err := r.Execute(ctx, "test-workflow", "run-cond", wf, nil, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -399,7 +401,7 @@ func TestRunner_agentStep_stub(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-agent", wf, nil)
+	err := r.Execute(ctx, "test-workflow", "run-agent", wf, nil, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -431,7 +433,7 @@ func TestRunner_reservedField_injectionAttempt(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-injection", wf, nil)
+	err := r.Execute(ctx, "test-workflow", "run-injection", wf, nil, nil)
 	if err == nil {
 		t.Fatal("expected Execute to fail on injection attempt")
 	}
@@ -457,7 +459,7 @@ func TestRunner_reservedField_needsHuman(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-needs-human", wf, nil)
+	err := r.Execute(ctx, "test-workflow", "run-needs-human", wf, nil, nil)
 	if err == nil {
 		t.Fatal("expected Execute to fail on needs_human")
 	}
@@ -483,7 +485,7 @@ func TestRunner_reservedField_skipReason(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-skip", wf, nil)
+	err := r.Execute(ctx, "test-workflow", "run-skip", wf, nil, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -510,7 +512,7 @@ func TestRunner_reservedField_confidence_below_threshold(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-conf", wf, nil)
+	err := r.Execute(ctx, "test-workflow", "run-conf", wf, nil, nil)
 	if err == nil {
 		t.Fatal("expected Execute to fail due to low confidence")
 	}
@@ -554,7 +556,7 @@ func TestRunner_multiStep_dag(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-dag", wf, nil)
+	err := r.Execute(ctx, "test-workflow", "run-dag", wf, nil, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -607,7 +609,7 @@ func TestRunner_timeout_failsRunOnDeadline(t *testing.T) {
 
 	start := time.Now()
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-timeout", wf, nil)
+	err := r.Execute(ctx, "test-workflow", "run-timeout", wf, nil, nil)
 	elapsed := time.Since(start)
 	close(unblock) // release the handler goroutine
 
@@ -661,7 +663,7 @@ func TestRunner_webhookStep_envBodyValue(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	if err := r.Execute(ctx, "test-workflow", "run-env-body", wf, nil); err != nil {
+	if err := r.Execute(ctx, "test-workflow", "run-env-body", wf, nil, nil); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -693,7 +695,7 @@ func TestRunner_fanout_basic(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := r.Execute(ctx, "test-workflow", "run-fanout", wf, input); err != nil {
+	if err := r.Execute(ctx, "test-workflow", "run-fanout", wf, input, nil); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -737,7 +739,7 @@ func TestRunner_fanout_maxItems(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := r.Execute(ctx, "test-workflow", "run-fanout-max", wf, input); err != nil {
+	if err := r.Execute(ctx, "test-workflow", "run-fanout-max", wf, input, nil); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -771,7 +773,7 @@ func TestRunner_fanout_itemAndIndex(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := r.Execute(ctx, "test-workflow", "run-fanout-idx", wf, input); err != nil {
+	if err := r.Execute(ctx, "test-workflow", "run-fanout-idx", wf, input, nil); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -813,7 +815,7 @@ func TestRunner_fanout_emptyArray(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := r.Execute(ctx, "test-workflow", "run-fanout-empty", wf, input); err != nil {
+	if err := r.Execute(ctx, "test-workflow", "run-fanout-empty", wf, input, nil); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -847,7 +849,7 @@ func TestRunner_fanout_metricsAggregated(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := r.Execute(ctx, "test-workflow", "run-fanout-metrics", wf, input); err != nil {
+	if err := r.Execute(ctx, "test-workflow", "run-fanout-metrics", wf, input, nil); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -889,7 +891,7 @@ func TestRunner_fanout_hyphenatedStepID(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	if err := r.Execute(ctx, "test-workflow", "run-hyphen-fanout", wf, map[string]interface{}{}); err != nil {
+	if err := r.Execute(ctx, "test-workflow", "run-hyphen-fanout", wf, map[string]interface{}{}, nil); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -946,7 +948,7 @@ func TestRunner_webhookBody_hyphenatedStepRef(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	if err := r.Execute(ctx, "test-workflow", "run-hyphen-webhook", wf, map[string]interface{}{}); err != nil {
+	if err := r.Execute(ctx, "test-workflow", "run-hyphen-webhook", wf, map[string]interface{}{}, nil); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -991,7 +993,7 @@ func TestRunner_condition_hyphenatedStepRef(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	if err := r.Execute(ctx, "test-workflow", "run-hyphen-cond", wf, map[string]interface{}{}); err != nil {
+	if err := r.Execute(ctx, "test-workflow", "run-hyphen-cond", wf, map[string]interface{}{}, nil); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -1023,7 +1025,7 @@ func TestRunner_fanout_defaultFailFast(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-fanout-fail", wf, input)
+	err := r.Execute(ctx, "test-workflow", "run-fanout-fail", wf, input, nil)
 	if err == nil {
 		t.Fatal("expected Execute to fail when max_failures=0 and an item fails")
 	}
@@ -1062,7 +1064,7 @@ func TestRunner_fanout_maxFailures_tolerateOne(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-fanout-tol1", wf, input)
+	err := r.Execute(ctx, "test-workflow", "run-fanout-tol1", wf, input, nil)
 	if err != nil {
 		t.Fatalf("expected Execute to succeed with max_failures=1 and 1 failure, got: %v", err)
 	}
@@ -1120,7 +1122,7 @@ func TestRunner_fanout_maxFailures_exceedThreshold(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-fanout-exceed", wf, input)
+	err := r.Execute(ctx, "test-workflow", "run-fanout-exceed", wf, input, nil)
 	if err == nil {
 		t.Fatal("expected Execute to fail when failures exceed max_failures")
 	}
@@ -1154,7 +1156,7 @@ func TestRunner_fanout_maxFailures_unlimited(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-fanout-unlimited", wf, input)
+	err := r.Execute(ctx, "test-workflow", "run-fanout-unlimited", wf, input, nil)
 	if err != nil {
 		t.Fatalf("expected Execute to succeed with max_failures=-1, got: %v", err)
 	}
@@ -1198,7 +1200,7 @@ func TestRunner_metrics_preserved_on_skip(t *testing.T) {
 
 	ctx := context.Background()
 	// Execute succeeds at the workflow level (the step is skipped, not failed).
-	_ = r.Execute(ctx, "test-workflow", "run-skip-metrics", wf, map[string]interface{}{})
+	_ = r.Execute(ctx, "test-workflow", "run-skip-metrics", wf, map[string]interface{}{}, nil)
 
 	step, err := store.GetStep(ctx, "run-skip-metrics", "classify")
 	if err != nil {
@@ -1245,7 +1247,7 @@ func TestRunner_metrics_preserved_on_airlock_fail(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-airlock-metrics", wf, map[string]interface{}{})
+	err := r.Execute(ctx, "test-workflow", "run-airlock-metrics", wf, map[string]interface{}{}, nil)
 	if err == nil {
 		t.Fatal("expected Execute to fail due to airlock validation error")
 	}
@@ -1283,7 +1285,7 @@ func TestRunner_agentStep_setsReflected(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	if err := r.Execute(ctx, "test-wf", "run-reflect", wf, nil); err != nil {
+	if err := r.Execute(ctx, "test-wf", "run-reflect", wf, nil, nil); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -1316,7 +1318,7 @@ func TestRunner_fanoutAgentStep_setsReflected(t *testing.T) {
 	input := map[string]interface{}{
 		"items": []interface{}{"a", "b"},
 	}
-	if err := r.Execute(ctx, "test-wf", "run-fanout", wf, input); err != nil {
+	if err := r.Execute(ctx, "test-wf", "run-fanout", wf, input, nil); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -1353,7 +1355,7 @@ func TestRunner_nonAgentStep_nilReflected(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	if err := runner.Execute(ctx, "test-wf", "run-webhook", wf, nil); err != nil {
+	if err := runner.Execute(ctx, "test-wf", "run-webhook", wf, nil, nil); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -1363,6 +1365,212 @@ func TestRunner_nonAgentStep_nilReflected(t *testing.T) {
 	}
 	if step.Reflected != nil {
 		t.Errorf("want Reflected=nil for webhook step, got %v", step.Reflected)
+	}
+}
+
+func TestRunner_workflowStep_executesTransformInline(t *testing.T) {
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: inner
+version: "1.0.0"
+pipeline:
+  - id: greet
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "{result: message}"
+    output:
+      schema:
+        type: object
+        properties:
+          result: {type: string}
+`
+	subPath := filepath.Join(dir, "inner.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:       "call",
+		Workflow: subPath,
+		WorkflowInput: map[string]interface{}{
+			"message": "input.greeting",
+		},
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	ctx := context.Background()
+	err := r.Execute(ctx, "parent", "run1", parentWF, map[string]interface{}{"greeting": "hello"}, nil)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	steps, _ := store.ListSteps(ctx, "run1")
+	var callStep *types.Step
+	for i := range steps {
+		if steps[i].ID == "call" {
+			callStep = steps[i]
+		}
+	}
+	if callStep == nil {
+		t.Fatal("expected step 'call' in store")
+	}
+	if callStep.Status != types.StepStatusComplete {
+		t.Errorf("expected complete, got %s: %s", callStep.Status, callStep.Error)
+	}
+	// The sub-workflow's final step output is surfaced as the workflow step's output.
+	// Transform's map op produces [{result: hello}] wrapped in {result: ...}.
+	res, ok := callStep.Output["result"].([]interface{})
+	if !ok || len(res) != 1 {
+		t.Fatalf("expected result array of len 1, got %v", callStep.Output)
+	}
+	first, _ := res[0].(map[string]interface{})
+	if first["result"] != "hello" {
+		t.Errorf("expected nested result=hello, got %v", callStep.Output)
+	}
+}
+
+func TestRunner_workflowStep_webhookSuppressedByDefault(t *testing.T) {
+	callCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	dir := t.TempDir()
+	subWFYAML := fmt.Sprintf(`kind: workflow
+name: sub
+version: "1.0.0"
+webhooks: suppress
+pipeline:
+  - id: notify
+    webhook:
+      url: %q
+      method: POST
+`, ts.URL)
+	subPath := filepath.Join(dir, "sub.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:       "call",
+		Workflow: subPath,
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, nil, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if callCount != 0 {
+		t.Errorf("webhook should be suppressed by default, called %d times", callCount)
+	}
+}
+
+func TestRunner_workflowStep_webhookExecutesWhenBothOptIn(t *testing.T) {
+	callCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	dir := t.TempDir()
+	subWFYAML := fmt.Sprintf(`kind: workflow
+name: sub
+version: "1.0.0"
+webhooks: execute
+pipeline:
+  - id: notify
+    webhook:
+      url: %q
+      method: POST
+`, ts.URL)
+	subPath := filepath.Join(dir, "sub.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:               "call",
+		Workflow:         subPath,
+		WorkflowWebhooks: "execute",
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, nil, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if callCount != 1 {
+		t.Errorf("webhook should fire once when both opt in, called %d times", callCount)
+	}
+}
+
+func TestRunner_workflowStep_paramPassthrough(t *testing.T) {
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: sub
+version: "1.0.0"
+params:
+  schema:
+    type: object
+    required: [greeting]
+    properties:
+      greeting: {type: string}
+pipeline:
+  - id: echo
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "{result: message}"
+    output:
+      schema:
+        type: object
+        properties:
+          result: {type: string}
+`
+	subPath := filepath.Join(dir, "sub.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:       "call",
+		Workflow: subPath,
+		Params:   map[string]interface{}{"greeting": "`hello`"},
+		WorkflowInput: map[string]interface{}{
+			"message": "input.text",
+		},
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, map[string]interface{}{"text": "world"}, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	steps, _ := store.ListSteps(context.Background(), "run1")
+	var callStep *types.Step
+	for i := range steps {
+		if steps[i].ID == "call" {
+			callStep = steps[i]
+		}
+	}
+	if callStep == nil || callStep.Status != types.StepStatusComplete {
+		t.Fatalf("call step not complete: %+v", callStep)
 	}
 }
 
