@@ -803,6 +803,19 @@ func (r *Runner) executeWorkflow(
 		resolvedParams[k] = val
 	}
 
+	// Validate required params from the sub-workflow's params.schema.
+	declaredParams, parseErr := config.ParseParamsSchema(subWF.Params.Schema)
+	if parseErr != nil {
+		return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q: sub-workflow params schema: %w", step.ID, parseErr)
+	}
+	for name, decl := range declaredParams {
+		if decl.Default == nil { // required
+			if _, ok := resolvedParams[name]; !ok {
+				return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q: missing required param %q for sub-workflow %q", step.ID, name, step.Workflow)
+			}
+		}
+	}
+
 	subInput := make(map[string]interface{}, len(step.WorkflowInput))
 	for field, exprRaw := range step.WorkflowInput {
 		expr, ok := exprRaw.(string)

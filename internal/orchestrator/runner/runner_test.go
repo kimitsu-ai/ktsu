@@ -1574,6 +1574,49 @@ pipeline:
 	}
 }
 
+func TestRunner_workflowStep_missingRequiredParam_returnsError(t *testing.T) {
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: sub
+version: "1.0.0"
+params:
+  schema:
+    type: object
+    required: [webhook_url]
+    properties:
+      webhook_url: {type: string}
+pipeline:
+  - id: noop
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "{ok: true}"
+`
+	subPath := filepath.Join(dir, "sub.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:       "call",
+		Workflow: subPath,
+		// webhook_url intentionally omitted
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	err := r.Execute(context.Background(), "parent", "run1", parentWF, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for missing required param")
+	}
+	if !strings.Contains(err.Error(), "missing required param") {
+		t.Errorf("expected 'missing required param' in error, got: %v", err)
+	}
+}
+
 func TestStepTypeWorkflow_constant(t *testing.T) {
 	if types.StepTypeWorkflow != "workflow" {
 		t.Errorf("StepTypeWorkflow should be \"workflow\", got %q", types.StepTypeWorkflow)
