@@ -18,12 +18,6 @@ type PromptConfig struct {
 	System string `yaml:"system"`
 }
 
-// StepParams holds namespaced parameter values for a workflow pipeline step.
-type StepParams struct {
-	Agent  map[string]any            `yaml:"agent,omitempty"`
-	Server map[string]map[string]any `yaml:"server,omitempty"`
-}
-
 // WorkflowConfig represents a workflow.yaml file (kind: workflow)
 type WorkflowConfig struct {
 	Kind        string           `yaml:"kind"`
