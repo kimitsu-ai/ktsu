@@ -219,7 +219,7 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		ctx := context.Background()
-		if err := s.runner.Execute(ctx, workflow, runID, wf, input); err != nil {
+		if err := s.runner.Execute(ctx, workflow, runID, wf, input, nil); err != nil {
 			s.logf("run %s failed: %v", runID, err)
 		}
 	}()

@@ -48,7 +48,10 @@ func NewWithDispatcher(store state.Store, dispatcher AgentDispatcher) *Runner {
 
 // Execute runs a workflow pipeline with the provided input.
 // The input is pre-populated as stepOutputs["input"] and available to all steps.
-func (r *Runner) Execute(ctx context.Context, workflowName string, runID string, wf *config.WorkflowConfig, input map[string]interface{}) error {
+// Execute runs a workflow pipeline with the provided input and optional invocation params.
+// invocationParams provides resolved values for param: references in the workflow.
+// Pass nil for root workflows (env: is allowed); sub-workflows receive their resolved params.
+func (r *Runner) Execute(ctx context.Context, workflowName string, runID string, wf *config.WorkflowConfig, input map[string]interface{}, invocationParams map[string]string) error {
 	if wf.ModelPolicy != nil && wf.ModelPolicy.TimeoutS > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(wf.ModelPolicy.TimeoutS)*time.Second)
