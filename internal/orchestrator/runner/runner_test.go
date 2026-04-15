@@ -17,6 +17,14 @@ import (
 	"github.com/kimitsu-ai/ktsu/pkg/types"
 )
 
+// --- StepType constants ---
+
+func TestStepTypeWorkflow_constant(t *testing.T) {
+	if types.StepTypeWorkflow != "workflow" {
+		t.Errorf("StepTypeWorkflow should be \"workflow\", got %q", types.StepTypeWorkflow)
+	}
+}
+
 func makeWorkflow(steps ...config.PipelineStep) *config.WorkflowConfig {
 	return &config.WorkflowConfig{
 		Kind:     "workflow",
