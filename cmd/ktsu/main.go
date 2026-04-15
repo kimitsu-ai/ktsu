@@ -26,6 +26,7 @@ import (
 	"github.com/kimitsu-ai/ktsu/internal/builtins"
 	envelopepkg "github.com/kimitsu-ai/ktsu/internal/builtins/envelope"
 	"github.com/kimitsu-ai/ktsu/internal/config"
+	configbuiltins "github.com/kimitsu-ai/ktsu/internal/config/builtins"
 	"github.com/kimitsu-ai/ktsu/internal/gateway"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/dag"
@@ -688,15 +689,53 @@ func checkWorkflow(file string, wf *config.WorkflowConfig, projectDir string) Va
 			validateExternalRef(&res, absPath, "agent", projectDir)
 		}
 
-		// Check sub-workflow env: scoping
-		if step.Workflow != "" && !strings.HasPrefix(step.Workflow, "ktsu/") {
-			// For local workflow refs, check for env: references in the sub-workflow file
-			wfPath := step.Workflow
-			if !filepath.IsAbs(wfPath) {
-				wfPath = filepath.Join(projectDir, wfPath)
+		// Check sub-workflow references — resolve relative to the workflow file's directory.
+		if step.Workflow != "" {
+			wfDir := filepath.Dir(file)
+			subWF, resolveErr := configbuiltins.ResolveWorkflowRef(step.Workflow, wfDir)
+			if resolveErr != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: step %q: cannot resolve workflow ref %q: %v", file, step.ID, step.Workflow, resolveErr))
+			} else {
+				// Webhook conflict: parent step opts in but sub-workflow doesn't
+				if step.WorkflowWebhooks == "execute" && subWF.Webhooks != "execute" {
+					res.Errors = append(res.Errors, fmt.Sprintf(
+						"%s: step %q: webhooks: execute declared on step but sub-workflow %q declares webhooks: %q (must also be \"execute\" for webhooks to fire)",
+						file, step.ID, step.Workflow, subWF.Webhooks,
+					))
+				}
+
+				// Missing required params
+				declaredParams, parseErr := config.ParseParamsSchema(subWF.Params.Schema)
+				if parseErr != nil {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: step %q: sub-workflow params schema: %v", file, step.ID, parseErr))
+				} else {
+					for name, decl := range declaredParams {
+						if decl.Default == nil {
+							if _, provided := step.Params[name]; !provided {
+								res.Errors = append(res.Errors, fmt.Sprintf(
+									"%s: step %q: missing required param %q for sub-workflow %q",
+									file, step.ID, name, step.Workflow,
+								))
+							}
+						}
+					}
+				}
+
+				// Env scoping for local (non-ktsu/) sub-workflows
+				if !strings.HasPrefix(step.Workflow, "ktsu/") {
+					wfPath := step.Workflow
+					if !filepath.IsAbs(wfPath) {
+						wfPath = filepath.Join(wfDir, wfPath)
+					}
+					checkEnvScoping(wfPath, "sub-workflow", &res.Errors)
+				}
 			}
-			checkEnvScoping(wfPath, "sub-workflow", &res.Errors)
 		}
+	}
+
+	// Cross-workflow cycle detection — use the workflow file as the DFS root.
+	if cycleMsg := checkWorkflowCycles(file, make(map[string]bool), make(map[string]bool)); cycleMsg != "" {
+		res.Errors = append(res.Errors, cycleMsg)
 	}
 
 	// DAG cycle check
@@ -761,6 +800,46 @@ func envRefLocations(v interface{}, path string) []string {
 		}
 	}
 	return found
+}
+
+// checkWorkflowCycles performs DFS across workflow step references starting from rootRef.
+// rootRef must be an absolute file path or a ktsu/ name.
+// visited tracks refs we've fully processed; inStack tracks the current DFS path.
+// Returns a non-empty error message if a cycle is detected.
+func checkWorkflowCycles(rootRef string, visited, inStack map[string]bool) string {
+	if inStack[rootRef] {
+		return fmt.Sprintf("workflow cycle detected: %q is referenced transitively by itself", rootRef)
+	}
+	if visited[rootRef] {
+		return ""
+	}
+	visited[rootRef] = true
+	inStack[rootRef] = true
+	defer func() { inStack[rootRef] = false }()
+
+	// Resolve relative to the root ref's own directory.
+	rootDir := filepath.Dir(rootRef)
+	wf, err := configbuiltins.ResolveWorkflowRef(rootRef, rootDir)
+	if err != nil {
+		// Unresolvable refs are reported elsewhere; skip cycle check for them.
+		return ""
+	}
+	for _, step := range wf.Pipeline {
+		if step.Workflow == "" {
+			continue
+		}
+		dep := step.Workflow
+		if strings.HasPrefix(dep, "ktsu/") {
+			continue // shipped workflows can't form cycles
+		}
+		if !filepath.IsAbs(dep) {
+			dep = filepath.Join(rootDir, dep)
+		}
+		if msg := checkWorkflowCycles(dep, visited, inStack); msg != "" {
+			return msg
+		}
+	}
+	return ""
 }
 
 // checkEnvScoping reads filePath, scans for env: references, and appends errors to errs.

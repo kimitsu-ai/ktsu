@@ -866,3 +866,151 @@ pipeline:
 		t.Errorf("want no error for reflect+max_turns:1, got: %v", err)
 	}
 }
+
+// TestValidateCmd_workflowStep_webhookConflict verifies that validate catches a parent step
+// declaring webhooks: execute when the sub-workflow declares webhooks: suppress.
+func TestValidateCmd_workflowStep_webhookConflict(t *testing.T) {
+	dir := t.TempDir()
+
+	subWF := `kind: workflow
+name: sub
+version: "1.0.0"
+visibility: sub-workflow
+webhooks: suppress
+pipeline:
+  - id: noop
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "{ok: true}"
+`
+	if err := writeFile(filepath.Join(dir, "workflows/sub.workflow.yaml"), subWF); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := `kind: workflow
+name: parent
+version: "1.0.0"
+pipeline:
+  - id: call
+    workflow: ./sub.workflow.yaml
+    webhooks: execute
+`
+	if err := writeFile(filepath.Join(dir, "workflows/parent.workflow.yaml"), parentWF); err != nil {
+		t.Fatalf("write parent workflow: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.Flags().Set("workflow-dir", filepath.Join(dir, "workflows"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.RunE(cmd, []string{dir})
+	if err == nil {
+		t.Fatal("expected validation error for webhook conflict, got none")
+	}
+	if !strings.Contains(buf.String(), "webhooks: execute") {
+		t.Errorf("expected webhook conflict message, got: %s", buf.String())
+	}
+}
+
+// TestValidateCmd_workflowStep_missingRequiredParam verifies that validate catches a
+// workflow step that doesn't provide a required param declared by the sub-workflow.
+func TestValidateCmd_workflowStep_missingRequiredParam(t *testing.T) {
+	dir := t.TempDir()
+
+	subWF := `kind: workflow
+name: sub
+version: "1.0.0"
+visibility: sub-workflow
+params:
+  schema:
+    type: object
+    required: [webhook_url]
+    properties:
+      webhook_url: {type: string}
+pipeline:
+  - id: noop
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "{ok: true}"
+`
+	if err := writeFile(filepath.Join(dir, "workflows/sub.workflow.yaml"), subWF); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := `kind: workflow
+name: parent
+version: "1.0.0"
+pipeline:
+  - id: call
+    workflow: ./sub.workflow.yaml
+    # webhook_url intentionally omitted
+`
+	if err := writeFile(filepath.Join(dir, "workflows/parent.workflow.yaml"), parentWF); err != nil {
+		t.Fatalf("write parent workflow: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.Flags().Set("workflow-dir", filepath.Join(dir, "workflows"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.RunE(cmd, []string{dir})
+	if err == nil {
+		t.Fatal("expected validation error for missing required param, got none")
+	}
+	if !strings.Contains(buf.String(), "webhook_url") {
+		t.Errorf("expected 'webhook_url' in error output, got: %s", buf.String())
+	}
+}
+
+// TestValidateCmd_workflowStep_crossWorkflowCycle verifies that validate catches cycles
+// across workflow step references (A → B → A).
+func TestValidateCmd_workflowStep_crossWorkflowCycle(t *testing.T) {
+	dir := t.TempDir()
+
+	// A references B
+	wfA := `kind: workflow
+name: wf-a
+version: "1.0.0"
+pipeline:
+  - id: call-b
+    workflow: ./wf-b.workflow.yaml
+`
+	// B references A
+	wfB := `kind: workflow
+name: wf-b
+version: "1.0.0"
+pipeline:
+  - id: call-a
+    workflow: ./wf-a.workflow.yaml
+`
+	if err := writeFile(filepath.Join(dir, "workflows/wf-a.workflow.yaml"), wfA); err != nil {
+		t.Fatalf("write wf-a: %v", err)
+	}
+	if err := writeFile(filepath.Join(dir, "workflows/wf-b.workflow.yaml"), wfB); err != nil {
+		t.Fatalf("write wf-b: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.Flags().Set("workflow-dir", filepath.Join(dir, "workflows"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.RunE(cmd, []string{dir})
+	if err == nil {
+		t.Fatal("expected validation error for cross-workflow cycle, got none")
+	}
+	if !strings.Contains(buf.String(), "cycle") {
+		t.Errorf("expected 'cycle' in error output, got: %s", buf.String())
+	}
+}
