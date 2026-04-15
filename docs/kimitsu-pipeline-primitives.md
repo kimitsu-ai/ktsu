@@ -3,7 +3,7 @@
 
 ---
 
-## The Three Primitives
+## The Four Primitives
 
 Every step in a Kimitsu pipeline is exactly one of:
 
@@ -12,8 +12,9 @@ Every step in a Kimitsu pipeline is exactly one of:
 | **Transform** | Never | Never | Orchestrator (direct op chain) |
 | **Agent** | Always | Optional | Agent Runtime |
 | **Webhook** | Never | Never | Orchestrator (HTTP POST) |
+| **Workflow** | Never (directly) | Never (directly) | Orchestrator (inline sub-pipeline) |
 
-Nothing else. If logic requires reasoning about content, it is an agent. If it is pure data shaping, it is a transform. If it needs to call out to an external system, it is a webhook. There is no fourth option and no escape hatch.
+Nothing else. If logic requires reasoning about content, it is an agent. If it is pure data shaping, it is a transform. If it needs to call out to an external system, it is a webhook. If it needs to execute another workflow's full pipeline inline, it is a workflow step.
 
 ---
 
@@ -376,6 +377,55 @@ To trigger a child workflow from a parent, use a webhook step pointing to the ch
 ```
 
 The child workflow's `POST /invoke/{workflow}` receives this as its input body. There is no special parent/child link — the child workflow is an independent run.
+
+---
+
+## Workflow Steps
+
+A workflow step executes another workflow's full pipeline inline, under the parent's `run_id`. It is the mechanism for composing reusable sub-workflows into a parent pipeline.
+
+### Inline Execution
+
+The sub-workflow's pipeline runs synchronously within the parent run. Steps are recorded under a namespaced run_id: `parentRunID/stepID`. The sub-workflow shares the parent's state storage — there is no separate run context.
+
+### Sub-Run ID Namespacing
+
+Sub-workflow steps appear in the state store with IDs of the form `parentRunID/stepID`. This makes it possible to query the full execution trace of a parent run including all sub-workflow steps.
+
+### Webhook Suppression
+
+Webhooks inside a sub-workflow are suppressed by default. Both the sub-workflow and the parent pipeline step must opt in to webhook execution:
+
+```yaml
+# In the sub-workflow file:
+webhooks: execute
+
+# In the parent pipeline step:
+- id: notify
+  workflow: ktsu/slack-reply
+  webhooks: execute
+```
+
+If either side omits `webhooks: execute`, all webhook steps inside the sub-workflow are skipped (not failed).
+
+### Metric Aggregation
+
+Token usage, cost, and LLM call counts from all agent steps inside the sub-workflow are aggregated and attributed to the workflow step in the parent pipeline, the same way fanout metrics are aggregated for `for_each` steps.
+
+### Example
+
+```yaml
+- id: notify
+  workflow: ktsu/slack-reply
+  webhooks: execute
+  params:
+    webhook_url: "env:SLACK_WEBHOOK_URL"
+    username: "`support-bot`"
+  input:
+    channel_id: "steps.parse.channel_id"
+    text: "steps.agent.reply"
+  depends_on: [agent]
+```
 
 ---
 

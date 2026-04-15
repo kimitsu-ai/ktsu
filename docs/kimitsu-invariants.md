@@ -31,7 +31,7 @@
 
 13. **Every boundary is validated.** The Air-Lock checks output schema compliance at every step handoff. No step receives unvalidated data.
 
-14. **All secrets are indirected.** Credentials are always `env:VAR_NAME`. Secrets never appear in YAML files. LLM provider keys live only in the LLM Gateway.
+14. **Secrets flow down via params, not sideways via env.** Only root workflows may read `env:` values. Agent files, server files, and sub-workflow files must use `param:` references instead. Violation is a boot error.
 
 15. **Failure is explicit.** A step either completes or it fails the run. There is no continue-on-failure, no `optional` dependency, and no partial-failure semantics. If a step fails, the run fails immediately and all downstream steps are skipped.
 
@@ -53,7 +53,7 @@
 
 24. **The Agent Runtime heartbeats, the orchestrator decides.** Runtime containers report liveness; the orchestrator detects failures and takes action. No step runs without supervision.
 
-25. **There are exactly three pipeline primitives.** Transform, agent, webhook. No other step types exist. If logic requires LLM reasoning, it is an agent. If it is deterministic data shaping, it is a transform. If it needs to call an external HTTP endpoint, it is a webhook.
+25. **There are exactly four pipeline primitives.** Transform, agent, webhook, workflow. No other step types exist. If logic requires LLM reasoning, it is an agent. If it is deterministic data shaping, it is a transform. If it needs to call an external HTTP endpoint, it is a webhook. If it needs to execute another workflow's full pipeline inline, it is a workflow step.
 
 26. **Reserved output fields are an orchestrator contract, not a data convention.** Fields prefixed `ktsu_` are evaluated by the orchestrator before Air-Lock runs. Their behavior is fixed and cannot be overridden by agents or workflow configuration. Unknown `ktsu_` fields are a boot error.
 
@@ -70,6 +70,16 @@
 32. **Fanout metrics are additive.** Token usage and cost across all fanout invocations are summed and recorded on the step as a single aggregate, exactly as if a single agent had run.
 
 33. **Each workflow run owns its own cost budget and envelope.** Child workflows triggered via webhook get their own `run_id`, their own `cost_budget_usd`, and their own envelope. Cost does not roll up between runs.
+
+34. **A workflow step (`workflow:`) executes another workflow's full pipeline inline under the parent run_id.** The sub-workflow runs in the same process, shares state storage, and its steps are recorded under a namespaced run_id: `parentRunID/stepID`.
+
+35. **Sub-workflows are identified by `visibility: sub-workflow` in their workflow YAML.** They cannot be invoked directly via `POST /invoke` — attempting to do so returns 404.
+
+36. **Webhook execution in a sub-workflow requires dual opt-in:** the sub-workflow must declare `webhooks: execute` AND the parent pipeline step must also declare `webhooks: execute`. If either side omits this, webhooks inside the sub-workflow are suppressed (skipped, not failed).
+
+37. **Params (`params.schema`) declare named input values for a workflow or agent.** Required params have no default; optional params have a default. Callers must provide all required params or the invocation fails at validation time.
+
+38. **`ResolveValue` resolution order for param values in a workflow step's `params:` block:** (1) `env:VAR` — resolved from environment (root workflow only), (2) `param:NAME` — resolved from the caller's invocation params, (3) `` `literal` `` — backtick literal, (4) plain string — returned as-is, (5) JMESPath expression against accumulated step outputs.
 
 ---
 

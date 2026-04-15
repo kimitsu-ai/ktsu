@@ -17,6 +17,7 @@ See also: [YAML Spec](yaml-spec/index.md) · [Overview](kimitsu-overview.md) · 
 | `ktsu start envelope` | Start the shipped envelope tool server | Adding the envelope server to a running stack |
 | `ktsu invoke <workflow>` | Invoke a workflow | Development and testing |
 | `ktsu orchestrator envelope <run_id>` | Print the envelope for a run | Query debugging data from orchestrator |
+| `ktsu workflow tree <workflow-file>` | Print full dependency tree | Auditing sub-workflow, agent, and server references |
 | `ktsu validate [project-dir]` | Validate config files | CI, pre-deploy checks, local debugging |
 | `ktsu new project <name>` | Scaffold a new project | Starting a new Kimitsu project |
 | `ktsu lock` | Generate ktsu.lock.yaml | *(not yet implemented)* |
@@ -319,6 +320,38 @@ Creates:
 ktsu new project my-app
 cd my-app
 ktsu validate
+```
+
+---
+
+## ktsu workflow tree
+
+Print the full dependency tree of a workflow, including all sub-workflows, agents, and servers it references.
+
+**Usage:**
+
+```
+ktsu workflow tree <workflow-file> [--json]
+```
+
+**Arguments:**
+
+- `<workflow-file>`: Path to a `.workflow.yaml` file
+
+**Flags:**
+
+- `--json`: Output as JSON instead of tree format
+
+**Example:**
+
+```
+$ ktsu workflow tree workflows/support-bot.workflow.yaml
+/path/to/workflows/support-bot.workflow.yaml
+├── ktsu/slack-input (workflow)
+├── respond.workflow.yaml (workflow)
+│   └── agents/support-agent.agent.yaml (agent)
+│       └── servers/crm.server.yaml (server)
+└── ktsu/slack-reply (workflow)
 ```
 
 ---

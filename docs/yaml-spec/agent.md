@@ -12,12 +12,18 @@ name: triage-agent               # identity — used in logs and metrics
 description: "..."               # optional
 model: standard                  # model group name from gateway.yaml
 max_turns: 10                    # max reasoning turns before forced conclusion; default: 10
-params:                          # declared parameters — required unless default is set
-  persona:
-    description: "The role this agent plays"
-    default: "triage specialist"
-  escalation_team:
-    description: "Team name for escalations — required, no default"
+params:                          # declared parameters — JSON Schema format
+  schema:
+    type: object
+    required: [escalation_team]
+    properties:
+      persona:
+        type: string
+        description: "The role this agent plays"
+        default: "triage specialist"
+      escalation_team:
+        type: string
+        description: "Team name for escalations — required, no default"
 
 prompt:
   system: |
@@ -72,9 +78,10 @@ output:
 | `description` | string | no | Human-readable description |
 | `model` | string | yes | Model group name from `gateway.yaml` |
 | `max_turns` | number | no | Max reasoning turns before forced conclusion; default: 10 |
-| `params` | map | no | Declared parameters. Each entry requires `description`; `default` is optional. Params without a default are required — missing value is a boot error. Supports `env:VAR_NAME`. |
-| `params.<name>.description` | string | yes | Human-readable explanation of what the param controls |
-| `params.<name>.default` | string | no | Default value. Omit to make the param required. |
+| `params` | map | no | Declared parameters in JSON Schema format (`params.schema`). Required params have no `default`; optional params have a `default`. Missing required params are a boot error. Agent files may not use `env:` references — use `param:` references instead, resolved from the agent step's `params.agent` block at invocation time. |
+| `params.schema` | JSON Schema | no | Schema object declaring named params: `type: object`, optional `required: [...]`, and `properties` map with per-param `type`, `description`, and optional `default`. |
+| `params.schema.properties.<name>.description` | string | yes | Human-readable explanation of what the param controls |
+| `params.schema.properties.<name>.default` | string | no | Default value. Omit to make the param required. |
 | `prompt.system` | string | yes | System prompt. May reference declared params as `{{param_name}}`. |
 | `reflect` | string | no | Reflection prompt. After the reasoning loop produces a draft output, the agent evaluates it in a single additional LLM turn before Air-Lock runs. The reflected output replaces the draft entirely. Supports `{{param}}` interpolation with the same resolved agent params as `prompt.system`. See Reflect Trigger Logic. |
 | `servers` | array | no | Tool servers this agent may call; omit for toolless agent |
@@ -171,6 +178,7 @@ These are just JSON path conventions for the LLM — use them in prose instructi
 
 ## Notes
 
+- Agent files may not use `env:` references. Use `param:` references instead, which are resolved from the agent step's `params.agent` block at invocation time.
 - A toolless agent (no `servers` block) has no tools to exploit — recommended as the first pipeline step when handling raw user input.
 - Allowlist wildcards: `*` (all tools), `prefix-*` (prefix match). Mid-string wildcards are a boot error.
 - Allowlist entries may be plain strings or objects with `require_approval` to gate tool calls on human approval. When matched, the agent runtime suspends the run and sends a `pending_approval` callback; execution resumes after a decision is posted to `POST /runs/{run_id}/steps/{step_id}/approval/decide`.

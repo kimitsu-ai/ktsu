@@ -55,17 +55,18 @@ Well-documented boundaries make this possible. When in doubt, document the contr
 
 ## Core Concepts
 
-### The Three Pipeline Primitives
+### The Four Pipeline Primitives
 
-Every step in a Kimitsu pipeline is exactly one of three things:
+Every step in a Kimitsu pipeline is exactly one of four things:
 
 | Primitive | LLM | Tools | Role |
 |---|---|---|---|
 | **Transform** | Never | Never | Reshapes data between steps via deterministic ops |
 | **Agent** | Always | Optional | Reasons, classifies, synthesizes — the only LLM-bearing step type |
 | **Webhook** | Never | Never | POSTs pipeline data to an external URL; expects 200 for success |
+| **Workflow** | Never (directly) | Never (directly) | Executes another workflow's full pipeline inline under the parent run_id |
 
-Nothing else. If logic requires reasoning about content, it is an agent. If it is pure data shaping, it is a transform. If it needs to call out to an external system, it is a webhook. There is no fourth option and no escape hatch.
+Nothing else. If logic requires reasoning about content, it is an agent. If it is pure data shaping, it is a transform. If it needs to call out to an external system, it is a webhook. If it needs to execute another workflow's full pipeline inline, it is a workflow step.
 
 ### Everything is HTTP
 
@@ -128,7 +129,7 @@ Any agent may include reserved `ktsu_` prefixed fields in its output schema. The
 
 **MCP as the only interface.** Tool servers are MCP servers. Kimitsu does not wrap, host, or manage user-provided tool servers. Agents call them directly over HTTP/SSE. There is one protocol and one mental model.
 
-**Three and only three pipeline primitives.** Transform, agent, webhook. No special cases, no escape hatches. If it needs reasoning, it is an agent. Everything else is deterministic.
+**Four and only four pipeline primitives.** Transform, agent, webhook, workflow. No special cases, no escape hatches. If it needs reasoning, it is an agent. If it needs to execute another workflow inline, it is a workflow step. Everything else is deterministic.
 
 **The invoke endpoint is the integration contract.** Any HTTP client can start a workflow. Any HTTP server can receive pipeline output. Kimitsu does not prescribe trigger infrastructure or output destination — only the data shapes at the boundary.
 
