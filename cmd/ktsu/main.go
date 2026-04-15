@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 	"github.com/kimitsu-ai/ktsu/internal/builtins"
 	envelopepkg "github.com/kimitsu-ai/ktsu/internal/builtins/envelope"
 	"github.com/kimitsu-ai/ktsu/internal/config"
@@ -685,6 +686,31 @@ func checkWorkflow(file string, wf *config.WorkflowConfig, projectDir string) Va
 			absPath := filepath.Join(projectDir, agentPath)
 			validateExternalRef(&res, absPath, "agent", projectDir)
 		}
+
+		// Check sub-workflow references
+		if step.Workflow != "" {
+			subWF, err := config.ResolveWorkflowRef(step.Workflow, projectDir)
+			if err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: step %q: cannot resolve workflow ref %q: %v", file, step.ID, step.Workflow, err))
+				continue
+			}
+			// Check env scoping on sub-workflow
+			// Re-read raw to scan for env: refs (only for local workflows, not shipped)
+			if !strings.HasPrefix(step.Workflow, "ktsu/") {
+				wfPath := step.Workflow
+				if !filepath.IsAbs(wfPath) {
+					wfPath = filepath.Join(projectDir, wfPath)
+				}
+				if data, readErr := os.ReadFile(wfPath); readErr == nil {
+					var rawWF interface{}
+					yaml.Unmarshal(data, &rawWF)
+					for _, msg := range checkEnvScoping(wfPath, "Sub-workflow", rawWF) {
+						res.Errors = append(res.Errors, msg)
+					}
+				}
+			}
+			_ = subWF
+		}
 	}
 
 	// DAG cycle check
@@ -722,6 +748,48 @@ func useColor(out io.Writer) bool {
 	return false
 }
 
+// envRefLocations returns all "env:VAR" references found in a structured YAML value.
+// Returns (location-hint, value) pairs where location-hint is a descriptive path (e.g. "auth").
+func envRefLocations(v interface{}, path string) []string {
+	var found []string
+	switch val := v.(type) {
+	case string:
+		if strings.HasPrefix(val, "env:") {
+			found = append(found, fmt.Sprintf("%s: %q", path, val))
+		}
+	case map[string]interface{}:
+		for k, child := range val {
+			childPath := k
+			if path != "" {
+				childPath = path + "." + k
+			}
+			found = append(found, envRefLocations(child, childPath)...)
+		}
+	case []interface{}:
+		for i, child := range val {
+			found = append(found, envRefLocations(child, fmt.Sprintf("%s[%d]", path, i))...)
+		}
+	}
+	return found
+}
+
+// checkEnvScoping scans a loaded file's raw YAML for env: references.
+// Returns error messages for any found, with file path context.
+func checkEnvScoping(filePath, fileKind string, rawData interface{}) []string {
+	refs := envRefLocations(rawData, "")
+	if len(refs) == 0 {
+		return nil
+	}
+	errs := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		errs = append(errs, fmt.Sprintf(
+			"ERROR  env: reference outside root workflow context\n  File: %s\n  Location: %s\n  %s files may not reference environment variables directly. Use param: instead.",
+			filePath, ref, fileKind,
+		))
+	}
+	return errs
+}
+
 func validateExternalRef(res *ValidationResult, path, kind string, projectDir string) {
 	if _, ok := res.ExternalRefs[path]; ok {
 		return
@@ -735,6 +803,15 @@ func validateExternalRef(res *ValidationResult, path, kind string, projectDir st
 			ext.Errors = append(ext.Errors, err.Error())
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", path, err))
 		} else {
+			// Check env scoping — agents may not use env:
+			var rawAgent interface{}
+			if data, readErr := os.ReadFile(path); readErr == nil {
+				yaml.Unmarshal(data, &rawAgent)
+				for _, msg := range checkEnvScoping(path, "Agent", rawAgent) {
+					res.Errors = append(res.Errors, msg)
+				}
+			}
+
 			// Check for output schema
 			if agentCfg.Output == nil || len(agentCfg.Output.Schema) == 0 {
 				ext.Errors = append(ext.Errors, "agent has no output schema defined")
@@ -785,7 +862,7 @@ func validateExternalRef(res *ValidationResult, path, kind string, projectDir st
 			}
 		}
 	case "server":
-		_, err := config.LoadToolServer(path)
+		srvCfg, err := config.LoadToolServer(path)
 		if err != nil {
 			// Try as manifest
 			_, err2 := config.LoadServerManifest(path)
@@ -793,7 +870,17 @@ func validateExternalRef(res *ValidationResult, path, kind string, projectDir st
 				ext.Errors = append(ext.Errors, err.Error())
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", path, err))
 			}
+		} else {
+			// Check env scoping — servers may not use env:
+			var rawServer interface{}
+			if data, readErr := os.ReadFile(path); readErr == nil {
+				yaml.Unmarshal(data, &rawServer)
+				for _, msg := range checkEnvScoping(path, "Server", rawServer) {
+					res.Errors = append(res.Errors, msg)
+				}
+			}
 		}
+		_ = srvCfg
 	}
 	res.ExternalRefs[path] = ext
 }
