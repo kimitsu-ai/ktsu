@@ -8,6 +8,7 @@ const (
 	StepTypeTransform StepType = "transform"
 	StepTypeAgent     StepType = "agent"
 	StepTypeWebhook   StepType = "webhook"
+	StepTypeWorkflow  StepType = "workflow"
 )
 
 type StepStatus string

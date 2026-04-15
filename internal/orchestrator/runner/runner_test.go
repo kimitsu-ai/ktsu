@@ -1365,3 +1365,9 @@ func TestRunner_nonAgentStep_nilReflected(t *testing.T) {
 		t.Errorf("want Reflected=nil for webhook step, got %v", step.Reflected)
 	}
 }
+
+func TestStepTypeWorkflow_constant(t *testing.T) {
+	if types.StepTypeWorkflow != "workflow" {
+		t.Errorf("StepTypeWorkflow should be \"workflow\", got %q", types.StepTypeWorkflow)
+	}
+}
