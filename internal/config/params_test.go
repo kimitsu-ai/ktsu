@@ -297,13 +297,21 @@ func TestResolveValue_envRef_forbidden(t *testing.T) {
 	}
 }
 
+func TestResolveValue_envRef_unset(t *testing.T) {
+	os.Unsetenv("DEFINITELY_NOT_SET_XYZ2")
+	_, err := ResolveValue("env:DEFINITELY_NOT_SET_XYZ2", true, nil)
+	if err == nil {
+		t.Fatal("expected error for unset env var")
+	}
+}
+
 func TestResolveValue_paramRef_found(t *testing.T) {
 	got, err := ResolveValue("param:webhook_url", false, map[string]string{"webhook_url": "https://example.com"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != "https://example.com" {
-		t.Errorf("got %q", got)
+		t.Errorf("got %q want %q", got, "https://example.com")
 	}
 }
 
@@ -311,6 +319,13 @@ func TestResolveValue_paramRef_missing(t *testing.T) {
 	_, err := ResolveValue("param:missing", false, map[string]string{})
 	if err == nil {
 		t.Fatal("expected error for missing param")
+	}
+}
+
+func TestResolveValue_paramRef_nilContext(t *testing.T) {
+	_, err := ResolveValue("param:anything", false, nil)
+	if err == nil {
+		t.Fatal("expected error when invocationParams is nil")
 	}
 }
 
@@ -324,21 +339,33 @@ func TestResolveValue_backtickLiteral(t *testing.T) {
 	}
 }
 
-func TestResolveValue_plainString(t *testing.T) {
-	got, err := ResolveValue("plain", false, nil)
+func TestResolveValue_backtickSingle(t *testing.T) {
+	got, err := ResolveValue("`x`", false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "plain" {
+	if got != "x" {
+		t.Errorf("got %q want %q", got, "x")
+	}
+}
+
+func TestResolveValue_plainString(t *testing.T) {
+	got, err := ResolveValue("hello", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "hello" {
 		t.Errorf("got %q", got)
 	}
 }
 
-func TestResolveValue_envRef_unset(t *testing.T) {
-	os.Unsetenv("DEFINITELY_NOT_SET_XYZ2")
-	_, err := ResolveValue("env:DEFINITELY_NOT_SET_XYZ2", true, nil)
-	if err == nil {
-		t.Fatal("expected error for unset env var")
+func TestResolveValue_emptyString(t *testing.T) {
+	got, err := ResolveValue("", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("got %q want empty", got)
 	}
 }
 
@@ -346,7 +373,7 @@ func TestResolveValue_envRef_unset(t *testing.T) {
 
 func TestParseParamsSchema_requiredParam(t *testing.T) {
 	schema := map[string]interface{}{
-		"type": "object",
+		"type":     "object",
 		"required": []interface{}{"webhook_url"},
 		"properties": map[string]interface{}{
 			"webhook_url": map[string]interface{}{
@@ -419,5 +446,53 @@ func TestParseParamsSchema_nilSchema(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("expected empty map for nil schema")
+	}
+}
+
+func TestParseParamsSchema_description(t *testing.T) {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"token": map[string]interface{}{
+				"type":        "string",
+				"description": "API token",
+			},
+		},
+	}
+	got, err := ParseParamsSchema(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["token"].Description != "API token" {
+		t.Errorf("expected description 'API token', got %q", got["token"].Description)
+	}
+}
+
+func TestParseParamsSchema_multipleParams(t *testing.T) {
+	schema := map[string]interface{}{
+		"type":     "object",
+		"required": []interface{}{"token"},
+		"properties": map[string]interface{}{
+			"token": map[string]interface{}{
+				"type": "string",
+			},
+			"username": map[string]interface{}{
+				"type":    "string",
+				"default": "bot",
+			},
+		},
+	}
+	got, err := ParseParamsSchema(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 params, got %d", len(got))
+	}
+	if got["token"].Default != nil {
+		t.Error("token should be required (nil Default)")
+	}
+	if got["username"].Default == nil || *got["username"].Default != "bot" {
+		t.Error("username should have default 'bot'")
 	}
 }

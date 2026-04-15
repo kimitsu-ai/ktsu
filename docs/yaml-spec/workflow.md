@@ -128,6 +128,9 @@ model_policy:
 | `description` | string | no | Human-readable description |
 | `input.schema` | JSON Schema | yes | Validated against the invoke request body; 422 on failure |
 | `pipeline` | array | yes | Ordered list of pipeline steps |
+| `visibility` | string | no | `"root"` \| `"sub-workflow"` (default: `"root"` for local files) — controls whether `POST /invoke` is allowed; sub-workflow files return 404 on direct invocation |
+| `webhooks` | string | no | `"execute"` \| `"suppress"` (default: `"suppress"`) — whether webhook steps fire when this workflow is used as a sub-workflow |
+| `params.schema` | JSON Schema | no | Declares named params required by callers; see params.schema format |
 | `model_policy.cost_budget_usd` | number | no | LLM cost circuit breaker for the run |
 | `model_policy.group_map` | object | no | Remaps model group names; keys and values are group names |
 | `model_policy.force_group` | string | no | Overrides ALL model group declarations to this group |
@@ -261,6 +264,68 @@ Metrics (tokens, cost) are always collected from all items, including failed one
 | `on` | string | no | `approval` — fires when a `depends_on` step enters `pending_approval`. Body is always the approval event (fixed JSON; `webhook.body` is ignored). |
 | `condition` | string | no | JMESPath; if falsy step is `skipped` (not failed). Not evaluated for `on: approval` steps. |
 | `depends_on` | string[] | no | Step IDs to wait for |
+
+## Workflow Step
+
+A workflow step invokes another workflow's full pipeline inline.
+
+### Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `workflow` | string | Workflow reference: `ktsu/name` (shipped), `./path/file.yaml` (local), or absolute path |
+| `input` | map | JMESPath expressions evaluated against accumulated step outputs, passed as the sub-workflow's `input` |
+| `params` | map | Param values for the sub-workflow. Values are resolved as: `env:VAR`, `param:NAME`, `` `literal` ``, plain string, or JMESPath |
+| `webhooks` | `"execute"` \| `"suppress"` | Parent-side webhook opt-in. Webhooks fire only if BOTH this and the sub-workflow declare `execute` |
+| `depends_on` | list | Step IDs this step depends on |
+
+### Value Sources for `params`
+
+| Prefix | Example | Resolves to |
+|---|---|---|
+| `env:` | `env:SLACK_SECRET` | Environment variable (root workflow only) |
+| `param:` | `param:webhook_url` | Caller's invocation param |
+| backtick | `` `support-bot` `` | Literal string `support-bot` |
+| plain | `my-value` | The literal string `my-value` |
+| JMESPath | `steps.fetch.url` | Value from accumulated step outputs |
+
+### Example
+
+```yaml
+- id: notify
+  workflow: ktsu/slack-reply
+  webhooks: execute
+  params:
+    webhook_url: "env:SLACK_WEBHOOK_URL"
+    username: "`support-bot`"
+  input:
+    channel_id: "steps.parse.channel_id"
+    text: "steps.agent.reply"
+```
+
+## params.schema
+
+`params.schema` declares named input values required by a workflow (or agent). It uses JSON Schema format:
+
+```yaml
+params:
+  schema:
+    type: object
+    required: [webhook_url]          # params without a default — callers must provide these
+    properties:
+      webhook_url:
+        type: string
+        description: "Slack webhook URL for outbound notifications"
+      username:
+        type: string
+        description: "Display name for the bot"
+        default: "ktsu-bot"          # optional param — callers may omit
+```
+
+- **Required params** have no `default`. Callers must provide them or the invocation fails at validation time.
+- **Optional params** have a `default`. If the caller omits them, the default is used.
+- Param values in a parent workflow step's `params:` block are resolved via `ResolveValue` (see Value Sources for `params` above).
+- Agent files and server files use the same param declaration pattern; see their respective YAML specs.
 
 ## Notes
 

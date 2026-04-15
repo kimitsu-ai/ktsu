@@ -300,20 +300,21 @@ output:
 	if cfg.Prompt.System == "" {
 		t.Error("expected prompt.system to be set")
 	}
-	declaredParams, parseErr := ParseParamsSchema(cfg.Params.Schema)
+	// Parse the schema and verify the resulting ParamDecl map
+	declared, parseErr := ParseParamsSchema(cfg.Params.Schema)
 	if parseErr != nil {
-		t.Fatalf("unexpected error parsing params schema: %v", parseErr)
+		t.Fatalf("ParseParamsSchema error: %v", parseErr)
 	}
-	if len(declaredParams) != 2 {
-		t.Fatalf("expected 2 params, got %d", len(declaredParams))
+	if len(declared) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(declared))
 	}
-	if declaredParams["persona"].Description != "The persona the agent adopts" {
-		t.Errorf("unexpected persona description: %q", declaredParams["persona"].Description)
+	if declared["persona"].Description != "The persona the agent adopts" {
+		t.Errorf("unexpected persona description: %q", declared["persona"].Description)
 	}
-	if declaredParams["persona"].Default == nil || *declaredParams["persona"].Default != "helpful assistant" {
+	if declared["persona"].Default == nil || *declared["persona"].Default != "helpful assistant" {
 		t.Errorf("expected persona default %q", "helpful assistant")
 	}
-	if declaredParams["domain"].Default != nil {
+	if declared["domain"].Default != nil {
 		t.Error("expected domain to have no default (required)")
 	}
 }
@@ -392,13 +393,11 @@ pipeline:
 		t.Fatalf("unexpected error: %v", err)
 	}
 	step := cfg.Pipeline[0]
-	agentParams := step.AgentParams()
-	if agentParams == nil || agentParams["persona"] != "support rep" {
-		t.Errorf("unexpected agent param: %v", agentParams["persona"])
+	if step.AgentParams()["persona"] != "support rep" {
+		t.Errorf("unexpected agent param: %v", step.AgentParams()["persona"])
 	}
-	serverParams := step.ServerParams()
-	if serverParams == nil || serverParams["memory"] == nil || serverParams["memory"]["namespace"] != "user-123" {
-		t.Errorf("unexpected server param: %v", serverParams["memory"]["namespace"])
+	if step.ServerParams()["memory"]["namespace"] != "user-123" {
+		t.Errorf("unexpected server param: %v", step.ServerParams()["memory"]["namespace"])
 	}
 }
 

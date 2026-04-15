@@ -866,3 +866,241 @@ pipeline:
 		t.Errorf("want no error for reflect+max_turns:1, got: %v", err)
 	}
 }
+
+// TestValidateCmd_workflowStep_webhookConflict verifies that validate catches a parent step
+// declaring webhooks: execute when the sub-workflow declares webhooks: suppress.
+func TestValidateCmd_workflowStep_webhookConflict(t *testing.T) {
+	dir := t.TempDir()
+
+	subWF := `kind: workflow
+name: sub
+version: "1.0.0"
+visibility: sub-workflow
+webhooks: suppress
+pipeline:
+  - id: noop
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "{ok: true}"
+`
+	if err := writeFile(filepath.Join(dir, "workflows/sub.workflow.yaml"), subWF); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := `kind: workflow
+name: parent
+version: "1.0.0"
+pipeline:
+  - id: call
+    workflow: ./sub.workflow.yaml
+    webhooks: execute
+`
+	if err := writeFile(filepath.Join(dir, "workflows/parent.workflow.yaml"), parentWF); err != nil {
+		t.Fatalf("write parent workflow: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.Flags().Set("workflow-dir", filepath.Join(dir, "workflows"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.RunE(cmd, []string{dir})
+	if err == nil {
+		t.Fatal("expected validation error for webhook conflict, got none")
+	}
+	if !strings.Contains(buf.String(), "webhooks: execute") {
+		t.Errorf("expected webhook conflict message, got: %s", buf.String())
+	}
+}
+
+// TestValidateCmd_workflowStep_missingRequiredParam verifies that validate catches a
+// workflow step that doesn't provide a required param declared by the sub-workflow.
+func TestValidateCmd_workflowStep_missingRequiredParam(t *testing.T) {
+	dir := t.TempDir()
+
+	subWF := `kind: workflow
+name: sub
+version: "1.0.0"
+visibility: sub-workflow
+params:
+  schema:
+    type: object
+    required: [webhook_url]
+    properties:
+      webhook_url: {type: string}
+pipeline:
+  - id: noop
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "{ok: true}"
+`
+	if err := writeFile(filepath.Join(dir, "workflows/sub.workflow.yaml"), subWF); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := `kind: workflow
+name: parent
+version: "1.0.0"
+pipeline:
+  - id: call
+    workflow: ./sub.workflow.yaml
+    # webhook_url intentionally omitted
+`
+	if err := writeFile(filepath.Join(dir, "workflows/parent.workflow.yaml"), parentWF); err != nil {
+		t.Fatalf("write parent workflow: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.Flags().Set("workflow-dir", filepath.Join(dir, "workflows"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.RunE(cmd, []string{dir})
+	if err == nil {
+		t.Fatal("expected validation error for missing required param, got none")
+	}
+	if !strings.Contains(buf.String(), "webhook_url") {
+		t.Errorf("expected 'webhook_url' in error output, got: %s", buf.String())
+	}
+}
+
+// TestValidateCmd_workflowStep_crossWorkflowCycle verifies that validate catches cycles
+// across workflow step references (A → B → A).
+func TestValidateCmd_workflowStep_crossWorkflowCycle(t *testing.T) {
+	dir := t.TempDir()
+
+	// A references B
+	wfA := `kind: workflow
+name: wf-a
+version: "1.0.0"
+pipeline:
+  - id: call-b
+    workflow: ./wf-b.workflow.yaml
+`
+	// B references A
+	wfB := `kind: workflow
+name: wf-b
+version: "1.0.0"
+pipeline:
+  - id: call-a
+    workflow: ./wf-a.workflow.yaml
+`
+	if err := writeFile(filepath.Join(dir, "workflows/wf-a.workflow.yaml"), wfA); err != nil {
+		t.Fatalf("write wf-a: %v", err)
+	}
+	if err := writeFile(filepath.Join(dir, "workflows/wf-b.workflow.yaml"), wfB); err != nil {
+		t.Fatalf("write wf-b: %v", err)
+	}
+
+	var buf strings.Builder
+	cmd := validateCmd()
+	cmd.Flags().Set("workflow-dir", filepath.Join(dir, "workflows"))
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.RunE(cmd, []string{dir})
+	if err == nil {
+		t.Fatal("expected validation error for cross-workflow cycle, got none")
+	}
+	if !strings.Contains(buf.String(), "cycle") {
+		t.Errorf("expected 'cycle' in error output, got: %s", buf.String())
+	}
+}
+
+// TestWorkflowTreeCmd_basicOutput verifies that `ktsu workflow tree` prints the workflow file
+// and its sub-workflow dependency.
+func TestWorkflowTreeCmd_basicOutput(t *testing.T) {
+	dir := t.TempDir()
+
+	subWF := `kind: workflow
+name: sub
+version: "1.0.0"
+pipeline:
+  - id: noop
+    transform:
+      inputs: [{from: input}]
+      ops:
+        - map:
+            expr: "{ok: true}"
+`
+	parentWF := `kind: workflow
+name: parent
+version: "1.0.0"
+pipeline:
+  - id: call
+    workflow: ./sub.workflow.yaml
+`
+	if err := writeFile(filepath.Join(dir, "sub.workflow.yaml"), subWF); err != nil {
+		t.Fatalf("write sub: %v", err)
+	}
+	parentPath := filepath.Join(dir, "parent.workflow.yaml")
+	if err := writeFile(parentPath, parentWF); err != nil {
+		t.Fatalf("write parent: %v", err)
+	}
+
+	var buf strings.Builder
+	root := rootCmd()
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs([]string{"workflow", "tree", parentPath})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("workflow tree: %v\nOutput: %s", err, buf.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, "parent.workflow.yaml") {
+		t.Errorf("expected parent.workflow.yaml in output, got: %s", out)
+	}
+	if !strings.Contains(out, "sub.workflow.yaml") {
+		t.Errorf("expected sub.workflow.yaml in output, got: %s", out)
+	}
+}
+
+// TestWorkflowTreeCmd_jsonOutput verifies --json flag produces valid JSON with path and kind fields.
+func TestWorkflowTreeCmd_jsonOutput(t *testing.T) {
+	dir := t.TempDir()
+	parentWF := `kind: workflow
+name: parent
+version: "1.0.0"
+pipeline:
+  - id: noop
+    transform:
+      inputs: [{from: input}]
+      ops:
+        - map:
+            expr: "{ok: true}"
+`
+	parentPath := filepath.Join(dir, "parent.workflow.yaml")
+	if err := writeFile(parentPath, parentWF); err != nil {
+		t.Fatalf("write parent: %v", err)
+	}
+
+	var buf strings.Builder
+	root := rootCmd()
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs([]string{"workflow", "tree", "--json", parentPath})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("workflow tree --json: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &result); err != nil {
+		t.Fatalf("invalid JSON output: %v\nOutput: %s", err, buf.String())
+	}
+	if result["kind"] != "workflow" {
+		t.Errorf("expected kind=workflow, got: %v", result["kind"])
+	}
+	if !strings.Contains(result["path"].(string), "parent.workflow.yaml") {
+		t.Errorf("expected path to contain parent.workflow.yaml, got: %v", result["path"])
+	}
+}

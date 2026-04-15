@@ -8,7 +8,7 @@ type ParamDecl struct {
 }
 
 // ParamsSchemaDecl wraps a JSON Schema declaration for workflow or agent params.
-// YAML: params.schema: { type: object, required: [...], properties: { name: { type, description, default? } } }
+// YAML: params: { schema: { type: object, required: [...], properties: { name: { type, description, default? } } } }
 type ParamsSchemaDecl struct {
 	Schema map[string]interface{} `yaml:"schema,omitempty"`
 }
@@ -24,9 +24,9 @@ type WorkflowConfig struct {
 	Name        string           `yaml:"name"`
 	Version     string           `yaml:"version"`
 	Description string           `yaml:"description"`
-	Visibility  string           `yaml:"visibility,omitempty"` // "root" (default for local) | "sub-workflow"
-	Webhooks    string           `yaml:"webhooks,omitempty"`   // "execute" | "suppress" (default)
-	Params      ParamsSchemaDecl `yaml:"params,omitempty"`
+	Visibility  string           `yaml:"visibility,omitempty"`  // "root" | "sub-workflow"
+	Webhooks    string           `yaml:"webhooks,omitempty"`    // "execute" | "suppress"
+	Params      ParamsSchemaDecl `yaml:"params,omitempty"`      // JSON Schema params declaration
 	Input       WorkflowInput    `yaml:"input,omitempty"`
 	Pipeline    []PipelineStep   `yaml:"pipeline"`
 	ModelPolicy *ModelPolicy     `yaml:"model_policy,omitempty"`
@@ -41,17 +41,12 @@ type WorkflowInput struct {
 // PipelineStep is one entry in pipeline[]. Exactly one of Agent/Transform/Webhook/Workflow is set.
 type PipelineStep struct {
 	ID                  string                 `yaml:"id"`
-	// Agent step
 	Agent               string                 `yaml:"agent,omitempty"`
-	// Transform step
 	Transform           *TransformSpec         `yaml:"transform,omitempty"`
-	// Webhook step
 	Webhook             *WebhookSpec           `yaml:"webhook,omitempty"`
-	// Workflow step (NEW)
 	Workflow            string                 `yaml:"workflow,omitempty"`
 	WorkflowInput       map[string]interface{} `yaml:"input,omitempty"`
-	WorkflowWebhooks    string                 `yaml:"webhooks,omitempty"` // "execute" | "suppress"
-	// Shared
+	WorkflowWebhooks    string                 `yaml:"webhooks,omitempty"`
 	// For agent steps: {"agent": {"key": val}, "server": {"name": {"key": val}}}
 	// For workflow steps: {"param_name": "value_expr"}
 	Params              map[string]interface{} `yaml:"params,omitempty"`
@@ -64,8 +59,8 @@ type PipelineStep struct {
 	Output              *OutputSpec            `yaml:"output,omitempty"`
 }
 
-// AgentParams extracts the agent sub-map from a step's Params (for agent steps).
-// Old YAML: params: { agent: { key: val } }
+// AgentParams extracts the agent sub-map from Params (for agent steps).
+// YAML: params: { agent: { key: val } }
 func (s *PipelineStep) AgentParams() map[string]any {
 	if s.Params == nil {
 		return nil
@@ -74,8 +69,8 @@ func (s *PipelineStep) AgentParams() map[string]any {
 	return m
 }
 
-// ServerParams extracts the server sub-map from a step's Params (for agent steps).
-// Old YAML: params: { server: { servername: { key: val } } }
+// ServerParams extracts the server sub-map from Params (for agent steps).
+// YAML: params: { server: { servername: { key: val } } }
 func (s *PipelineStep) ServerParams() map[string]map[string]any {
 	if s.Params == nil {
 		return nil

@@ -9,6 +9,29 @@ import (
 
 var placeholderRe = regexp.MustCompile(`\{\{(\w+)\}\}`)
 
+// ResolveEnvValue resolves an "env:VAR_NAME" reference to its environment value.
+// Non-env: values are returned unchanged.
+func ResolveEnvValue(v string) string {
+	if strings.HasPrefix(v, "env:") {
+		return os.Getenv(strings.TrimPrefix(v, "env:"))
+	}
+	return v
+}
+
+// lookupEnvValue is like ResolveEnvValue but returns an error when an env:VAR
+// reference names a variable that is not set in the environment.
+func lookupEnvValue(v string) (string, error) {
+	if strings.HasPrefix(v, "env:") {
+		varName := strings.TrimPrefix(v, "env:")
+		val, ok := os.LookupEnv(varName)
+		if !ok {
+			return "", fmt.Errorf("env var %q is not set", varName)
+		}
+		return val, nil
+	}
+	return v, nil
+}
+
 // ResolveValue resolves a value string using env and invocation params contexts.
 // Handles: "env:VAR_NAME" (root-only), "param:NAME" (from invocationParams),
 // "`literal`" (JMESPath backtick literal), plain strings (returned as-is).
@@ -35,34 +58,11 @@ func ResolveValue(v string, allowEnv bool, invocationParams map[string]string) (
 			return "", fmt.Errorf("param %q is not available in this invocation", name)
 		}
 		return val, nil
-	case strings.HasPrefix(v, "`") && strings.HasSuffix(v, "`") && len(v) >= 2:
-		return strings.TrimPrefix(strings.TrimSuffix(v, "`"), "`"), nil
+	case len(v) >= 2 && v[0] == '`' && v[len(v)-1] == '`':
+		return v[1 : len(v)-1], nil
 	default:
 		return v, nil
 	}
-}
-
-// ResolveEnvValue resolves an "env:VAR_NAME" reference to its environment value.
-// Non-env: values are returned unchanged.
-func ResolveEnvValue(v string) string {
-	if strings.HasPrefix(v, "env:") {
-		return os.Getenv(strings.TrimPrefix(v, "env:"))
-	}
-	return v
-}
-
-// lookupEnvValue is like ResolveEnvValue but returns an error when an env:VAR
-// reference names a variable that is not set in the environment.
-func lookupEnvValue(v string) (string, error) {
-	if strings.HasPrefix(v, "env:") {
-		varName := strings.TrimPrefix(v, "env:")
-		val, ok := os.LookupEnv(varName)
-		if !ok {
-			return "", fmt.Errorf("env var %q is not set", varName)
-		}
-		return val, nil
-	}
-	return v, nil
 }
 
 // ValidatePromptRefs returns an error if prompt.system references any {{key}}
@@ -167,9 +167,10 @@ func ResolveServerParams(declared map[string]ParamDecl, agentRefParams map[strin
 	return result, nil
 }
 
-// ParseParamsSchema converts a JSON Schema params declaration into the internal
+// ParseParamsSchema converts a JSON Schema params declaration to the internal
 // map[string]ParamDecl used by resolution functions.
-// Required params have nil Default. Optional params without explicit defaults get an empty string default.
+// Required params (listed in "required") have nil Default.
+// Optional params without an explicit "default" get an empty string default (not required).
 func ParseParamsSchema(schema map[string]interface{}) (map[string]ParamDecl, error) {
 	if schema == nil {
 		return nil, nil

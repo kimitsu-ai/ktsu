@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1371,5 +1373,254 @@ func TestRunner_nonAgentStep_nilReflected(t *testing.T) {
 	}
 	if step.Reflected != nil {
 		t.Errorf("want Reflected=nil for webhook step, got %v", step.Reflected)
+	}
+}
+
+func TestRunner_workflowStep_executesTransformInline(t *testing.T) {
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: inner
+version: "1.0.0"
+pipeline:
+  - id: greet
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "{result: message}"
+    output:
+      schema:
+        type: object
+        properties:
+          result: {type: string}
+`
+	subPath := filepath.Join(dir, "inner.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:       "call",
+		Workflow: subPath,
+		WorkflowInput: map[string]interface{}{
+			"message": "input.greeting",
+		},
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	ctx := context.Background()
+	err := r.Execute(ctx, "parent", "run1", parentWF, map[string]interface{}{"greeting": "hello"}, nil)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	steps, _ := store.ListSteps(ctx, "run1")
+	var callStep *types.Step
+	for i := range steps {
+		if steps[i].ID == "call" {
+			callStep = steps[i]
+		}
+	}
+	if callStep == nil {
+		t.Fatal("expected step 'call' in store")
+	}
+	if callStep.Status != types.StepStatusComplete {
+		t.Errorf("expected complete, got %s: %s", callStep.Status, callStep.Error)
+	}
+	// The sub-workflow's final step output is surfaced as the workflow step's output.
+	// Transform's map op produces [{result: hello}] wrapped in {result: ...}.
+	res, ok := callStep.Output["result"].([]interface{})
+	if !ok || len(res) != 1 {
+		t.Fatalf("expected result array of len 1, got %v", callStep.Output)
+	}
+	first, _ := res[0].(map[string]interface{})
+	if first["result"] != "hello" {
+		t.Errorf("expected nested result=hello, got %v", callStep.Output)
+	}
+}
+
+func TestRunner_workflowStep_webhookSuppressedByDefault(t *testing.T) {
+	callCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	dir := t.TempDir()
+	subWFYAML := fmt.Sprintf(`kind: workflow
+name: sub
+version: "1.0.0"
+webhooks: suppress
+pipeline:
+  - id: notify
+    webhook:
+      url: %q
+      method: POST
+`, ts.URL)
+	subPath := filepath.Join(dir, "sub.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:       "call",
+		Workflow: subPath,
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, nil, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if callCount != 0 {
+		t.Errorf("webhook should be suppressed by default, called %d times", callCount)
+	}
+}
+
+func TestRunner_workflowStep_webhookExecutesWhenBothOptIn(t *testing.T) {
+	callCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	dir := t.TempDir()
+	subWFYAML := fmt.Sprintf(`kind: workflow
+name: sub
+version: "1.0.0"
+webhooks: execute
+pipeline:
+  - id: notify
+    webhook:
+      url: %q
+      method: POST
+`, ts.URL)
+	subPath := filepath.Join(dir, "sub.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:               "call",
+		Workflow:         subPath,
+		WorkflowWebhooks: "execute",
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, nil, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if callCount != 1 {
+		t.Errorf("webhook should fire once when both opt in, called %d times", callCount)
+	}
+}
+
+func TestRunner_workflowStep_paramPassthrough(t *testing.T) {
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: sub
+version: "1.0.0"
+params:
+  schema:
+    type: object
+    required: [greeting]
+    properties:
+      greeting: {type: string}
+pipeline:
+  - id: echo
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "{result: message}"
+    output:
+      schema:
+        type: object
+        properties:
+          result: {type: string}
+`
+	subPath := filepath.Join(dir, "sub.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:       "call",
+		Workflow: subPath,
+		Params:   map[string]interface{}{"greeting": "`hello`"},
+		WorkflowInput: map[string]interface{}{
+			"message": "input.text",
+		},
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, map[string]interface{}{"text": "world"}, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	steps, _ := store.ListSteps(context.Background(), "run1")
+	var callStep *types.Step
+	for i := range steps {
+		if steps[i].ID == "call" {
+			callStep = steps[i]
+		}
+	}
+	if callStep == nil || callStep.Status != types.StepStatusComplete {
+		t.Fatalf("call step not complete: %+v", callStep)
+	}
+}
+
+func TestRunner_workflowStep_missingRequiredParam_returnsError(t *testing.T) {
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: sub
+version: "1.0.0"
+params:
+  schema:
+    type: object
+    required: [webhook_url]
+    properties:
+      webhook_url: {type: string}
+pipeline:
+  - id: noop
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "{ok: true}"
+`
+	subPath := filepath.Join(dir, "sub.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:       "call",
+		Workflow: subPath,
+		// webhook_url intentionally omitted
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	err := r.Execute(context.Background(), "parent", "run1", parentWF, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for missing required param")
+	}
+	if !strings.Contains(err.Error(), "missing required param") {
+		t.Errorf("expected 'missing required param' in error, got: %v", err)
 	}
 }

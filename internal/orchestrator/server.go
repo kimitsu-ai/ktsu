@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -205,6 +204,7 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sub-workflow visibility: direct invocation via /invoke is forbidden.
+	// Return 404 (not 403) to avoid leaking information about existence.
 	if wf.Visibility == "sub-workflow" {
 		http.Error(w, fmt.Sprintf("workflow not found: %s", workflow), http.StatusNotFound)
 		return
@@ -380,10 +380,12 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		if err != nil {
 			return nil, zero, fmt.Errorf("load agent %s: %w", step.Agent, err)
 		}
+		// Parse the agent's params schema
 		declaredParams, parseErr := config.ParseParamsSchema(agentCfg.Params.Schema)
 		if parseErr != nil {
 			return nil, zero, fmt.Errorf("agent %s params schema: %w", agentCfg.Name, parseErr)
 		}
+		// Validate prompt refs against declared params
 		if err := config.ValidatePromptRefs(agentCfg.Prompt.System, declaredParams); err != nil {
 			return nil, zero, fmt.Errorf("agent %s prompt validation: %w", agentCfg.Name, err)
 		}
@@ -431,20 +433,16 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			if err != nil {
 				return nil, zero, fmt.Errorf("load server %s: %w", srv.Path, err)
 			}
-			authToken := serverCfg.Auth
-			if strings.HasPrefix(authToken, "env:") {
-				authToken = os.Getenv(strings.TrimPrefix(authToken, "env:"))
+			authVal, authErr := config.ResolveValue(serverCfg.Auth, true, resolvedAgentParams)
+			if authErr != nil {
+				return nil, zero, fmt.Errorf("server %q auth: %w", srv.Name, authErr)
 			}
-			// Resolve server params (ServerParams() handles nil safely).
-			stepServerParams := step.ServerParams()
-			var stepServerParamsForServer map[string]any
-			if stepServerParams != nil {
-				stepServerParamsForServer = stepServerParams[srv.Name]
-			}
+			authToken := authVal
+			// Resolve server params (nil map access on step.ServerParams() returns nil safely).
 			resolvedServerParams, serverParamErr := config.ResolveServerParams(
 				serverCfg.Params,
 				srv.Params,
-				stepServerParamsForServer,
+				step.ServerParams()[srv.Name],
 			)
 			if serverParamErr != nil {
 				return nil, zero, fmt.Errorf("server %s param resolution: %w", srv.Name, serverParamErr)

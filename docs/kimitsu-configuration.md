@@ -471,4 +471,82 @@ Update the version in `servers.yaml` and run `ktsu lock` to regenerate the lockf
 
 ---
 
+## Params Resolution
+
+Params declare named input values for a workflow, sub-workflow, or agent. When a parent workflow step passes params to a sub-workflow, each value is resolved via `ResolveValue` in order:
+
+| Source | Syntax | Resolves to | Allowed where |
+|---|---|---|---|
+| Environment variable | `env:VAR_NAME` | Value of the named env var at runtime | Root workflow steps only |
+| Caller invocation param | `param:NAME` | Value from the caller's invocation params | Any file |
+| Backtick literal | `` `value` `` | The literal string `value` | Any file |
+| Plain string | `my-value` | The literal string `my-value` | Any file |
+| JMESPath | `steps.fetch.url` | Value from accumulated step outputs | Workflow steps |
+
+### Params Flow
+
+```
+POST /invoke/{workflow}
+  └─ invoke payload (root workflow input)
+       └─ root workflow params (declared in params.schema)
+            └─ workflow step params: (passed to sub-workflow)
+                 ├─ env:VAR   → resolved from environment (root only)
+                 ├─ param:X   → forwarded from parent's own params
+                 └─ `literal` → literal string
+```
+
+Root workflows may read `env:` values in their steps' `params:` blocks. Sub-workflows receive values exclusively through their `params.schema` declarations — they never read environment variables directly. This ensures that secrets flow down through an explicit, auditable chain rather than being implicitly available to any file.
+
+---
+
+## Env Scoping
+
+Only root workflow YAML files (those with `visibility: root`, which is the default) may use `env:` references. Agent files, server files, and sub-workflow files (`visibility: sub-workflow`) must use `param:` references instead. Violating this is a boot error.
+
+### Why
+
+Allowing any file to read `env:` creates implicit dependencies on the environment that are invisible in the file itself. When a server or agent is reused across multiple workflows, there is no way to know which environment variables it requires without reading its source. Forcing `param:` references makes all inputs explicit and traceable to the calling workflow step.
+
+### Migration Pattern
+
+**Before** (agent file reading env directly — not permitted):
+
+```yaml
+# agents/crm.agent.yaml
+servers:
+  - name: crm
+    path: servers/crm.server.yaml
+    params:
+      api_key: "env:CRM_API_KEY"    # not allowed in agent files
+```
+
+**After** (env read at root workflow, passed down via params):
+
+```yaml
+# agents/crm.agent.yaml
+params:
+  schema:
+    type: object
+    required: [crm_api_key]
+    properties:
+      crm_api_key:
+        type: string
+        description: "CRM API key"
+servers:
+  - name: crm
+    path: servers/crm.server.yaml
+    params:
+      api_key: "param:crm_api_key"   # resolved from agent's own params
+
+# workflows/support-triage.workflow.yaml (root workflow)
+pipeline:
+  - id: crm-step
+    agent: ./agents/crm.agent.yaml
+    params:
+      agent:
+        crm_api_key: "env:CRM_API_KEY"   # env: is allowed here — root workflow only
+```
+
+---
+
 *Revised from design session — March 2026*

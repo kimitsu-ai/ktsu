@@ -20,11 +20,13 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	"github.com/spf13/cobra"
 	"github.com/kimitsu-ai/ktsu/internal/builtins"
 	envelopepkg "github.com/kimitsu-ai/ktsu/internal/builtins/envelope"
 	"github.com/kimitsu-ai/ktsu/internal/config"
+	configbuiltins "github.com/kimitsu-ai/ktsu/internal/config/builtins"
 	"github.com/kimitsu-ai/ktsu/internal/gateway"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/dag"
@@ -50,6 +52,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(lockCmd())
 	root.AddCommand(newCmd())
 	root.AddCommand(orchestratorGroupCmd())
+	root.AddCommand(workflowGroupCmd())
 	return root
 }
 
@@ -687,30 +690,53 @@ func checkWorkflow(file string, wf *config.WorkflowConfig, projectDir string) Va
 			validateExternalRef(&res, absPath, "agent", projectDir)
 		}
 
-		// Check sub-workflow references
+		// Check sub-workflow references — resolve relative to the workflow file's directory.
 		if step.Workflow != "" {
-			subWF, err := config.ResolveWorkflowRef(step.Workflow, projectDir)
-			if err != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("%s: step %q: cannot resolve workflow ref %q: %v", file, step.ID, step.Workflow, err))
-				continue
-			}
-			// Check env scoping on sub-workflow
-			// Re-read raw to scan for env: refs (only for local workflows, not shipped)
-			if !strings.HasPrefix(step.Workflow, "ktsu/") {
-				wfPath := step.Workflow
-				if !filepath.IsAbs(wfPath) {
-					wfPath = filepath.Join(projectDir, wfPath)
+			wfDir := filepath.Dir(file)
+			subWF, resolveErr := configbuiltins.ResolveWorkflowRef(step.Workflow, wfDir)
+			if resolveErr != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: step %q: cannot resolve workflow ref %q: %v", file, step.ID, step.Workflow, resolveErr))
+			} else {
+				// Webhook conflict: parent step opts in but sub-workflow doesn't
+				if step.WorkflowWebhooks == "execute" && subWF.Webhooks != "execute" {
+					res.Errors = append(res.Errors, fmt.Sprintf(
+						"%s: step %q: webhooks: execute declared on step but sub-workflow %q declares webhooks: %q (must also be \"execute\" for webhooks to fire)",
+						file, step.ID, step.Workflow, subWF.Webhooks,
+					))
 				}
-				if data, readErr := os.ReadFile(wfPath); readErr == nil {
-					var rawWF interface{}
-					yaml.Unmarshal(data, &rawWF)
-					for _, msg := range checkEnvScoping(wfPath, "Sub-workflow", rawWF) {
-						res.Errors = append(res.Errors, msg)
+
+				// Missing required params
+				declaredParams, parseErr := config.ParseParamsSchema(subWF.Params.Schema)
+				if parseErr != nil {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: step %q: sub-workflow params schema: %v", file, step.ID, parseErr))
+				} else {
+					for name, decl := range declaredParams {
+						if decl.Default == nil {
+							if _, provided := step.Params[name]; !provided {
+								res.Errors = append(res.Errors, fmt.Sprintf(
+									"%s: step %q: missing required param %q for sub-workflow %q",
+									file, step.ID, name, step.Workflow,
+								))
+							}
+						}
 					}
 				}
+
+				// Env scoping for local (non-ktsu/) sub-workflows
+				if !strings.HasPrefix(step.Workflow, "ktsu/") {
+					wfPath := step.Workflow
+					if !filepath.IsAbs(wfPath) {
+						wfPath = filepath.Join(wfDir, wfPath)
+					}
+					checkEnvScoping(wfPath, "sub-workflow", &res.Errors)
+				}
 			}
-			_ = subWF
 		}
+	}
+
+	// Cross-workflow cycle detection — use the workflow file as the DFS root.
+	if cycleMsg := checkWorkflowCycles(file, make(map[string]bool), make(map[string]bool)); cycleMsg != "" {
+		res.Errors = append(res.Errors, cycleMsg)
 	}
 
 	// DAG cycle check
@@ -748,14 +774,18 @@ func useColor(out io.Writer) bool {
 	return false
 }
 
-// envRefLocations returns all "env:VAR" references found in a structured YAML value.
-// Returns (location-hint, value) pairs where location-hint is a descriptive path (e.g. "auth").
+// envRefLocations recursively finds all "env:*" string values in a YAML-decoded structure.
+// Returns descriptive location strings like "auth: \"env:MY_VAR\"".
 func envRefLocations(v interface{}, path string) []string {
 	var found []string
 	switch val := v.(type) {
 	case string:
 		if strings.HasPrefix(val, "env:") {
-			found = append(found, fmt.Sprintf("%s: %q", path, val))
+			if path != "" {
+				found = append(found, fmt.Sprintf("%s: %q", path, val))
+			} else {
+				found = append(found, fmt.Sprintf("%q", val))
+			}
 		}
 	case map[string]interface{}:
 		for k, child := range val {
@@ -773,21 +803,63 @@ func envRefLocations(v interface{}, path string) []string {
 	return found
 }
 
-// checkEnvScoping scans a loaded file's raw YAML for env: references.
-// Returns error messages for any found, with file path context.
-func checkEnvScoping(filePath, fileKind string, rawData interface{}) []string {
-	refs := envRefLocations(rawData, "")
-	if len(refs) == 0 {
-		return nil
+// checkWorkflowCycles performs DFS across workflow step references starting from rootRef.
+// rootRef must be an absolute file path or a ktsu/ name.
+// visited tracks refs we've fully processed; inStack tracks the current DFS path.
+// Returns a non-empty error message if a cycle is detected.
+func checkWorkflowCycles(rootRef string, visited, inStack map[string]bool) string {
+	if inStack[rootRef] {
+		return fmt.Sprintf("workflow cycle detected: %q is referenced transitively by itself", rootRef)
 	}
-	errs := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		errs = append(errs, fmt.Sprintf(
-			"ERROR  env: reference outside root workflow context\n  File: %s\n  Location: %s\n  %s files may not reference environment variables directly. Use param: instead.",
-			filePath, ref, fileKind,
+	if visited[rootRef] {
+		return ""
+	}
+	visited[rootRef] = true
+	inStack[rootRef] = true
+	defer func() { inStack[rootRef] = false }()
+
+	// Resolve relative to the root ref's own directory.
+	rootDir := filepath.Dir(rootRef)
+	wf, err := configbuiltins.ResolveWorkflowRef(rootRef, rootDir)
+	if err != nil {
+		// Unresolvable refs are reported elsewhere; skip cycle check for them.
+		return ""
+	}
+	for _, step := range wf.Pipeline {
+		if step.Workflow == "" {
+			continue
+		}
+		dep := step.Workflow
+		if strings.HasPrefix(dep, "ktsu/") {
+			continue // shipped workflows can't form cycles
+		}
+		if !filepath.IsAbs(dep) {
+			dep = filepath.Join(rootDir, dep)
+		}
+		if msg := checkWorkflowCycles(dep, visited, inStack); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+// checkEnvScoping reads filePath, scans for env: references, and appends errors to errs.
+// fileKind is a human-readable label like "Agent" or "Server file".
+func checkEnvScoping(filePath, fileKind string, errs *[]string) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return // file not found is already reported elsewhere
+	}
+	var raw interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return
+	}
+	for _, ref := range envRefLocations(raw, "") {
+		*errs = append(*errs, fmt.Sprintf(
+			"env: reference outside root workflow context in %s file %s — %s — use param: instead",
+			fileKind, filePath, ref,
 		))
 	}
-	return errs
 }
 
 func validateExternalRef(res *ValidationResult, path, kind string, projectDir string) {
@@ -803,14 +875,7 @@ func validateExternalRef(res *ValidationResult, path, kind string, projectDir st
 			ext.Errors = append(ext.Errors, err.Error())
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", path, err))
 		} else {
-			// Check env scoping — agents may not use env:
-			var rawAgent interface{}
-			if data, readErr := os.ReadFile(path); readErr == nil {
-				yaml.Unmarshal(data, &rawAgent)
-				for _, msg := range checkEnvScoping(path, "Agent", rawAgent) {
-					res.Errors = append(res.Errors, msg)
-				}
-			}
+			checkEnvScoping(path, "agent", &res.Errors)
 
 			// Check for output schema
 			if agentCfg.Output == nil || len(agentCfg.Output.Schema) == 0 {
@@ -862,25 +927,19 @@ func validateExternalRef(res *ValidationResult, path, kind string, projectDir st
 			}
 		}
 	case "server":
-		srvCfg, err := config.LoadToolServer(path)
+		_, err := config.LoadToolServer(path)
 		if err != nil {
 			// Try as manifest
 			_, err2 := config.LoadServerManifest(path)
 			if err2 != nil {
 				ext.Errors = append(ext.Errors, err.Error())
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", path, err))
+			} else {
+				checkEnvScoping(path, "server", &res.Errors)
 			}
 		} else {
-			// Check env scoping — servers may not use env:
-			var rawServer interface{}
-			if data, readErr := os.ReadFile(path); readErr == nil {
-				yaml.Unmarshal(data, &rawServer)
-				for _, msg := range checkEnvScoping(path, "Server", rawServer) {
-					res.Errors = append(res.Errors, msg)
-				}
-			}
+			checkEnvScoping(path, "server", &res.Errors)
 		}
-		_ = srvCfg
 	}
 	res.ExternalRefs[path] = ext
 }
@@ -1212,5 +1271,134 @@ model_groups: []
 			}
 			return nil
 		},
+	}
+}
+
+func workflowGroupCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "workflow",
+		Short: "Workflow utilities",
+	}
+	cmd.AddCommand(workflowTreeCmd())
+	return cmd
+}
+
+// treeNode represents one item in the dependency tree.
+type treeNode struct {
+	Path     string     `json:"path"`
+	Kind     string     `json:"kind"` // "workflow", "agent", "server"
+	Children []treeNode `json:"children,omitempty"`
+}
+
+func workflowTreeCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "tree <workflow-file>",
+		Short: "Print the full dependency tree of a workflow",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			wfFile := args[0]
+			if !filepath.IsAbs(wfFile) {
+				abs, err := filepath.Abs(wfFile)
+				if err != nil {
+					return fmt.Errorf("resolve path: %w", err)
+				}
+				wfFile = abs
+			}
+			tree, err := buildWorkflowTree(wfFile, make(map[string]bool))
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				out, _ := json.MarshalIndent(tree, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
+				return nil
+			}
+			printTreeNode(cmd.OutOrStdout(), tree, "", true)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
+	return cmd
+}
+
+// buildWorkflowTree builds a treeNode for the given workflow file (absolute path).
+// seen prevents infinite recursion on shared sub-workflows (not cycles — those are boot-validated).
+func buildWorkflowTree(absPath string, seen map[string]bool) (treeNode, error) {
+	node := treeNode{Path: absPath, Kind: "workflow"}
+	if seen[absPath] {
+		return node, nil
+	}
+	seen[absPath] = true
+
+	wf, err := config.LoadWorkflow(absPath)
+	if err != nil {
+		return node, fmt.Errorf("load %s: %w", absPath, err)
+	}
+
+	wfDir := filepath.Dir(absPath)
+	for _, step := range wf.Pipeline {
+		if step.Workflow != "" && !strings.HasPrefix(step.Workflow, "ktsu/") {
+			dep := step.Workflow
+			if !filepath.IsAbs(dep) {
+				dep = filepath.Join(wfDir, dep)
+			}
+			child, err := buildWorkflowTree(dep, seen)
+			if err == nil {
+				node.Children = append(node.Children, child)
+			} else {
+				node.Children = append(node.Children, treeNode{Path: dep, Kind: "workflow"})
+			}
+		} else if step.Workflow != "" {
+			// Shipped ktsu/ workflow
+			node.Children = append(node.Children, treeNode{Path: step.Workflow, Kind: "workflow"})
+		}
+
+		if step.Agent != "" {
+			agentPath := config.StripVersion(step.Agent)
+			if !filepath.IsAbs(agentPath) {
+				agentPath = filepath.Join(wfDir, agentPath)
+			}
+			agentNode := treeNode{Path: agentPath, Kind: "agent"}
+			if !seen[agentPath] {
+				seen[agentPath] = true
+				agentCfg, err := config.LoadAgent(agentPath)
+				if err == nil {
+					for _, srv := range agentCfg.Servers {
+						srvPath := srv.Path
+						if !filepath.IsAbs(srvPath) {
+							srvPath = filepath.Join(filepath.Dir(agentPath), srvPath)
+						}
+						agentNode.Children = append(agentNode.Children, treeNode{Path: srvPath, Kind: "server"})
+					}
+				}
+			}
+			node.Children = append(node.Children, agentNode)
+		}
+	}
+	return node, nil
+}
+
+func printTreeNode(w io.Writer, node treeNode, prefix string, isLast bool) {
+	connector := "├── "
+	childPrefix := prefix + "│   "
+	if isLast {
+		connector = "└── "
+		childPrefix = prefix + "    "
+	}
+	label := filepath.Base(node.Path)
+	if strings.HasPrefix(node.Path, "ktsu/") {
+		label = node.Path
+	}
+	fmt.Fprintf(w, "%s%s%s (%s)\n", prefix, connector, label, node.Kind)
+	for i, child := range node.Children {
+		printTreeNode(w, child, childPrefix, i == len(node.Children)-1)
+	}
+}
+
+func printWorkflowTreeRoot(w io.Writer, node treeNode) {
+	fmt.Fprintln(w, node.Path)
+	for i, child := range node.Children {
+		printTreeNode(w, child, "", i == len(node.Children)-1)
 	}
 }

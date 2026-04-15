@@ -16,6 +16,7 @@ import (
 
 	jmespath "github.com/jmespath/go-jmespath"
 	"github.com/kimitsu-ai/ktsu/internal/config"
+	"github.com/kimitsu-ai/ktsu/internal/config/builtins"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/airlock"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/dag"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
@@ -48,9 +49,6 @@ func NewWithDispatcher(store state.Store, dispatcher AgentDispatcher) *Runner {
 
 // Execute runs a workflow pipeline with the provided input.
 // The input is pre-populated as stepOutputs["input"] and available to all steps.
-// Execute runs a workflow pipeline with the provided input and optional invocation params.
-// invocationParams provides resolved values for param: references in the workflow.
-// Pass nil for root workflows (env: is allowed); sub-workflows receive their resolved params.
 func (r *Runner) Execute(ctx context.Context, workflowName string, runID string, wf *config.WorkflowConfig, input map[string]interface{}, invocationParams map[string]string) error {
 	if wf.ModelPolicy != nil && wf.ModelPolicy.TimeoutS > 0 {
 		var cancel context.CancelFunc
@@ -115,6 +113,8 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			// Determine step type
 			var stepType types.StepType
 			switch {
+			case step.Workflow != "":
+				stepType = types.StepTypeWorkflow
 			case step.Agent != "":
 				stepType = types.StepTypeAgent
 			case step.Transform != nil:
@@ -147,7 +147,9 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			case types.StepTypeTransform:
 				rawOutput, execErr = r.executeTransform(ctx, step, stepOutputs)
 			case types.StepTypeWebhook:
-				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs)
+				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs, invocationParams)
+			case types.StepTypeWorkflow:
+				rawOutput, stepMetrics, execErr = r.executeWorkflow(ctx, step, stepOutputs, runID, invocationParams, ".")
 			case types.StepTypeAgent:
 				if step.ForEach != nil {
 					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID)
@@ -357,7 +359,7 @@ func (r *Runner) executeFanout(ctx context.Context, step *config.PipelineStep, s
 
 // executeWebhook executes a webhook step: evaluates the condition, builds the body
 // via JMESPath, and POSTs to the configured URL. Expects a 2xx response for success.
-func (r *Runner) executeWebhook(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}) (map[string]interface{}, error) {
+func (r *Runner) executeWebhook(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, invocationParams map[string]string) (map[string]interface{}, error) {
 	spec := step.Webhook
 
 	// Check condition
@@ -372,14 +374,10 @@ func (r *Runner) executeWebhook(ctx context.Context, step *config.PipelineStep, 
 		}
 	}
 
-	// Resolve URL — supports env:VAR_NAME
-	url := spec.URL
-	if strings.HasPrefix(url, "env:") {
-		envVar := strings.TrimPrefix(url, "env:")
-		url = os.Getenv(envVar)
-		if url == "" {
-			return nil, fmt.Errorf("env var %s not set for webhook URL", envVar)
-		}
+	// Resolve URL — root workflows allow env:, sub-workflows use param: only.
+	url, err := config.ResolveValue(spec.URL, invocationParams == nil, invocationParams)
+	if err != nil {
+		return nil, fmt.Errorf("webhook url: %w", err)
 	}
 
 	// Build body context from all step outputs
@@ -756,6 +754,288 @@ func isFalsy(v interface{}) bool {
 		return val == 0
 	}
 	return false
+}
+
+// executeWorkflow runs a sub-workflow as a pipeline step.
+// It resolves the workflow reference, maps step inputs, resolves params,
+// enforces webhook suppression policy, and runs the sub-workflow inline.
+// Returns the final step output and aggregated metrics.
+func (r *Runner) executeWorkflow(
+	ctx context.Context,
+	step *config.PipelineStep,
+	stepOutputs map[string]map[string]interface{},
+	parentRunID string,
+	parentParams map[string]string,
+	projectDir string,
+) (map[string]interface{}, types.StepMetrics, error) {
+	subWF, err := builtins.ResolveWorkflowRef(step.Workflow, projectDir)
+	if err != nil {
+		return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q: resolve %q: %w", step.ID, step.Workflow, err)
+	}
+
+	resolvedParams := make(map[string]string, len(step.Params))
+	searchCtx := make(map[string]interface{})
+	for id, out := range stepOutputs {
+		searchCtx[id] = out
+	}
+	for k, rawVal := range step.Params {
+		if k == "agent" || k == "server" {
+			continue
+		}
+		s, ok := rawVal.(string)
+		if !ok {
+			return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q param %q: value must be a string, got %T", step.ID, k, rawVal)
+		}
+		val, err := config.ResolveValue(s, parentParams == nil, parentParams)
+		if err != nil {
+			jval, jerr := jmespath.Search(s, searchCtx)
+			if jerr != nil {
+				return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q param %q: %w", step.ID, k, err)
+			}
+			if jstr, ok := jval.(string); ok {
+				val = jstr
+			} else if jval == nil {
+				return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q param %q: JMESPath %q resolved to nil", step.ID, k, s)
+			} else {
+				return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q param %q: value resolved to non-string %T", step.ID, k, jval)
+			}
+		}
+		resolvedParams[k] = val
+	}
+
+	// Validate required params from the sub-workflow's params.schema.
+	declaredParams, parseErr := config.ParseParamsSchema(subWF.Params.Schema)
+	if parseErr != nil {
+		return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q: sub-workflow params schema: %w", step.ID, parseErr)
+	}
+	for name, decl := range declaredParams {
+		if decl.Default == nil { // required
+			if _, ok := resolvedParams[name]; !ok {
+				return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q: missing required param %q for sub-workflow %q", step.ID, name, step.Workflow)
+			}
+		}
+	}
+
+	subInput := make(map[string]interface{}, len(step.WorkflowInput))
+	for field, exprRaw := range step.WorkflowInput {
+		expr, ok := exprRaw.(string)
+		if !ok {
+			return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q input %q: must be a string JMESPath expression", step.ID, field)
+		}
+		val, err := jmespath.Search(sanitizeExpr(expr), searchCtx)
+		if err != nil {
+			return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q input %q: JMESPath %q: %w", step.ID, field, expr, err)
+		}
+		subInput[field] = val
+	}
+
+	suppressWebhooks := true
+	if subWF.Webhooks == "execute" && step.WorkflowWebhooks == "execute" {
+		suppressWebhooks = false
+	}
+
+	subRunID := parentRunID + "/" + step.ID
+	finalOutput, agg, err := r.executeSubWorkflow(ctx, subWF, subRunID, subInput, resolvedParams, suppressWebhooks, projectDir)
+	if err != nil {
+		return nil, types.StepMetrics{}, fmt.Errorf("sub-workflow %q failed: %w", step.Workflow, err)
+	}
+	return finalOutput, agg, nil
+}
+
+// executeSubWorkflow runs a sub-workflow's pipeline inline under the given subRunID.
+// invocationParams holds resolved param: values for the sub-workflow's steps.
+// suppressWebhooks controls whether webhook steps fire or are skipped.
+// Returns the last completed step's output and aggregated metrics across all steps.
+func (r *Runner) executeSubWorkflow(
+	ctx context.Context,
+	wf *config.WorkflowConfig,
+	runID string,
+	input map[string]interface{},
+	invocationParams map[string]string,
+	suppressWebhooks bool,
+	projectDir string,
+) (map[string]interface{}, types.StepMetrics, error) {
+	var finalOutput map[string]interface{}
+	var agg types.StepMetrics
+
+	now := time.Now()
+	run := &types.Run{
+		ID:           runID,
+		WorkflowName: wf.Name,
+		Status:       types.RunStatusRunning,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := r.store.CreateRun(ctx, run); err != nil {
+		return nil, types.StepMetrics{}, fmt.Errorf("create sub-run: %w", err)
+	}
+
+	nodes := make([]dag.Node, len(wf.Pipeline))
+	for i, step := range wf.Pipeline {
+		nodes[i] = dag.Node{ID: step.ID, Depends: step.DependsOn}
+	}
+	layers, err := dag.Resolve(nodes)
+	if err != nil {
+		return nil, types.StepMetrics{}, fmt.Errorf("dag resolve: %w", err)
+	}
+
+	stepByID := make(map[string]*config.PipelineStep, len(wf.Pipeline))
+	for i := range wf.Pipeline {
+		stepByID[wf.Pipeline[i].ID] = &wf.Pipeline[i]
+	}
+
+	stepOutputs := make(map[string]map[string]interface{})
+	if input != nil {
+		stepOutputs["input"] = input
+	}
+
+	markFailed := func(stepRec *types.Step, errMsg string) (map[string]interface{}, types.StepMetrics, error) {
+		t := time.Now()
+		stepRec.Status = types.StepStatusFailed
+		stepRec.Error = errMsg
+		stepRec.EndedAt = &t
+		_ = r.store.UpdateStep(ctx, stepRec)
+		run.Status = types.RunStatusFailed
+		run.Error = errMsg
+		run.UpdatedAt = t
+		_ = r.store.UpdateRun(ctx, run)
+		return nil, types.StepMetrics{}, errors.New(errMsg)
+	}
+
+	for _, layer := range layers {
+		for _, stepID := range layer {
+			step := stepByID[stepID]
+
+			var stepType types.StepType
+			switch {
+			case step.Workflow != "":
+				stepType = types.StepTypeWorkflow
+			case step.Transform != nil:
+				stepType = types.StepTypeTransform
+			case step.Webhook != nil:
+				stepType = types.StepTypeWebhook
+			default:
+				stepType = types.StepTypeAgent
+			}
+
+			if suppressWebhooks && stepType == types.StepTypeWebhook {
+				startedAt := time.Now()
+				endedAt := time.Now()
+				stepRec := &types.Step{
+					ID:        step.ID,
+					RunID:     runID,
+					Name:      step.ID,
+					Type:      stepType,
+					Status:    types.StepStatusSkipped,
+					StartedAt: &startedAt,
+					EndedAt:   &endedAt,
+				}
+				if err := r.store.CreateStep(ctx, stepRec); err != nil {
+					return nil, types.StepMetrics{}, fmt.Errorf("create skipped webhook step %s: %w", step.ID, err)
+				}
+				stepOutputs[step.ID] = map[string]interface{}{"suppressed": true}
+				continue
+			}
+
+			startedAt := time.Now()
+			stepRec := &types.Step{
+				ID:        step.ID,
+				RunID:     runID,
+				Name:      step.ID,
+				Type:      stepType,
+				Status:    types.StepStatusRunning,
+				StartedAt: &startedAt,
+			}
+			if err := r.store.CreateStep(ctx, stepRec); err != nil {
+				return nil, types.StepMetrics{}, fmt.Errorf("create step %s: %w", step.ID, err)
+			}
+
+			var rawOutput map[string]interface{}
+			var stepMetrics types.StepMetrics
+			var execErr error
+
+			switch stepType {
+			case types.StepTypeTransform:
+				rawOutput, execErr = r.executeTransform(ctx, step, stepOutputs)
+			case types.StepTypeWebhook:
+				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs, invocationParams)
+			case types.StepTypeWorkflow:
+				rawOutput, stepMetrics, execErr = r.executeWorkflow(ctx, step, stepOutputs, runID, invocationParams, projectDir)
+			case types.StepTypeAgent:
+				if step.ForEach != nil {
+					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID)
+				} else {
+					rawOutput, stepMetrics, execErr = r.executeAgent(ctx, step, stepOutputs, runID)
+				}
+			}
+
+			stepRec.Metrics = stepMetrics
+			agg.TokensIn += stepMetrics.TokensIn
+			agg.TokensOut += stepMetrics.TokensOut
+			agg.CostUSD += stepMetrics.CostUSD
+			agg.LLMCalls += stepMetrics.LLMCalls
+			agg.ToolCalls += stepMetrics.ToolCalls
+			agg.ReflectCalls += stepMetrics.ReflectCalls
+			if stepMetrics.Reflected {
+				agg.Reflected = true
+			}
+			if execErr != nil {
+				return markFailed(stepRec, execErr.Error())
+			}
+
+			if skipped, _ := rawOutput["skipped"].(bool); skipped {
+				t := time.Now()
+				stepRec.Status = types.StepStatusSkipped
+				stepRec.EndedAt = &t
+				_ = r.store.UpdateStep(ctx, stepRec)
+				stepOutputs[step.ID] = rawOutput
+				continue
+			}
+
+			var schema map[string]interface{}
+			if step.Output != nil {
+				schema = step.Output.Schema
+			}
+			cleanOutput, reservedFields, skipReason, reservedErr := ProcessReservedFields(rawOutput, step.ConfidenceThreshold)
+			if reservedErr != nil {
+				return markFailed(stepRec, reservedErr.Error())
+			}
+			if skipReason != "" {
+				t := time.Now()
+				stepRec.Status = types.StepStatusSkipped
+				stepRec.EndedAt = &t
+				_ = r.store.UpdateStep(ctx, stepRec)
+				stepOutputs[step.ID] = cleanOutput
+				continue
+			}
+			if err := airlock.Validate(cleanOutput, schema, reservedFields); err != nil {
+				return markFailed(stepRec, err.Error())
+			}
+			if step.Agent != "" {
+				reflected := stepMetrics.Reflected
+				stepRec.Reflected = &reflected
+			}
+			t := time.Now()
+			stepRec.Status = types.StepStatusComplete
+			stepRec.Output = cleanOutput
+			stepRec.EndedAt = &t
+			_ = r.store.UpdateStep(ctx, stepRec)
+			stepOutputs[step.ID] = cleanOutput
+			finalOutput = cleanOutput
+		}
+	}
+
+	if finalOutput == nil {
+		finalOutput = map[string]interface{}{}
+	}
+	now = time.Now()
+	run.Status = types.RunStatusComplete
+	run.UpdatedAt = now
+	run.CompletedAt = &now
+	if err := r.store.UpdateRun(ctx, run); err != nil {
+		return nil, types.StepMetrics{}, fmt.Errorf("update sub-run: %w", err)
+	}
+	return finalOutput, agg, nil
 }
 
 // ProcessReservedFields extracts and processes ktsu_* fields from output.
