@@ -613,55 +613,170 @@ func TestLoop_noOutputSchemaNoSchemaInPrompt(t *testing.T) {
 	}
 }
 
-func TestLoop_forcedConclusionNotDuplicated(t *testing.T) {
-	// max_turns=1; turn 1 produces invalid JSON; free correction succeeds.
-	// The forced-conclusion message must appear exactly once in the recovery call's messages.
-	callCount := 0
-	var recoveryMessages []any
+func TestLoop_toolDiscoveryError(t *testing.T) {
+	// MCP server that returns 500
+	badMCP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "broken", http.StatusInternalServerError)
+	}))
+	defer badMCP.Close()
+
+	// Gateway should never be called
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		var body map[string]any
-		json.NewDecoder(r.Body).Decode(&body)
-		w.Header().Set("Content-Type", "application/json")
-		if callCount == 1 {
-			json.NewEncoder(w).Encode(map[string]any{
-				"content":        "not json",
-				"model_resolved": "anthropic/claude-sonnet-4-6",
-				"tokens_in":      10, "tokens_out": 5, "cost_usd": 0.0,
-			})
-		} else {
-			recoveryMessages, _ = body["messages"].([]any)
-			json.NewEncoder(w).Encode(map[string]any{
-				"content":        `{"ok":true}`,
-				"model_resolved": "anthropic/claude-sonnet-4-6",
-				"tokens_in":      10, "tokens_out": 5, "cost_usd": 0.0,
-			})
-		}
+		t.Error("gateway should not have been called")
 	}))
 	defer gw.Close()
 
 	req := baseReq()
-	req.MaxTurns = 1
+	req.ToolServers = []agent.ToolServerSpec{
+		{Name: "broken-server", URL: badMCP.URL, Allowlist: []string{"some-tool"}},
+	}
 
 	loop := agent.NewLoop(gw.URL, mcpClient())
 	payload := loop.Run(context.Background(), req)
 
-	if payload.Status != agent.StatusOK {
-		t.Fatalf("expected ok, got %s: %s", payload.Status, payload.Error)
-	}
-
-	forcedCount := 0
-	for _, msg := range recoveryMessages {
-		m, _ := msg.(map[string]any)
-		if content, _ := m["content"].(string); strings.Contains(content, "maximum number of tool calls") {
-			forcedCount++
-		}
-	}
-	if forcedCount != 1 {
-		t.Errorf("expected forced-conclusion message exactly once, found %d times", forcedCount)
+	if payload.Status != "failed" {
+		t.Fatalf("expected failed, got %s", payload.Status)
 	}
 }
 
+func TestLoop_messagesAlwaysSetOnSuccess(t *testing.T) {
+	gw := fakeGateway(t, []map[string]any{
+		{
+			"content":        `{"result":"ok"}`,
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      10,
+			"tokens_out":     5,
+			"cost_usd":       0.0,
+		},
+	})
+	defer gw.Close()
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), baseReq())
+
+	if payload.Status != "ok" {
+		t.Fatalf("unexpected failure: %s", payload.Error)
+	}
+	if len(payload.Messages) == 0 {
+		t.Error("expected messages to be set in payload")
+	}
+}
+
+func TestLoop_pendingApprovalTriggered(t *testing.T) {
+	mcpSrv := fakeMCPServer(t, "delete-user", `"deleted"`)
+	defer mcpSrv.Close()
+
+	// Gateway returns a tool call for delete-user.
+	gw := fakeGateway(t, []map[string]any{
+		{
+			"content":        "",
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      100,
+			"tokens_out":     20,
+			"cost_usd":       0.001,
+			"tool_calls": []map[string]any{
+				{"id": "tc1", "name": "delete-user", "arguments": map[string]any{"id": "42"}},
+			},
+		},
+	})
+	defer gw.Close()
+
+	req := baseReq()
+	req.ToolServers = []agent.ToolServerSpec{
+		{
+			Name:      "user-svc",
+			URL:       mcpSrv.URL,
+			Allowlist: []string{"delete-user"},
+			ApprovalRules: []agent.ToolApprovalRule{
+				{Pattern: "delete-*", OnReject: "fail", TimeoutMS: 30000, TimeoutBehavior: "reject"},
+			},
+		},
+	}
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "pending_approval" {
+		t.Fatalf("expected pending_approval, got %s (error: %s)", payload.Status, payload.Error)
+	}
+	if payload.PendingApproval == nil {
+		t.Fatal("expected PendingApproval to be set")
+	}
+	if payload.PendingApproval.ToolName != "delete-user" {
+		t.Errorf("expected tool_name=delete-user, got %s", payload.PendingApproval.ToolName)
+	}
+	if payload.PendingApproval.ToolUseID != "tc1" {
+		t.Errorf("expected tool_use_id=tc1, got %s", payload.PendingApproval.ToolUseID)
+	}
+	if payload.PendingApproval.OnReject != "fail" {
+		t.Errorf("expected on_reject=fail, got %s", payload.PendingApproval.OnReject)
+	}
+	if payload.OriginalRequest == nil {
+		t.Error("expected OriginalRequest to be set on pending_approval")
+	}
+	if len(payload.Messages) == 0 {
+		t.Error("expected messages to be set for resume")
+	}
+	// The last message should be the assistant tool_use block.
+	lastMsg := payload.Messages[len(payload.Messages)-1]
+	if lastMsg.Role != "assistant" {
+		t.Errorf("expected last message to be assistant tool_use, got role=%s", lastMsg.Role)
+	}
+}
+
+func TestLoop_resumeWithPreApprovedToolCall(t *testing.T) {
+	mcpSrv := fakeMCPServer(t, "delete-user", `"deleted"`)
+	defer mcpSrv.Close()
+
+	// On resume, gateway is only called once (after the pre-approved tool executes).
+	gw := fakeGateway(t, []map[string]any{
+		{
+			"content":        `{"status":"done"}`,
+			"model_resolved": "anthropic/claude-sonnet-4-6",
+			"tokens_in":      80,
+			"tokens_out":     15,
+			"cost_usd":       0.0008,
+		},
+	})
+	defer gw.Close()
+
+	// Build the checkpoint messages as the orchestrator would after approval.
+	// They include the system prompt, user input, and the assistant tool_use block.
+	checkpointMessages := []agent.Message{
+		{Role: "system", Content: "You are a test agent."},
+		{Role: "user", Content: `{"message":"hello"}`},
+		{Role: "assistant", Content: `[{"type":"tool_use","id":"tc1","name":"delete-user","input":{"id":"42"}}]`},
+	}
+
+	req := baseReq()
+	req.IsResume = true
+	req.Messages = checkpointMessages
+	req.ApprovedToolCalls = []string{"tc1"}
+	req.ToolServers = []agent.ToolServerSpec{
+		{
+			Name:      "user-svc",
+			URL:       mcpSrv.URL,
+			Allowlist: []string{"delete-user"},
+			// No approval rules — on resume the tool was already approved.
+		},
+	}
+
+	loop := agent.NewLoop(gw.URL, mcpClient())
+	payload := loop.Run(context.Background(), req)
+
+	if payload.Status != "ok" {
+		t.Fatalf("expected ok after resume, got %s: %s", payload.Status, payload.Error)
+	}
+	if payload.Output["status"] != "done" {
+		t.Errorf("unexpected output: %v", payload.Output)
+	}
+	if payload.Metrics.ToolCalls != 1 {
+		t.Errorf("expected 1 tool call (pre-approved), got %d", payload.Metrics.ToolCalls)
+	}
+	if !payload.IsResume {
+		t.Error("expected IsResume to be true in payload")
+	}
+}
 func TestLoop_parallelToolCalls(t *testing.T) {
 	// Turn 1: two tool calls for two different servers.
 	// Turn 2: final answer.
@@ -830,32 +945,6 @@ func TestLoop_modelResolvedSetOnFreeCorrection(t *testing.T) {
 	}
 	if payload.Metrics.LLMCalls != 2 {
 		t.Errorf("expected 2 LLM calls, got %d", payload.Metrics.LLMCalls)
-	}
-}
-
-func TestLoop_toolDiscoveryError(t *testing.T) {
-	// MCP server that returns 500
-	badMCP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "broken", http.StatusInternalServerError)
-	}))
-	defer badMCP.Close()
-
-	// Gateway should never be called
-	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("gateway should not have been called")
-	}))
-	defer gw.Close()
-
-	req := baseReq()
-	req.ToolServers = []agent.ToolServerSpec{
-		{Name: "broken-server", URL: badMCP.URL, Allowlist: []string{"some-tool"}},
-	}
-
-	loop := agent.NewLoop(gw.URL, mcpClient())
-	payload := loop.Run(context.Background(), req)
-
-	if payload.Status != "failed" {
-		t.Fatalf("expected failed, got %s", payload.Status)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kimitsu-ai/ktsu/internal/config"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
@@ -596,5 +597,276 @@ func TestHandleInvoke_rootVisibility_allowed(t *testing.T) {
 	srv.handleInvoke(w, req)
 	if w.Code == http.StatusNotFound {
 		t.Errorf("expected non-404 for root workflow, got 404")
+	}
+}
+
+func newHandlerServerWithStoreAndRuntime(t *testing.T, runtimeURL string) *server {
+	t.Helper()
+	return &server{
+		o: &Orchestrator{cfg: Config{
+			RuntimeURL:  runtimeURL,
+			WorkflowDir: t.TempDir(),
+		}},
+		store:            state.NewMemStore(),
+		pendingCallbacks: make(map[stepCallbackKey]chan agent.CallbackPayload),
+	}
+}
+
+func TestHandleStepComplete_pendingApprovalNotSignaled(t *testing.T) {
+	s := newHandlerServerWithStore()
+	ctx := context.Background()
+
+	// Pre-create run and step
+	_ = s.store.CreateRun(ctx, &types.Run{ID: "run-pa", WorkflowName: "wf", Status: types.RunStatusRunning})
+	_ = s.store.CreateStep(ctx, &types.Step{ID: "step-pa", RunID: "run-pa", Status: types.StepStatusRunning})
+
+	key := stepCallbackKey{"run-pa", "step-pa"}
+	ch := make(chan agent.CallbackPayload, 1)
+	s.pendingCallbacks[key] = ch
+
+	rr := postComplete(t, s, "run-pa", "step-pa", agent.CallbackPayload{
+		RunID:  "run-pa",
+		StepID: "step-pa",
+		Status: "pending_approval",
+		Metrics: agent.Metrics{TokensIn: 100, CostUSD: 0.001},
+		PendingApproval: &agent.PendingApproval{
+			ToolName:  "delete-user",
+			ToolUseID: "tc1",
+			OnReject:  "fail",
+		},
+		OriginalRequest: json.RawMessage(`{"run_id":"run-pa","step_id":"step-pa"}`),
+	})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rr.Code)
+	}
+
+	// Channel must NOT be signaled.
+	select {
+	case got := <-ch:
+		t.Errorf("channel must not be signaled for pending_approval, got status=%q", got.Status)
+	default:
+	}
+
+	// Approval must be in store.
+	approval, err := s.store.GetApproval(ctx, "run-pa", "step-pa")
+	if err != nil {
+		t.Fatalf("GetApproval: %v", err)
+	}
+	if approval.Status != types.ApprovalStatusPending {
+		t.Errorf("want pending approval, got %q", approval.Status)
+	}
+	if approval.ToolName != "delete-user" {
+		t.Errorf("want tool_name=delete-user, got %q", approval.ToolName)
+	}
+	if approval.PartialMetrics.TokensIn != 100 {
+		t.Errorf("want partial_metrics.tokens_in=100, got %d", approval.PartialMetrics.TokensIn)
+	}
+
+	// Step status must be pending_approval.
+	step, err := s.store.GetStep(ctx, "run-pa", "step-pa")
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	if step.Status != types.StepStatusPendingApproval {
+		t.Errorf("want step status pending_approval, got %q", step.Status)
+	}
+}
+
+func TestHandleDecideApproval_Approved_DispatchesToRuntime(t *testing.T) {
+	runtimeReceived := make(chan agent.InvokeRequest, 1)
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req agent.InvokeRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		runtimeReceived <- req
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer runtime.Close()
+
+	s := newHandlerServerWithStoreAndRuntime(t, runtime.URL)
+	ctx := context.Background()
+
+	_ = s.store.CreateRun(ctx, &types.Run{ID: "run-dec", WorkflowName: "wf", Status: types.RunStatusRunning})
+	_ = s.store.CreateStep(ctx, &types.Step{
+		ID:       "step-dec",
+		RunID:    "run-dec",
+		Status:   types.StepStatusPendingApproval,
+		Messages: json.RawMessage(`[{"role":"user","content":"{}"}]`),
+	})
+	originalReq := agent.InvokeRequest{RunID: "run-dec", StepID: "step-dec", AgentName: "test-agent"}
+	originalJSON, _ := json.Marshal(originalReq)
+	_ = s.store.CreateApproval(ctx, &types.Approval{
+		RunID:           "run-dec",
+		StepID:          "step-dec",
+		ToolName:        "delete-user",
+		ToolUseID:       "tc1",
+		OnReject:        "fail",
+		Status:          types.ApprovalStatusPending,
+		CreatedAt:       time.Now(),
+		OriginalRequest: json.RawMessage(originalJSON),
+	})
+
+	body, _ := json.Marshal(map[string]string{"decision": "approved"})
+	req := httptest.NewRequest(http.MethodPost, "/runs/run-dec/steps/step-dec/approval/decide", bytes.NewReader(body))
+	req.SetPathValue("run_id", "run-dec")
+	req.SetPathValue("step_id", "step-dec")
+	rr := httptest.NewRecorder()
+	s.handleDecideApproval(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	select {
+	case invoked := <-runtimeReceived:
+		if !invoked.IsResume {
+			t.Error("expected IsResume=true in runtime invoke")
+		}
+		if len(invoked.ApprovedToolCalls) == 0 || invoked.ApprovedToolCalls[0] != "tc1" {
+			t.Errorf("expected ApprovedToolCalls=[tc1], got %v", invoked.ApprovedToolCalls)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for runtime to receive invoke")
+	}
+
+	// Approval status must be updated to approved.
+	approval, _ := s.store.GetApproval(ctx, "run-dec", "step-dec")
+	if approval.Status != types.ApprovalStatusApproved {
+		t.Errorf("want approved, got %q", approval.Status)
+	}
+}
+
+func TestHandleDecideApproval_Rejected_FailSignalsChannel(t *testing.T) {
+	s := newHandlerServerWithStoreAndRuntime(t, "")
+	ctx := context.Background()
+
+	_ = s.store.CreateRun(ctx, &types.Run{ID: "run-rej", WorkflowName: "wf", Status: types.RunStatusRunning})
+	_ = s.store.CreateStep(ctx, &types.Step{ID: "step-rej", RunID: "run-rej", Status: types.StepStatusPendingApproval})
+	_ = s.store.CreateApproval(ctx, &types.Approval{
+		RunID:     "run-rej",
+		StepID:    "step-rej",
+		ToolName:  "delete-user",
+		ToolUseID: "tc2",
+		OnReject:  "fail",
+		Status:    types.ApprovalStatusPending,
+		CreatedAt: time.Now(),
+		OriginalRequest: json.RawMessage(`{}`),
+		PartialMetrics: types.StepMetrics{TokensIn: 50},
+	})
+
+	// Register pending channel
+	key := stepCallbackKey{"run-rej", "step-rej"}
+	ch := make(chan agent.CallbackPayload, 1)
+	s.pendingCallbacks[key] = ch
+
+	body, _ := json.Marshal(map[string]string{"decision": "rejected"})
+	req := httptest.NewRequest(http.MethodPost, "/runs/run-rej/steps/step-rej/approval/decide", bytes.NewReader(body))
+	req.SetPathValue("run_id", "run-rej")
+	req.SetPathValue("step_id", "step-rej")
+	rr := httptest.NewRecorder()
+	s.handleDecideApproval(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rr.Code)
+	}
+
+	select {
+	case got := <-ch:
+		if got.Status != "failed" {
+			t.Errorf("want status=failed, got %q", got.Status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for channel signal")
+	}
+}
+
+func TestHandleStepComplete_ResumeAccumulatesMetrics(t *testing.T) {
+	s := newHandlerServerWithStore()
+	ctx := context.Background()
+
+	_ = s.store.CreateRun(ctx, &types.Run{ID: "run-res", WorkflowName: "wf", Status: types.RunStatusRunning})
+	_ = s.store.CreateStep(ctx, &types.Step{ID: "step-res", RunID: "run-res", Status: types.StepStatusPendingApproval})
+	_ = s.store.CreateApproval(ctx, &types.Approval{
+		RunID:  "run-res",
+		StepID: "step-res",
+		Status: types.ApprovalStatusApproved,
+		PartialMetrics: types.StepMetrics{
+			TokensIn:  100,
+			TokensOut: 50,
+			CostUSD:   0.001,
+			LLMCalls:  1,
+			ToolCalls: 0,
+		},
+	})
+
+	key := stepCallbackKey{"run-res", "step-res"}
+	ch := make(chan agent.CallbackPayload, 1)
+	s.pendingCallbacks[key] = ch
+
+	// Resume callback with metrics from the second leg.
+	rr := postComplete(t, s, "run-res", "step-res", agent.CallbackPayload{
+		RunID:    "run-res",
+		StepID:   "step-res",
+		Status:   "ok",
+		IsResume: true,
+		Output:   map[string]any{"result": "done"},
+		Metrics: agent.Metrics{
+			TokensIn:  80,
+			TokensOut: 30,
+			CostUSD:   0.0008,
+			LLMCalls:  1,
+			ToolCalls: 1,
+		},
+	})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rr.Code)
+	}
+
+	got := <-ch
+	if got.Metrics.TokensIn != 180 {
+		t.Errorf("want accumulated tokens_in=180, got %d", got.Metrics.TokensIn)
+	}
+	if got.Metrics.CostUSD != 0.0018 {
+		t.Errorf("want accumulated cost_usd=0.0018, got %f", got.Metrics.CostUSD)
+	}
+	if got.Metrics.LLMCalls != 2 {
+		t.Errorf("want accumulated llm_calls=2, got %d", got.Metrics.LLMCalls)
+	}
+	if got.Metrics.ToolCalls != 1 {
+		t.Errorf("want accumulated tool_calls=1, got %d", got.Metrics.ToolCalls)
+	}
+}
+
+func TestHandleListApprovals_ReturnsPendingApprovals(t *testing.T) {
+	s := newHandlerServerWithStore()
+	ctx := context.Background()
+
+	_ = s.store.CreateApproval(ctx, &types.Approval{
+		RunID: "run-list", StepID: "step-1", ToolName: "delete-x",
+		Status: types.ApprovalStatusPending, CreatedAt: time.Now(),
+	})
+	_ = s.store.CreateApproval(ctx, &types.Approval{
+		RunID: "run-list", StepID: "step-2", ToolName: "update-y",
+		Status: types.ApprovalStatusApproved, CreatedAt: time.Now(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/approvals", nil)
+	rr := httptest.NewRecorder()
+	s.handleListApprovals(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rr.Code)
+	}
+
+	var approvals []*types.Approval
+	if err := json.NewDecoder(rr.Body).Decode(&approvals); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(approvals) != 1 {
+		t.Errorf("want 1 pending approval, got %d", len(approvals))
+	}
+	if len(approvals) > 0 && approvals[0].ToolName != "delete-x" {
+		t.Errorf("wrong approval returned: %q", approvals[0].ToolName)
 	}
 }

@@ -132,6 +132,7 @@ model_policy:
 | `agent` | Path or built-in reference with pinned version |
 | `transform` | Inline transform declaration |
 | `webhook` | Inline webhook declaration — URL, method, body mapping, timeout |
+| `on` | Event trigger for this step. `approval` — fires when a `depends_on` step enters `pending_approval`. Use with `webhook` to send approval notifications. |
 | `for_each` | Fanout spec — see Pipeline Primitives. Fields: `from` (JMESPath to an array), `max_items` (optional cap), `concurrency` (optional parallel limit). Agent-only. |
 | `condition` | JMESPath expression evaluated against step outputs at runtime. If falsy, the step is marked `skipped`. Valid on webhook steps. |
 | `depends_on` | Array of step IDs this step waits for (not needed for transform steps — derived from inputs) |

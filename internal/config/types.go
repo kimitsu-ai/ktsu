@@ -1,5 +1,11 @@
 package config
 
+import (
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
 // ParamDecl declares a named parameter on an agent or server.
 // Default nil means the param is required.
 type ParamDecl struct {
@@ -41,6 +47,7 @@ type WorkflowInput struct {
 // PipelineStep is one entry in pipeline[]. Exactly one of Agent/Transform/Webhook/Workflow is set.
 type PipelineStep struct {
 	ID                  string                 `yaml:"id"`
+	On                  string                 `yaml:"on,omitempty"` // "approval" — fires when a depends_on step enters pending_approval
 	Agent               string                 `yaml:"agent,omitempty"`
 	Transform           *TransformSpec         `yaml:"transform,omitempty"`
 	Webhook             *WebhookSpec           `yaml:"webhook,omitempty"`
@@ -152,8 +159,39 @@ type ServerRef struct {
 	Access AccessConfig      `yaml:"access"`
 }
 
+// AccessConfig controls which tools an agent may call on a server.
 type AccessConfig struct {
-	Allowlist []string `yaml:"allowlist"`
+	Allowlist []ToolAccess `yaml:"allowlist"`
+}
+
+// ToolAccess is a single allowlist entry. It unmarshals from either a plain
+// YAML string ("tool-name") or an object with optional require_approval policy.
+type ToolAccess struct {
+	Name            string          `yaml:"name"`
+	RequireApproval *ApprovalPolicy `yaml:"require_approval,omitempty"`
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler so that a plain scalar like
+// "delete-*" is treated as ToolAccess{Name: "delete-*"}.
+func (t *ToolAccess) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		t.Name = value.Value
+		return nil
+	}
+	type toolAccessAlias ToolAccess
+	var alias toolAccessAlias
+	if err := value.Decode(&alias); err != nil {
+		return err
+	}
+	*t = ToolAccess(alias)
+	return nil
+}
+
+// ApprovalPolicy declares how the orchestrator should handle a required approval.
+type ApprovalPolicy struct {
+	OnReject        string        `yaml:"on_reject"`         // "fail" | "recover"
+	Timeout         time.Duration `yaml:"timeout,omitempty"` // 0 = no timeout
+	TimeoutBehavior string        `yaml:"timeout_behavior"`  // "fail" | "reject"
 }
 
 // EnvConfig represents environments/*.env.yaml
