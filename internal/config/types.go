@@ -7,6 +7,12 @@ type ParamDecl struct {
 	Default     *string `yaml:"default,omitempty"`
 }
 
+// ParamsSchemaDecl wraps a JSON Schema declaration for workflow or agent params.
+// YAML: params: { schema: { type: object, required: [...], properties: { name: { type, description, default? } } } }
+type ParamsSchemaDecl struct {
+	Schema map[string]interface{} `yaml:"schema,omitempty"`
+}
+
 // PromptConfig holds the LLM-facing prompt configuration for an agent.
 type PromptConfig struct {
 	System string `yaml:"system"`
@@ -20,13 +26,16 @@ type StepParams struct {
 
 // WorkflowConfig represents a workflow.yaml file (kind: workflow)
 type WorkflowConfig struct {
-	Kind        string         `yaml:"kind"`
-	Name        string         `yaml:"name"`
-	Version     string         `yaml:"version"`
-	Description string         `yaml:"description"`
-	Input       WorkflowInput  `yaml:"input,omitempty"`
-	Pipeline    []PipelineStep `yaml:"pipeline"`
-	ModelPolicy *ModelPolicy   `yaml:"model_policy,omitempty"`
+	Kind        string           `yaml:"kind"`
+	Name        string           `yaml:"name"`
+	Version     string           `yaml:"version"`
+	Description string           `yaml:"description"`
+	Visibility  string           `yaml:"visibility,omitempty"`  // "root" | "sub-workflow"
+	Webhooks    string           `yaml:"webhooks,omitempty"`    // "execute" | "suppress"
+	Params      ParamsSchemaDecl `yaml:"params,omitempty"`      // JSON Schema params declaration
+	Input       WorkflowInput    `yaml:"input,omitempty"`
+	Pipeline    []PipelineStep   `yaml:"pipeline"`
+	ModelPolicy *ModelPolicy     `yaml:"model_policy,omitempty"`
 }
 
 // WorkflowInput declares the expected input schema for a workflow.
@@ -35,20 +44,54 @@ type WorkflowInput struct {
 	Schema map[string]interface{} `yaml:"schema,omitempty"`
 }
 
-// PipelineStep is one entry in pipeline[]. Exactly one of Agent/Transform/Webhook is set.
+// PipelineStep is one entry in pipeline[]. Exactly one of Agent/Transform/Webhook/Workflow is set.
 type PipelineStep struct {
 	ID                  string                 `yaml:"id"`
 	Agent               string                 `yaml:"agent,omitempty"`
 	Transform           *TransformSpec         `yaml:"transform,omitempty"`
 	Webhook             *WebhookSpec           `yaml:"webhook,omitempty"`
+	Workflow            string                 `yaml:"workflow,omitempty"`
+	WorkflowInput       map[string]interface{} `yaml:"input,omitempty"`
+	WorkflowWebhooks    string                 `yaml:"webhooks,omitempty"`
+	// For agent steps: {"agent": {"key": val}, "server": {"name": {"key": val}}}
+	// For workflow steps: {"param_name": "value_expr"}
+	Params              map[string]interface{} `yaml:"params,omitempty"`
 	ForEach             *ForEachSpec           `yaml:"for_each,omitempty"`
 	DependsOn           []string               `yaml:"depends_on,omitempty"`
 	Condition           string                 `yaml:"condition,omitempty"`
 	ConfidenceThreshold float64                `yaml:"confidence_threshold,omitempty"`
-	Params              StepParams             `yaml:"params,omitempty"`
 	Model               *ModelSpec             `yaml:"model,omitempty"`
 	Consolidation       string                 `yaml:"consolidation,omitempty"`
 	Output              *OutputSpec            `yaml:"output,omitempty"`
+}
+
+// AgentParams extracts the agent sub-map from Params (for agent steps).
+// YAML: params: { agent: { key: val } }
+func (s *PipelineStep) AgentParams() map[string]any {
+	if s.Params == nil {
+		return nil
+	}
+	m, _ := s.Params["agent"].(map[string]interface{})
+	return m
+}
+
+// ServerParams extracts the server sub-map from Params (for agent steps).
+// YAML: params: { server: { servername: { key: val } } }
+func (s *PipelineStep) ServerParams() map[string]map[string]any {
+	if s.Params == nil {
+		return nil
+	}
+	raw, _ := s.Params["server"].(map[string]interface{})
+	if raw == nil {
+		return nil
+	}
+	result := make(map[string]map[string]any, len(raw))
+	for k, v := range raw {
+		if m, ok := v.(map[string]interface{}); ok {
+			result[k] = m
+		}
+	}
+	return result
 }
 
 // ForEachSpec configures fanout iteration for an agent step.
@@ -96,16 +139,16 @@ type OutputSpec struct {
 // AgentConfig represents an agent config block.
 // prompt.system replaces the former top-level system field.
 type AgentConfig struct {
-	Name        string               `yaml:"name"`
-	Description string               `yaml:"description"`
-	Model       string               `yaml:"model"`
-	Params      map[string]ParamDecl `yaml:"params,omitempty"`
-	Prompt      PromptConfig         `yaml:"prompt"`
-	Reflect     string               `yaml:"reflect,omitempty"`
-	Servers     []ServerRef          `yaml:"servers"`
-	SubAgents   []string             `yaml:"sub_agents"`
-	MaxTurns    int                  `yaml:"max_turns"`
-	Output      *OutputSpec          `yaml:"output,omitempty"`
+	Name        string           `yaml:"name"`
+	Description string           `yaml:"description"`
+	Model       string           `yaml:"model"`
+	Params      ParamsSchemaDecl `yaml:"params,omitempty"`
+	Prompt      PromptConfig     `yaml:"prompt"`
+	Reflect     string           `yaml:"reflect,omitempty"`
+	Servers     []ServerRef      `yaml:"servers"`
+	SubAgents   []string         `yaml:"sub_agents"`
+	MaxTurns    int              `yaml:"max_turns"`
+	Output      *OutputSpec      `yaml:"output,omitempty"`
 }
 
 type ServerRef struct {

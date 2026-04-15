@@ -273,11 +273,17 @@ name: chat
 model: standard
 max_turns: 5
 params:
-  persona:
-    description: "The persona the agent adopts"
-    default: "helpful assistant"
-  domain:
-    description: "The subject matter domain"
+  schema:
+    type: object
+    required: [domain]
+    properties:
+      persona:
+        type: string
+        description: "The persona the agent adopts"
+        default: "helpful assistant"
+      domain:
+        type: string
+        description: "The subject matter domain"
 prompt:
   system: "You are a {{persona}} assistant focused on {{domain}}."
 output:
@@ -294,16 +300,21 @@ output:
 	if cfg.Prompt.System == "" {
 		t.Error("expected prompt.system to be set")
 	}
-	if len(cfg.Params) != 2 {
-		t.Fatalf("expected 2 params, got %d", len(cfg.Params))
+	// Parse the schema and verify the resulting ParamDecl map
+	declared, parseErr := ParseParamsSchema(cfg.Params.Schema)
+	if parseErr != nil {
+		t.Fatalf("ParseParamsSchema error: %v", parseErr)
 	}
-	if cfg.Params["persona"].Description != "The persona the agent adopts" {
-		t.Errorf("unexpected persona description: %q", cfg.Params["persona"].Description)
+	if len(declared) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(declared))
 	}
-	if cfg.Params["persona"].Default == nil || *cfg.Params["persona"].Default != "helpful assistant" {
+	if declared["persona"].Description != "The persona the agent adopts" {
+		t.Errorf("unexpected persona description: %q", declared["persona"].Description)
+	}
+	if declared["persona"].Default == nil || *declared["persona"].Default != "helpful assistant" {
 		t.Errorf("expected persona default %q", "helpful assistant")
 	}
-	if cfg.Params["domain"].Default != nil {
+	if declared["domain"].Default != nil {
 		t.Error("expected domain to have no default (required)")
 	}
 }
@@ -382,11 +393,11 @@ pipeline:
 		t.Fatalf("unexpected error: %v", err)
 	}
 	step := cfg.Pipeline[0]
-	if step.Params.Agent["persona"] != "support rep" {
-		t.Errorf("unexpected agent param: %v", step.Params.Agent["persona"])
+	if step.AgentParams()["persona"] != "support rep" {
+		t.Errorf("unexpected agent param: %v", step.AgentParams()["persona"])
 	}
-	if step.Params.Server["memory"]["namespace"] != "user-123" {
-		t.Errorf("unexpected server param: %v", step.Params.Server["memory"]["namespace"])
+	if step.ServerParams()["memory"]["namespace"] != "user-123" {
+		t.Errorf("unexpected server param: %v", step.ServerParams()["memory"]["namespace"])
 	}
 }
 
