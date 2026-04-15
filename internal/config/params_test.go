@@ -273,3 +273,151 @@ func TestResolveServerParams_unsetEnvVarReturnsError(t *testing.T) {
 		t.Fatal("expected error for unset env var in server param default, got nil")
 	}
 }
+
+// --- ResolveValue ---
+
+func TestResolveValue_envRef_allowed(t *testing.T) {
+	os.Setenv("TEST_RESOLVE_VAR", "hello")
+	defer os.Unsetenv("TEST_RESOLVE_VAR")
+	got, err := ResolveValue("env:TEST_RESOLVE_VAR", true, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "hello" {
+		t.Errorf("got %q want %q", got, "hello")
+	}
+}
+
+func TestResolveValue_envRef_forbidden(t *testing.T) {
+	os.Setenv("TEST_RESOLVE_VAR", "hello")
+	defer os.Unsetenv("TEST_RESOLVE_VAR")
+	_, err := ResolveValue("env:TEST_RESOLVE_VAR", false, nil)
+	if err == nil {
+		t.Fatal("expected error when env: used in non-root context")
+	}
+}
+
+func TestResolveValue_paramRef_found(t *testing.T) {
+	got, err := ResolveValue("param:webhook_url", false, map[string]string{"webhook_url": "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://example.com" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestResolveValue_paramRef_missing(t *testing.T) {
+	_, err := ResolveValue("param:missing", false, map[string]string{})
+	if err == nil {
+		t.Fatal("expected error for missing param")
+	}
+}
+
+func TestResolveValue_backtickLiteral(t *testing.T) {
+	got, err := ResolveValue("`support-bot`", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "support-bot" {
+		t.Errorf("got %q want %q", got, "support-bot")
+	}
+}
+
+func TestResolveValue_plainString(t *testing.T) {
+	got, err := ResolveValue("plain", false, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "plain" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestResolveValue_envRef_unset(t *testing.T) {
+	os.Unsetenv("DEFINITELY_NOT_SET_XYZ2")
+	_, err := ResolveValue("env:DEFINITELY_NOT_SET_XYZ2", true, nil)
+	if err == nil {
+		t.Fatal("expected error for unset env var")
+	}
+}
+
+// --- ParseParamsSchema ---
+
+func TestParseParamsSchema_requiredParam(t *testing.T) {
+	schema := map[string]interface{}{
+		"type": "object",
+		"required": []interface{}{"webhook_url"},
+		"properties": map[string]interface{}{
+			"webhook_url": map[string]interface{}{
+				"type":        "string",
+				"description": "Slack webhook URL",
+			},
+		},
+	}
+	got, err := ParseParamsSchema(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	decl, ok := got["webhook_url"]
+	if !ok {
+		t.Fatal("expected webhook_url in result")
+	}
+	if decl.Default != nil {
+		t.Error("required param should have nil Default")
+	}
+}
+
+func TestParseParamsSchema_optionalWithDefault(t *testing.T) {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"username": map[string]interface{}{
+				"type":    "string",
+				"default": "kimitsu",
+			},
+		},
+	}
+	got, err := ParseParamsSchema(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	decl, ok := got["username"]
+	if !ok {
+		t.Fatal("expected username")
+	}
+	if decl.Default == nil || *decl.Default != "kimitsu" {
+		t.Errorf("expected default 'kimitsu', got %v", decl.Default)
+	}
+}
+
+func TestParseParamsSchema_optionalNoDefault(t *testing.T) {
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"tag": map[string]interface{}{"type": "string"},
+		},
+	}
+	got, err := ParseParamsSchema(schema)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	decl := got["tag"]
+	// optional with no explicit default gets empty string default (not required)
+	if decl.Default == nil {
+		t.Error("optional param with no default should get empty string default")
+	}
+	if *decl.Default != "" {
+		t.Errorf("expected empty string default, got %q", *decl.Default)
+	}
+}
+
+func TestParseParamsSchema_nilSchema(t *testing.T) {
+	got, err := ParseParamsSchema(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map for nil schema")
+	}
+}

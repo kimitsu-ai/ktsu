@@ -9,6 +9,39 @@ import (
 
 var placeholderRe = regexp.MustCompile(`\{\{(\w+)\}\}`)
 
+// ResolveValue resolves a value string using env and invocation params contexts.
+// Handles: "env:VAR_NAME" (root-only), "param:NAME" (from invocationParams),
+// "`literal`" (JMESPath backtick literal), plain strings (returned as-is).
+// allowEnv must be true for env: references to succeed; false models sub-workflow context.
+func ResolveValue(v string, allowEnv bool, invocationParams map[string]string) (string, error) {
+	switch {
+	case strings.HasPrefix(v, "env:"):
+		if !allowEnv {
+			return "", fmt.Errorf("env: reference %q not permitted outside root workflow context", v)
+		}
+		varName := strings.TrimPrefix(v, "env:")
+		val, ok := os.LookupEnv(varName)
+		if !ok {
+			return "", fmt.Errorf("env var %q is not set", varName)
+		}
+		return val, nil
+	case strings.HasPrefix(v, "param:"):
+		name := strings.TrimPrefix(v, "param:")
+		if invocationParams == nil {
+			return "", fmt.Errorf("param %q referenced but no params context is available", name)
+		}
+		val, ok := invocationParams[name]
+		if !ok {
+			return "", fmt.Errorf("param %q is not available in this invocation", name)
+		}
+		return val, nil
+	case strings.HasPrefix(v, "`") && strings.HasSuffix(v, "`") && len(v) >= 2:
+		return strings.TrimPrefix(strings.TrimSuffix(v, "`"), "`"), nil
+	default:
+		return v, nil
+	}
+}
+
 // ResolveEnvValue resolves an "env:VAR_NAME" reference to its environment value.
 // Non-env: values are returned unchanged.
 func ResolveEnvValue(v string) string {
@@ -130,6 +163,41 @@ func ResolveServerParams(declared map[string]ParamDecl, agentRefParams map[strin
 		if _, ok := result[name]; !ok {
 			return nil, fmt.Errorf("required server param %q has no value", name)
 		}
+	}
+	return result, nil
+}
+
+// ParseParamsSchema converts a JSON Schema params declaration into the internal
+// map[string]ParamDecl used by resolution functions.
+// Required params have nil Default. Optional params without explicit defaults get an empty string default.
+func ParseParamsSchema(schema map[string]interface{}) (map[string]ParamDecl, error) {
+	if schema == nil {
+		return nil, nil
+	}
+	props, _ := schema["properties"].(map[string]interface{})
+	requiredRaw, _ := schema["required"].([]interface{})
+	required := make(map[string]bool, len(requiredRaw))
+	for _, r := range requiredRaw {
+		if s, ok := r.(string); ok {
+			required[s] = true
+		}
+	}
+	result := make(map[string]ParamDecl, len(props))
+	for name, propRaw := range props {
+		prop, _ := propRaw.(map[string]interface{})
+		pd := ParamDecl{}
+		if desc, ok := prop["description"].(string); ok {
+			pd.Description = desc
+		}
+		if def, ok := prop["default"].(string); ok {
+			pd.Default = &def
+		} else if !required[name] {
+			// Optional param with no explicit default: use empty string so it isn't treated as required.
+			empty := ""
+			pd.Default = &empty
+		}
+		// required[name] && pd.Default == nil → param is required (nil Default = required in ParamDecl)
+		result[name] = pd
 	}
 	return result, nil
 }
