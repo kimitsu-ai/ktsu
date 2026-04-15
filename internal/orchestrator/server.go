@@ -374,14 +374,18 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		if err != nil {
 			return nil, zero, fmt.Errorf("load agent %s: %w", step.Agent, err)
 		}
-		if err := config.ValidatePromptRefs(agentCfg.Prompt.System, agentCfg.Params); err != nil {
+		declaredParams, parseErr := config.ParseParamsSchema(agentCfg.Params.Schema)
+		if parseErr != nil {
+			return nil, zero, fmt.Errorf("agent %s params schema: %w", agentCfg.Name, parseErr)
+		}
+		if err := config.ValidatePromptRefs(agentCfg.Prompt.System, declaredParams); err != nil {
 			return nil, zero, fmt.Errorf("agent %s prompt validation: %w", agentCfg.Name, err)
 		}
 		agentName = agentCfg.Name
 		modelGroup = agentCfg.Model
 
 		// Resolve agent params and interpolate system prompt.
-		resolvedAgentParams, resolveErr := config.ResolveAgentParams(agentCfg.Params, step.Params.Agent)
+		resolvedAgentParams, resolveErr := config.ResolveAgentParams(declaredParams, step.AgentParams())
 		if resolveErr != nil {
 			return nil, zero, fmt.Errorf("agent %s param resolution: %w", agentCfg.Name, resolveErr)
 		}
@@ -425,11 +429,16 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			if strings.HasPrefix(authToken, "env:") {
 				authToken = os.Getenv(strings.TrimPrefix(authToken, "env:"))
 			}
-			// Resolve server params (nil map access on step.Params.Server returns nil safely).
+			// Resolve server params (ServerParams() handles nil safely).
+			stepServerParams := step.ServerParams()
+			var stepServerParamsForServer map[string]any
+			if stepServerParams != nil {
+				stepServerParamsForServer = stepServerParams[srv.Name]
+			}
 			resolvedServerParams, serverParamErr := config.ResolveServerParams(
 				serverCfg.Params,
 				srv.Params,
-				step.Params.Server[srv.Name],
+				stepServerParamsForServer,
 			)
 			if serverParamErr != nil {
 				return nil, zero, fmt.Errorf("server %s param resolution: %w", srv.Name, serverParamErr)
