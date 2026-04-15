@@ -1,0 +1,42 @@
+kind: workflow
+name: ktsu/slack-reply
+version: "1.0.0"
+visibility: sub-workflow
+webhooks: execute
+
+params:
+  schema:
+    type: object
+    required: [webhook_url]
+    properties:
+      webhook_url:
+        type: string
+        description: "Slack incoming webhook URL"
+      username:
+        type: string
+        default: "kimitsu"
+
+input:
+  schema:
+    type: object
+    required: [channel_id, text]
+    properties:
+      channel_id: { type: string }
+      text:        { type: string }
+
+pipeline:
+  - id: post
+    webhook:
+      url: "param:webhook_url"
+      method: POST
+      body:
+        channel:   "input.channel_id"
+        text:      "input.text"
+        username:  "param:username"
+
+output:
+  schema:
+    type: object
+    properties:
+      sent:        { type: boolean }
+      status_code: { type: integer }

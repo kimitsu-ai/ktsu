@@ -3,9 +3,12 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/kimitsu-ai/ktsu/internal/config/builtins"
 )
 
 func LoadWorkflow(path string) (*WorkflowConfig, error) {
@@ -87,4 +90,32 @@ func StripVersion(ref string) string {
 		return ref[:idx]
 	}
 	return ref
+}
+
+// ResolveWorkflowRef resolves a workflow step's workflow reference to a WorkflowConfig.
+// Handles:
+//   - "ktsu/name"              → shipped workflow (always sub-workflow visibility)
+//   - "./path/to/file.yaml"    → local path relative to projectDir
+//   - "author/name"            → hub-installed (not yet implemented — returns error)
+func ResolveWorkflowRef(ref, projectDir string) (*WorkflowConfig, error) {
+	if strings.HasPrefix(ref, "ktsu/") {
+		data, err := builtins.ReadFile(ref)
+		if err != nil {
+			return nil, err
+		}
+		var cfg WorkflowConfig
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("parse shipped workflow %q: %w", ref, err)
+		}
+		return &cfg, nil
+	}
+	if strings.HasPrefix(ref, "./") || strings.HasPrefix(ref, "../") || filepath.IsAbs(ref) {
+		path := ref
+		if !filepath.IsAbs(ref) {
+			path = filepath.Join(projectDir, ref)
+		}
+		return LoadWorkflow(path)
+	}
+	// Hub-installed: author/name — not implemented in this plan
+	return nil, fmt.Errorf("hub-installed workflow references (%q) are not yet supported; use ./path/ for local or ktsu/ for shipped", ref)
 }
