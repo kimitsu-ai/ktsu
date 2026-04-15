@@ -538,3 +538,63 @@ func TestRuntimeDispatcher_Dispatch_contextCancellation(t *testing.T) {
 		t.Errorf("want error wrapping context.Canceled, got %v", err)
 	}
 }
+
+func TestHandleInvoke_subWorkflowVisibility_returns404(t *testing.T) {
+	dir := t.TempDir()
+	wfContent := "kind: workflow\nname: test-sub\nversion: \"1.0.0\"\nvisibility: sub-workflow\npipeline: []\n"
+	if err := os.WriteFile(filepath.Join(dir, "test-sub.workflow.yaml"), []byte(wfContent), 0644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	o := &Orchestrator{cfg: Config{WorkflowDir: dir, StoreType: "memory"}}
+	srv, err := newServer(o)
+	if err != nil {
+		t.Fatalf("newServer: %v", err)
+	}
+	req := httptest.NewRequest("POST", "/invoke/test-sub", bytes.NewBufferString("{}"))
+	req.SetPathValue("workflow", "test-sub")
+	w := httptest.NewRecorder()
+	srv.handleInvoke(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for sub-workflow invocation, got %d", w.Code)
+	}
+}
+
+func TestHandleInvoke_noVisibilityField_allowed(t *testing.T) {
+	dir := t.TempDir()
+	wfContent := "kind: workflow\nname: test-default\nversion: \"1.0.0\"\npipeline: []\n"
+	if err := os.WriteFile(filepath.Join(dir, "test-default.workflow.yaml"), []byte(wfContent), 0644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	o := &Orchestrator{cfg: Config{WorkflowDir: dir, StoreType: "memory"}}
+	srv, err := newServer(o)
+	if err != nil {
+		t.Fatalf("newServer: %v", err)
+	}
+	req := httptest.NewRequest("POST", "/invoke/test-default", bytes.NewBufferString("{}"))
+	req.SetPathValue("workflow", "test-default")
+	w := httptest.NewRecorder()
+	srv.handleInvoke(w, req)
+	if w.Code == http.StatusNotFound {
+		t.Errorf("expected non-404 for workflow with no visibility field, got 404")
+	}
+}
+
+func TestHandleInvoke_rootVisibility_allowed(t *testing.T) {
+	dir := t.TempDir()
+	wfContent := "kind: workflow\nname: test-root\nversion: \"1.0.0\"\nvisibility: root\npipeline: []\n"
+	if err := os.WriteFile(filepath.Join(dir, "test-root.workflow.yaml"), []byte(wfContent), 0644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	o := &Orchestrator{cfg: Config{WorkflowDir: dir, StoreType: "memory"}}
+	srv, err := newServer(o)
+	if err != nil {
+		t.Fatalf("newServer: %v", err)
+	}
+	req := httptest.NewRequest("POST", "/invoke/test-root", bytes.NewBufferString("{}"))
+	req.SetPathValue("workflow", "test-root")
+	w := httptest.NewRecorder()
+	srv.handleInvoke(w, req)
+	if w.Code == http.StatusNotFound {
+		t.Errorf("expected non-404 for root workflow, got 404")
+	}
+}
