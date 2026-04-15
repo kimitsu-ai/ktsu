@@ -835,29 +835,9 @@ func (r *Runner) executeWorkflow(
 	}
 
 	subRunID := parentRunID + "/" + step.ID
-	if err := r.executeSubWorkflow(ctx, subWF, subRunID, subInput, resolvedParams, suppressWebhooks, projectDir); err != nil {
-		return nil, types.StepMetrics{}, fmt.Errorf("sub-workflow %q failed: %w", step.Workflow, err)
-	}
-
-	subSteps, err := r.store.ListSteps(ctx, subRunID)
+	finalOutput, agg, err := r.executeSubWorkflow(ctx, subWF, subRunID, subInput, resolvedParams, suppressWebhooks, projectDir)
 	if err != nil {
-		return nil, types.StepMetrics{}, fmt.Errorf("list sub-steps for %q: %w", subRunID, err)
-	}
-	var finalOutput map[string]interface{}
-	var agg types.StepMetrics
-	for _, s := range subSteps {
-		agg.TokensIn += s.Metrics.TokensIn
-		agg.TokensOut += s.Metrics.TokensOut
-		agg.CostUSD += s.Metrics.CostUSD
-		agg.LLMCalls += s.Metrics.LLMCalls
-		agg.ToolCalls += s.Metrics.ToolCalls
-		agg.ReflectCalls += s.Metrics.ReflectCalls
-		if s.Status == types.StepStatusComplete {
-			finalOutput = s.Output
-		}
-	}
-	if finalOutput == nil {
-		finalOutput = map[string]interface{}{}
+		return nil, types.StepMetrics{}, fmt.Errorf("sub-workflow %q failed: %w", step.Workflow, err)
 	}
 	return finalOutput, agg, nil
 }
@@ -865,6 +845,7 @@ func (r *Runner) executeWorkflow(
 // executeSubWorkflow runs a sub-workflow's pipeline inline under the given subRunID.
 // invocationParams holds resolved param: values for the sub-workflow's steps.
 // suppressWebhooks controls whether webhook steps fire or are skipped.
+// Returns the last completed step's output and aggregated metrics across all steps.
 func (r *Runner) executeSubWorkflow(
 	ctx context.Context,
 	wf *config.WorkflowConfig,
@@ -873,7 +854,10 @@ func (r *Runner) executeSubWorkflow(
 	invocationParams map[string]string,
 	suppressWebhooks bool,
 	projectDir string,
-) error {
+) (map[string]interface{}, types.StepMetrics, error) {
+	var finalOutput map[string]interface{}
+	var agg types.StepMetrics
+
 	now := time.Now()
 	run := &types.Run{
 		ID:           runID,
@@ -883,7 +867,7 @@ func (r *Runner) executeSubWorkflow(
 		UpdatedAt:    now,
 	}
 	if err := r.store.CreateRun(ctx, run); err != nil {
-		return fmt.Errorf("create sub-run: %w", err)
+		return nil, types.StepMetrics{}, fmt.Errorf("create sub-run: %w", err)
 	}
 
 	nodes := make([]dag.Node, len(wf.Pipeline))
@@ -892,7 +876,7 @@ func (r *Runner) executeSubWorkflow(
 	}
 	layers, err := dag.Resolve(nodes)
 	if err != nil {
-		return fmt.Errorf("dag resolve: %w", err)
+		return nil, types.StepMetrics{}, fmt.Errorf("dag resolve: %w", err)
 	}
 
 	stepByID := make(map[string]*config.PipelineStep, len(wf.Pipeline))
@@ -905,7 +889,7 @@ func (r *Runner) executeSubWorkflow(
 		stepOutputs["input"] = input
 	}
 
-	markFailed := func(stepRec *types.Step, errMsg string) error {
+	markFailed := func(stepRec *types.Step, errMsg string) (map[string]interface{}, types.StepMetrics, error) {
 		t := time.Now()
 		stepRec.Status = types.StepStatusFailed
 		stepRec.Error = errMsg
@@ -915,7 +899,7 @@ func (r *Runner) executeSubWorkflow(
 		run.Error = errMsg
 		run.UpdatedAt = t
 		_ = r.store.UpdateRun(ctx, run)
-		return errors.New(errMsg)
+		return nil, types.StepMetrics{}, errors.New(errMsg)
 	}
 
 	for _, layer := range layers {
@@ -946,8 +930,9 @@ func (r *Runner) executeSubWorkflow(
 					StartedAt: &startedAt,
 					EndedAt:   &endedAt,
 				}
-				_ = r.store.CreateStep(ctx, stepRec)
-				_ = r.store.UpdateStep(ctx, stepRec)
+				if err := r.store.CreateStep(ctx, stepRec); err != nil {
+					return nil, types.StepMetrics{}, fmt.Errorf("create skipped webhook step %s: %w", step.ID, err)
+				}
 				stepOutputs[step.ID] = map[string]interface{}{"suppressed": true}
 				continue
 			}
@@ -962,7 +947,7 @@ func (r *Runner) executeSubWorkflow(
 				StartedAt: &startedAt,
 			}
 			if err := r.store.CreateStep(ctx, stepRec); err != nil {
-				return fmt.Errorf("create step %s: %w", step.ID, err)
+				return nil, types.StepMetrics{}, fmt.Errorf("create step %s: %w", step.ID, err)
 			}
 
 			var rawOutput map[string]interface{}
@@ -985,6 +970,15 @@ func (r *Runner) executeSubWorkflow(
 			}
 
 			stepRec.Metrics = stepMetrics
+			agg.TokensIn += stepMetrics.TokensIn
+			agg.TokensOut += stepMetrics.TokensOut
+			agg.CostUSD += stepMetrics.CostUSD
+			agg.LLMCalls += stepMetrics.LLMCalls
+			agg.ToolCalls += stepMetrics.ToolCalls
+			agg.ReflectCalls += stepMetrics.ReflectCalls
+			if stepMetrics.Reflected {
+				agg.Reflected = true
+			}
 			if execErr != nil {
 				return markFailed(stepRec, execErr.Error())
 			}
@@ -1027,14 +1021,21 @@ func (r *Runner) executeSubWorkflow(
 			stepRec.EndedAt = &t
 			_ = r.store.UpdateStep(ctx, stepRec)
 			stepOutputs[step.ID] = cleanOutput
+			finalOutput = cleanOutput
 		}
 	}
 
+	if finalOutput == nil {
+		finalOutput = map[string]interface{}{}
+	}
 	now = time.Now()
 	run.Status = types.RunStatusComplete
 	run.UpdatedAt = now
 	run.CompletedAt = &now
-	return r.store.UpdateRun(ctx, run)
+	if err := r.store.UpdateRun(ctx, run); err != nil {
+		return nil, types.StepMetrics{}, fmt.Errorf("update sub-run: %w", err)
+	}
+	return finalOutput, agg, nil
 }
 
 // ProcessReservedFields extracts and processes ktsu_* fields from output.
