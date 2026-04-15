@@ -1014,3 +1014,93 @@ pipeline:
 		t.Errorf("expected 'cycle' in error output, got: %s", buf.String())
 	}
 }
+
+// TestWorkflowTreeCmd_basicOutput verifies that `ktsu workflow tree` prints the workflow file
+// and its sub-workflow dependency.
+func TestWorkflowTreeCmd_basicOutput(t *testing.T) {
+	dir := t.TempDir()
+
+	subWF := `kind: workflow
+name: sub
+version: "1.0.0"
+pipeline:
+  - id: noop
+    transform:
+      inputs: [{from: input}]
+      ops:
+        - map:
+            expr: "{ok: true}"
+`
+	parentWF := `kind: workflow
+name: parent
+version: "1.0.0"
+pipeline:
+  - id: call
+    workflow: ./sub.workflow.yaml
+`
+	if err := writeFile(filepath.Join(dir, "sub.workflow.yaml"), subWF); err != nil {
+		t.Fatalf("write sub: %v", err)
+	}
+	parentPath := filepath.Join(dir, "parent.workflow.yaml")
+	if err := writeFile(parentPath, parentWF); err != nil {
+		t.Fatalf("write parent: %v", err)
+	}
+
+	var buf strings.Builder
+	root := rootCmd()
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs([]string{"workflow", "tree", parentPath})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("workflow tree: %v\nOutput: %s", err, buf.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, "parent.workflow.yaml") {
+		t.Errorf("expected parent.workflow.yaml in output, got: %s", out)
+	}
+	if !strings.Contains(out, "sub.workflow.yaml") {
+		t.Errorf("expected sub.workflow.yaml in output, got: %s", out)
+	}
+}
+
+// TestWorkflowTreeCmd_jsonOutput verifies --json flag produces valid JSON with path and kind fields.
+func TestWorkflowTreeCmd_jsonOutput(t *testing.T) {
+	dir := t.TempDir()
+	parentWF := `kind: workflow
+name: parent
+version: "1.0.0"
+pipeline:
+  - id: noop
+    transform:
+      inputs: [{from: input}]
+      ops:
+        - map:
+            expr: "{ok: true}"
+`
+	parentPath := filepath.Join(dir, "parent.workflow.yaml")
+	if err := writeFile(parentPath, parentWF); err != nil {
+		t.Fatalf("write parent: %v", err)
+	}
+
+	var buf strings.Builder
+	root := rootCmd()
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetArgs([]string{"workflow", "tree", "--json", parentPath})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("workflow tree --json: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &result); err != nil {
+		t.Fatalf("invalid JSON output: %v\nOutput: %s", err, buf.String())
+	}
+	if result["kind"] != "workflow" {
+		t.Errorf("expected kind=workflow, got: %v", result["kind"])
+	}
+	if !strings.Contains(result["path"].(string), "parent.workflow.yaml") {
+		t.Errorf("expected path to contain parent.workflow.yaml, got: %v", result["path"])
+	}
+}

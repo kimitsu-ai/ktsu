@@ -52,6 +52,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(lockCmd())
 	root.AddCommand(newCmd())
 	root.AddCommand(orchestratorGroupCmd())
+	root.AddCommand(workflowGroupCmd())
 	return root
 }
 
@@ -1270,5 +1271,134 @@ model_groups: []
 			}
 			return nil
 		},
+	}
+}
+
+func workflowGroupCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "workflow",
+		Short: "Workflow utilities",
+	}
+	cmd.AddCommand(workflowTreeCmd())
+	return cmd
+}
+
+// treeNode represents one item in the dependency tree.
+type treeNode struct {
+	Path     string     `json:"path"`
+	Kind     string     `json:"kind"` // "workflow", "agent", "server"
+	Children []treeNode `json:"children,omitempty"`
+}
+
+func workflowTreeCmd() *cobra.Command {
+	var jsonOut bool
+	cmd := &cobra.Command{
+		Use:   "tree <workflow-file>",
+		Short: "Print the full dependency tree of a workflow",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			wfFile := args[0]
+			if !filepath.IsAbs(wfFile) {
+				abs, err := filepath.Abs(wfFile)
+				if err != nil {
+					return fmt.Errorf("resolve path: %w", err)
+				}
+				wfFile = abs
+			}
+			tree, err := buildWorkflowTree(wfFile, make(map[string]bool))
+			if err != nil {
+				return err
+			}
+			if jsonOut {
+				out, _ := json.MarshalIndent(tree, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
+				return nil
+			}
+			printTreeNode(cmd.OutOrStdout(), tree, "", true)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "output as JSON")
+	return cmd
+}
+
+// buildWorkflowTree builds a treeNode for the given workflow file (absolute path).
+// seen prevents infinite recursion on shared sub-workflows (not cycles — those are boot-validated).
+func buildWorkflowTree(absPath string, seen map[string]bool) (treeNode, error) {
+	node := treeNode{Path: absPath, Kind: "workflow"}
+	if seen[absPath] {
+		return node, nil
+	}
+	seen[absPath] = true
+
+	wf, err := config.LoadWorkflow(absPath)
+	if err != nil {
+		return node, fmt.Errorf("load %s: %w", absPath, err)
+	}
+
+	wfDir := filepath.Dir(absPath)
+	for _, step := range wf.Pipeline {
+		if step.Workflow != "" && !strings.HasPrefix(step.Workflow, "ktsu/") {
+			dep := step.Workflow
+			if !filepath.IsAbs(dep) {
+				dep = filepath.Join(wfDir, dep)
+			}
+			child, err := buildWorkflowTree(dep, seen)
+			if err == nil {
+				node.Children = append(node.Children, child)
+			} else {
+				node.Children = append(node.Children, treeNode{Path: dep, Kind: "workflow"})
+			}
+		} else if step.Workflow != "" {
+			// Shipped ktsu/ workflow
+			node.Children = append(node.Children, treeNode{Path: step.Workflow, Kind: "workflow"})
+		}
+
+		if step.Agent != "" {
+			agentPath := config.StripVersion(step.Agent)
+			if !filepath.IsAbs(agentPath) {
+				agentPath = filepath.Join(wfDir, agentPath)
+			}
+			agentNode := treeNode{Path: agentPath, Kind: "agent"}
+			if !seen[agentPath] {
+				seen[agentPath] = true
+				agentCfg, err := config.LoadAgent(agentPath)
+				if err == nil {
+					for _, srv := range agentCfg.Servers {
+						srvPath := srv.Path
+						if !filepath.IsAbs(srvPath) {
+							srvPath = filepath.Join(filepath.Dir(agentPath), srvPath)
+						}
+						agentNode.Children = append(agentNode.Children, treeNode{Path: srvPath, Kind: "server"})
+					}
+				}
+			}
+			node.Children = append(node.Children, agentNode)
+		}
+	}
+	return node, nil
+}
+
+func printTreeNode(w io.Writer, node treeNode, prefix string, isLast bool) {
+	connector := "├── "
+	childPrefix := prefix + "│   "
+	if isLast {
+		connector = "└── "
+		childPrefix = prefix + "    "
+	}
+	label := filepath.Base(node.Path)
+	if strings.HasPrefix(node.Path, "ktsu/") {
+		label = node.Path
+	}
+	fmt.Fprintf(w, "%s%s%s (%s)\n", prefix, connector, label, node.Kind)
+	for i, child := range node.Children {
+		printTreeNode(w, child, childPrefix, i == len(node.Children)-1)
+	}
+}
+
+func printWorkflowTreeRoot(w io.Writer, node treeNode) {
+	fmt.Fprintln(w, node.Path)
+	for i, child := range node.Children {
+		printTreeNode(w, child, "", i == len(node.Children)-1)
 	}
 }
