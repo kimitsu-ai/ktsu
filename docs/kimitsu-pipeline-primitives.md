@@ -18,16 +18,17 @@ Nothing else. If logic requires reasoning about content, it is an agent. If it i
 
 ---
 
-## Workflow Input
+## Workflow Params
 
-Every workflow declares an `input` schema. The orchestrator validates the JSON body of `POST /invoke/{workflow}` against this schema before starting the run. Validation failure returns 422 — the run is never created.
+Every workflow declares a `params` schema. For root workflows, the orchestrator validates the JSON body of `POST /invoke/{workflow}` against this schema before starting the run. Validation failure returns 422 — the run is never created. For sub-workflows, the schema declares what the parent step must supply.
 
 ```yaml
 kind: workflow
 name: support-triage
 version: "1.0.0"
+visibility: root
 
-input:
+params:
   schema:
     type: object
     required: [message, user_id]
@@ -36,15 +37,27 @@ input:
       user_id: { type: string }
 ```
 
-The validated input is available to all pipeline steps as `input`. Steps reference it using the step ID `input` — exactly as they reference any other upstream step. A step that reads from workflow input declares `depends_on: []` or simply omits `depends_on`.
+The validated params are available to all pipeline steps under the `params` key in the envelope. A step that reads from workflow params omits `depends_on` or declares `depends_on: []`.
 
 ```yaml
 - id: triage
   agent: ./agents/triage.agent.yaml
-  # no depends_on — receives workflow input
+  # no depends_on — receives workflow params
 ```
 
-Inside the agent prompt, workflow input fields are referenced as `inputs.input.message`, `inputs.input.user_id`, etc.
+Inside the agent prompt, workflow params are referenced as `{{ params.message }}`, `{{ params.user_id }}`, etc.
+
+Root workflows may also declare environment variables for use in the pipeline:
+
+```yaml
+env:
+  - name: SLACK_WEBHOOK_URL
+    secret: true
+  - name: DATABASE_URL
+    secret: false
+```
+
+Env vars are injected into the envelope under `env`. Secrets appear as `[hidden]` in logs and envelope inspection. Referencing an undeclared env var anywhere in the workflow is a boot error.
 
 ---
 
@@ -195,15 +208,13 @@ Transform steps are declared inline in the workflow file. There is no separate `
 
 ```yaml
 - id: merge-results
+  depends_on: [legal-review, risk-review]
   transform:
-    inputs:
-      - from: legal-review
-      - from: risk-review
     ops:
-      - merge:       [legal-review, risk-review]
+      - merge:       [step.legal-review, step.risk-review]
       - deduplicate: { field: ticket_id }
       - sort:        { field: priority, order: desc }
-      - filter:      { expr: "confidence > `0.7`" }
+      - filter:      { expr: "confidence > 0.7" }
   output:
     schema:
       type: array
@@ -213,21 +224,23 @@ Transform steps are declared inline in the workflow file. There is no separate `
 
 | Field | Description |
 |---|---|
-| `inputs` | Upstream steps that feed this transform. All inputs required — no `optional` field. |
+| `depends_on` | Step IDs to wait for. Auto-derived from `step.*` references in ops when possible; declare explicitly when the dependency is not referenced in an op. |
 | `ops` | Ordered operations. Applied sequentially. Each op receives the output of the previous. |
 | `output.schema` | JSON Schema for the final output. Air-Lock validated. |
 
-Transform steps derive their `depends_on` automatically from `inputs[].from` — no separate `depends_on` declaration needed.
+Transform steps do **not** have a separate `inputs:` block. Since the full pipeline envelope is always available, transforms reference step outputs directly in ops using `step.<id>` or `step.<id>.<field>` notation.
 
 ### Op Vocabulary
 
 All field references use JMESPath expressions. The op vocabulary is fixed — there is no escape hatch to arbitrary code.
 
 #### `merge`
-Combines outputs of two or more upstream steps. Array outputs are concatenated; object outputs are deep-merged (later entries win on key conflicts). Mixing array and object outputs is a boot error.
+Combines outputs of two or more upstream steps. Array outputs are concatenated; object outputs are deep-merged (later entries win on key conflicts). Mixing array and object outputs is a boot error. Reference steps as `step.<id>` for the full output or `step.<id>.<field>` for a specific field.
 
 ```yaml
-- merge: [legal-review, risk-review]
+- merge: [step.legal-review, step.risk-review]
+# cherry-pick specific fields:
+- merge: [step.legal-review.tickets, step.risk-review.tickets]
 ```
 
 #### `sort`
@@ -244,7 +257,7 @@ Removes items from an array where `expr` evaluates falsy. `expr` is JMESPath.
 
 ```yaml
 - filter:
-    expr: "confidence > `0.7`"
+    expr: "confidence > 0.7"
 ```
 
 #### `map`
