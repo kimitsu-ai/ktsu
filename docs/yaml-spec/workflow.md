@@ -28,6 +28,9 @@ env:
     description: "Slack incoming webhook URL"   # optional
   - name: USER_NAMESPACE
     secret: false
+  - name: APPROVAL_WEBHOOK_URL
+    secret: true
+    description: "Webhook URL for approval notifications"
 
 pipeline:
 
@@ -208,7 +211,7 @@ When `for_each` is set, the runner resolves `from` as a JMESPath expression agai
 | `item` | The current array element (any JSON type) |
 | `item_index` | Zero-based integer index of this element |
 
-Example — if `triage.tickets` resolves to `[{...}, {...}, {...}]`, the agent for index 1 receives:
+Example — if `step.triage.tickets` resolves to `[{...}, {...}, {...}]`, the agent for index 1 receives:
 
 ```json
 {

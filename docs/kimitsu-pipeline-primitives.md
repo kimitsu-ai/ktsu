@@ -523,14 +523,15 @@ pipeline:
   - id: parse
     agent: ktsu/secure-parser@1.0.0
     params:
-      source_field: message
-      extract:
-        intent:
-          type: string
-          enum: [billing, technical, legal, other]
-        urgency:
-          type: string
-          enum: [low, medium, high]
+      agent:
+        source_field: message
+        extract:
+          intent:
+            type: string
+            enum: [billing, technical, legal, other]
+          urgency:
+            type: string
+            enum: [low, medium, high]
     model:
       group:      economy
       max_tokens: 512
