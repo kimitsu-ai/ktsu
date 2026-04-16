@@ -11,9 +11,10 @@ kind: workflow
 name: support-triage            # unique name — used in POST /invoke/{name}
 version: "1.2.0"                # semver string
 description: "..."              # optional
+visibility: root                # "root" (default) | "sub-workflow"
 
-input:
-  schema:                       # JSON Schema — validated on invoke; 422 on failure
+params:
+  schema:                       # JSON Schema — validated on invoke for root workflows; 422 on failure
     type: object
     required: [message, user_id]
     properties:
@@ -21,26 +22,32 @@ input:
       user_id:    { type: string }
       channel_id: { type: string }
 
+env:
+  - name: SLACK_WEBHOOK_URL     # environment variable name
+    secret: true                # true = masked as [hidden] in logs and envelope; default: false
+    description: "Slack incoming webhook URL"   # optional
+  - name: USER_NAMESPACE
+    secret: false
+
 pipeline:
 
   # ── Agent step ────────────────────────────────────────────────────────────
-  - id: parse                   # unique step ID — used in depends_on and body references
-    agent: ktsu/secure-parser@1.0.0   # built-in: ktsu/<name>@<ver>
-                                      # local:    ./agents/foo.agent.yaml  (optional @<ver>)
+  - id: parse                   # unique step ID — used in depends_on and expressions
+    agent: ktsu/secure-parser@1.0.0
     params:
-      agent:                     # params.agent.* — values for the agent's declared params
+      agent:                    # params.agent.* — values for the agent's declared params
         source_field: message
         extract:
           intent: { type: string, enum: [billing, technical, legal, other] }
-    model:                      # optional — overrides agent file's model group
-      group: economy            # model group name from gateway.yaml
+    model:
+      group: economy
       max_tokens: 512
-    # no depends_on — receives workflow input
+    # no depends_on — receives workflow params
 
   - id: triage
     agent: ./agents/triage.agent.yaml
-    depends_on: [parse]         # step IDs this step waits for
-    confidence_threshold: 0.7  # min ktsu_confidence; agent output schema must declare ktsu_confidence
+    depends_on: [parse]
+    confidence_threshold: 0.7
 
   - id: recall
     agent: ./agents/recall.agent.yaml
@@ -48,8 +55,8 @@ pipeline:
       agent:
         persona: "billing specialist"
       server:
-        memory:                  # server name as declared in the agent file
-          namespace: "env:USER_NAMESPACE"
+        memory:
+          namespace: "{{ env.USER_NAMESPACE }}"
     depends_on: [parse]
 
   # ── Agent step with fanout ────────────────────────────────────────────────
@@ -57,65 +64,54 @@ pipeline:
     agent: ./agents/enricher.agent.yaml
     depends_on: [triage]
     for_each:
-      from: triage.tickets       # JMESPath against accumulated step outputs — must resolve to an array
-      max_items: 20              # optional — truncates array before fanout
-      concurrency: 4             # optional — max parallel invocations (default: unbounded)
-      max_failures: -1           # optional — 0=fail-fast (default), N=tolerate N, -1=unlimited
-    # Each invocation receives the full step envelope plus two extra keys:
-    #   item        — the current array element
-    #   item_index  — zero-based integer index
-    # Step output is always: { "results": [...] } — one entry per item in original order
-    # Reference downstream as: enrich.results  (JMESPath)
-    # Metrics (tokens, cost, tool calls) are summed across all invocations.
+      from: step.triage.tickets  # JMESPath against accumulated step outputs — must resolve to an array
+      max_items: 20
+      concurrency: 4
+      max_failures: -1
 
   # ── Transform step ────────────────────────────────────────────────────────
   - id: merge-reviews
+    depends_on: [legal-review, risk-review]   # explicit ordering; deps may also be inferred from step.* refs in ops
     transform:
-      inputs:
-        - from: legal-review     # upstream step IDs — depends_on derived automatically
-        - from: risk-review
-      ops:                       # applied sequentially; each op receives output of previous
-        - merge: [legal-review, risk-review]          # concat arrays or deep-merge objects
-        - deduplicate: { field: ticket_id }           # first occurrence wins
-        - filter:      { expr: "confidence > `0.7`" } # JMESPath; removes falsy items
+      ops:
+        - merge: [step.legal-review, step.risk-review]
+        - deduplicate: { field: ticket_id }
+        - filter:      { expr: "confidence > 0.7" }
         - sort:        { field: confidence, order: desc }
         - map:         { expr: "{ id: ticket_id, score: confidence }" }
-        - flatten:     {}                             # one level of array nesting
+        - flatten:     {}
     output:
-      schema:                    # Air-Lock validated
+      schema:
         type: array
         items: { type: object }
 
   # ── Webhook step ──────────────────────────────────────────────────────────
   - id: notify
     webhook:
-      url: "env:SLACK_WEBHOOK_URL"   # env:VAR_NAME resolved at runtime
-      method: POST                    # default: POST
+      url: "{{ env.SLACK_WEBHOOK_URL }}"
+      method: POST
       body:
-        text:    "triage.summary"     # JMESPath against merged step outputs
-        channel: "input.channel_id"   # workflow input fields are under "input"
-        source:  "`ktsu`"          # literal string — JMESPath backtick syntax
-      timeout_s: 10                   # default: 30
-    condition: "triage.category == 'billing'"  # JMESPath; if falsy → skipped (not failed)
+        text:    "{{ step.triage.summary }}"
+        channel: "{{ params.channel_id }}"
+        source:  "ktsu"                       # plain string = literal
+      timeout_s: 10
+    condition: "step.triage.category == 'billing'"   # bare JMESPath; step.* prefix required
     depends_on: [triage]
 
   # ── Approval notification step ────────────────────────────────────────────
-  # Fires when any depends_on step enters pending_approval (agent hit a require_approval gate).
-  # Use to notify a reviewer; they then POST to /runs/{id}/steps/{id}/approval/decide.
   - id: notify-approval-needed
-    on: approval                      # fires on pending_approval, not on step completion
-    depends_on: [enrich]              # which step(s) to watch for pending_approval
+    on: approval
+    depends_on: [enrich]
     webhook:
-      url: "env:APPROVAL_WEBHOOK_URL"
+      url: "{{ env.APPROVAL_WEBHOOK_URL }}"
       method: POST
       timeout_s: 10
-      # Body is always the approval event: run_id, step_id, tool_name, tool_use_id, arguments, status
 
 model_policy:
-  cost_budget_usd: 0.50          # circuit breaker — rejects LLM calls when exhausted
+  cost_budget_usd: 0.50
   group_map:
-    frontier: standard           # selectively remaps group names for this workflow
-  force_group: local             # overrides ALL group declarations (useful for local dev)
+    frontier: standard
+  force_group: local
 ```
 
 ## Top-Level Fields
@@ -126,14 +122,15 @@ model_policy:
 | `name` | string | yes | Unique workflow name; used in `POST /invoke/{name}` |
 | `version` | string | yes | Semver string |
 | `description` | string | no | Human-readable description |
-| `input.schema` | JSON Schema | yes | Validated against the invoke request body; 422 on failure |
+| `visibility` | string | no | `"root"` (default for local files) \| `"sub-workflow"` — root workflows can be invoked via `POST /invoke`; sub-workflows return 404 on direct invocation |
+| `params.schema` | JSON Schema | yes (root) | For root workflows: validated against the HTTP request body; 422 on failure. For sub-workflows: declares named params the parent step must supply. |
+| `env` | array | no | Declared environment variables. Each entry: `name` (string, required), `secret` (bool, default false), `description` (string, optional). Resolved at run start and injected into the envelope under `env`. Referencing an undeclared env var is a boot error. |
 | `pipeline` | array | yes | Ordered list of pipeline steps |
-| `visibility` | string | no | `"root"` \| `"sub-workflow"` (default: `"root"` for local files) — controls whether `POST /invoke` is allowed; sub-workflow files return 404 on direct invocation |
 | `webhooks` | string | no | `"execute"` \| `"suppress"` (default: `"suppress"`) — whether webhook steps fire when this workflow is used as a sub-workflow |
-| `params.schema` | JSON Schema | no | Declares named params required by callers; see params.schema format |
+| `output` | object | no | Declares what the workflow returns when used as a subworkflow step. See Workflow Output. |
 | `model_policy.cost_budget_usd` | number | no | LLM cost circuit breaker for the run |
-| `model_policy.group_map` | object | no | Remaps model group names; keys and values are group names |
-| `model_policy.force_group` | string | no | Overrides ALL model group declarations to this group |
+| `model_policy.group_map` | object | no | Remaps model group names |
+| `model_policy.force_group` | string | no | Overrides ALL model group declarations |
 | `model_policy.timeout_s` | number | no | Per-run wall-clock timeout in seconds |
 
 ## Agent Step Fields
