@@ -133,6 +133,52 @@ model_policy:
 | `model_policy.force_group` | string | no | Overrides ALL model group declarations |
 | `model_policy.timeout_s` | number | no | Per-run wall-clock timeout in seconds |
 
+## Pipeline Envelope
+
+Every step receives the full pipeline state as a JSON object in its first user message. The envelope has three namespaced top-level keys:
+
+```json
+{
+  "env": {
+    "SLACK_WEBHOOK_URL": "[hidden]",
+    "USER_NAMESPACE":    "prod-us"
+  },
+  "params": {
+    "message":    "I was charged twice",
+    "user_id":    "U8821AB",
+    "channel_id": "C04XZ99"
+  },
+  "step": {
+    "parse":  { "intent": "billing" },
+    "triage": { "category": "billing", "priority": "high" }
+  }
+}
+```
+
+| Key | Contents |
+|---|---|
+| `env` | Resolved values of all env vars declared in `env:`. Secrets appear as `[hidden]`. |
+| `params` | Resolved workflow params. For root workflows: validated HTTP request body. For sub-workflows: values supplied by the parent step. |
+| `step` | Step outputs keyed by step ID. Populated as steps complete. |
+
+A step named `env`, `params`, or `step` is a boot error.
+
+## Expression Syntax
+
+Values in step `params:` blocks, webhook `body:` values, and `output.map` values use `{{ expr }}` for envelope references. Plain strings are always literals.
+
+| Value | Resolves to |
+|---|---|
+| `"support-bot"` | Literal string `support-bot` |
+| `"{{ env.SLACK_WEBHOOK_URL }}"` | Env var value |
+| `"{{ params.user_id }}"` | Workflow param |
+| `"{{ step.parse.channel_id }}"` | Step output field |
+| `"{{ step.triage.category }}"` | Step output field |
+
+**Type preservation:** When the entire string is a single `{{ expr }}`, the result is the typed value (object, array, number, bool). When `{{ expr }}` appears inside a larger string (e.g. `"Hello {{ params.name }}"`) the result is a string.
+
+`expr:` fields in transform ops and `condition:` on steps use bare JMESPath — always an expression context, no `{{ }}` needed. Step references in these contexts require the `step.` prefix (e.g. `step.triage.category == 'billing'`).
+
 ## Agent Step Fields
 
 | Field | Type | Required | Description |
@@ -166,10 +212,12 @@ Example — if `triage.tickets` resolves to `[{...}, {...}, {...}]`, the agent f
 
 ```json
 {
-  "input":   { "message": "...", "user_id": "..." },
-  "parse":   { "intent": "billing" },
-  "triage":  { "tickets": [...] },
-  "item":    { "id": "T-42", "subject": "..." },
+  "params": { "message": "...", "user_id": "..." },
+  "step": {
+    "parse":  { "intent": "billing" },
+    "triage": { "tickets": [...] }
+  },
+  "item":       { "id": "T-42", "subject": "..." },
   "item_index": 1
 }
 ```
@@ -185,15 +233,15 @@ Results are in the original array order regardless of completion order. Referenc
 ```yaml
 # In a webhook body:
 body:
-  tickets: "enrich.results"          # the full results array
-  first:   "enrich.results[0]"       # first result
+  tickets: "{{ step.enrich.results }}"       # the full results array
+  first:   "{{ step.enrich.results[0] }}"    # first result
 
-# As the source for a transform:
-transform:
-  inputs:
-    - from: enrich                   # stepOutputs["enrich"] = { "results": [...] }
-  ops:
-    - flatten: {}                    # enrich.results is already an array; flatten if items are arrays
+# In a transform op:
+- id: process-results
+  depends_on: [enrich]
+  transform:
+    ops:
+      - flatten: {}    # step.enrich.results is already an array; flatten if items are arrays
 ```
 
 Metrics (tokens in/out, cost, LLM calls, tool calls) are summed across all fan-out invocations and reported as a single step metric.
@@ -233,30 +281,52 @@ Metrics (tokens, cost) are always collected from all items, including failed one
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | Unique step ID |
-| `transform.inputs` | array | yes | Upstream step references; `depends_on` is derived automatically |
-| `transform.inputs[].from` | string | yes | Step ID of upstream step |
+| `depends_on` | string[] | yes | Step IDs to wait for; auto-derived from `step.*` references in ops when possible |
 | `transform.ops` | array | yes | Ordered op list; each op receives the output of the previous |
 | `output.schema` | JSON Schema | yes | Air-Lock validated |
+
+Transform ops reference step outputs as `step.<id>` or `step.<id>.<field>`:
+
+```yaml
+- id: merge-reviews
+  depends_on: [legal-review, risk-review]
+  transform:
+    ops:
+      - merge: [step.legal-review, step.risk-review]
+      - filter: { expr: "confidence > 0.7" }
+      - sort:   { field: confidence, order: desc }
+  output:
+    schema:
+      type: array
+      items: { type: object }
+```
 
 ### Transform Ops
 
 | Op | Arguments | Description |
 |---|---|---|
-| `merge` | `[step-id, ...]` | Concatenates arrays or deep-merges objects (later wins on key conflict) |
+| `merge` | `[step-id, ...]` | Combines outputs of two or more upstream steps. Reference steps as `step.<id>` for the full output or `step.<id>.<field>` for a specific field. Array outputs are concatenated; object outputs are deep-merged (later entries win on key conflicts). Mixing array and object outputs is a boot error. |
 | `sort` | `{ field, order }` | Sorts array by JMESPath field; `order`: `asc` \| `desc` (default: `asc`) |
 | `filter` | `{ expr }` | Removes items where JMESPath `expr` is falsy |
 | `map` | `{ expr }` | Projects each item to a new shape via JMESPath |
 | `flatten` | `{}` | Flattens one level of array nesting |
 | `deduplicate` | `{ field }` | Removes duplicates by key field; first occurrence wins |
 
+Example merge op:
+```yaml
+- merge: [step.legal-review, step.risk-review]
+# or cherry-pick specific fields:
+- merge: [step.legal-review.tickets, step.risk-review.tickets]
+```
+
 ## Webhook Step Fields
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | Unique step ID |
-| `webhook.url` | string | yes | Destination URL; `env:VAR_NAME` resolved at runtime |
+| `webhook.url` | string | yes | Destination URL. Use `{{ env.VAR_NAME }}` to reference an environment variable. |
 | `webhook.method` | string | no | HTTP method; default: `POST` |
-| `webhook.body` | object | no | Key-value map; values are JMESPath against merged step outputs |
+| `webhook.body` | object | no | Key-value map. Values use `{{ expr }}` for envelope references; plain strings are literals. |
 | `webhook.timeout_s` | number | no | Request timeout in seconds; default: 30 |
 | `on` | string | no | `approval` — fires when a `depends_on` step enters `pending_approval`. Body is always the approval event (fixed JSON; `webhook.body` is ignored). |
 | `condition` | string | no | JMESPath; if falsy step is `skipped` (not failed). Not evaluated for `on: approval` steps. |
@@ -271,20 +341,9 @@ A workflow step invokes another workflow's full pipeline inline.
 | Field | Type | Description |
 |---|---|---|
 | `workflow` | string | Workflow reference: `ktsu/name` (shipped), `./path/file.yaml` (local), or absolute path |
-| `input` | map | JMESPath expressions evaluated against accumulated step outputs, passed as the sub-workflow's `input` |
-| `params` | map | Param values for the sub-workflow. Values are resolved as: `env:VAR`, `param:NAME`, `` `literal` ``, plain string, or JMESPath |
+| `params` | map | Param values for the sub-workflow. Values use `{{ expr }}` syntax for envelope references; plain strings are literals. |
 | `webhooks` | `"execute"` \| `"suppress"` | Parent-side webhook opt-in. Webhooks fire only if BOTH this and the sub-workflow declare `execute` |
 | `depends_on` | list | Step IDs this step depends on |
-
-### Value Sources for `params`
-
-| Prefix | Example | Resolves to |
-|---|---|---|
-| `env:` | `env:SLACK_SECRET` | Environment variable (root workflow only) |
-| `param:` | `param:webhook_url` | Caller's invocation param |
-| backtick | `` `support-bot` `` | Literal string `support-bot` |
-| plain | `my-value` | The literal string `my-value` |
-| JMESPath | `steps.fetch.url` | Value from accumulated step outputs |
 
 ### Example
 
@@ -293,12 +352,47 @@ A workflow step invokes another workflow's full pipeline inline.
   workflow: ktsu/slack-reply
   webhooks: execute
   params:
-    webhook_url: "env:SLACK_WEBHOOK_URL"
-    username: "`support-bot`"
-  input:
-    channel_id: "steps.parse.channel_id"
-    text: "steps.agent.reply"
+    webhook_url: "{{ env.SLACK_WEBHOOK_URL }}"
+    username:    "support-bot"
+    channel_id:  "{{ step.parse.channel_id }}"
+    text:        "{{ step.agent.reply }}"
+  depends_on: [agent]
 ```
+
+## Workflow Output
+
+A workflow declares `output:` to specify what it returns when used as a subworkflow step. Without `output:`, the step produces no usable output in the parent pipeline.
+
+All steps in the sub-workflow — including webhook steps — complete before the output is assembled. Output is Air-Lock validated before the parent pipeline reads it.
+
+Two mutually exclusive forms — `from` and `map` cannot both be present (boot error):
+
+**`from` — step reference:**
+```yaml
+output:
+  from: triage
+  schema:
+    type: object
+    required: [category, priority]
+    properties:
+      category: { type: string }
+      priority: { type: string }
+```
+
+**`map` — field mapping:**
+```yaml
+output:
+  schema:
+    type: object
+    properties:
+      summary: { type: string }
+      tickets: { type: array }
+  map:
+    summary: "{{ step.triage.summary }}"
+    tickets: "{{ step.enrich.results }}"
+```
+
+The workflow step's output is referenced in the parent as `step.<step-id>.<field>` (e.g. `step.notify.category`).
 
 ## params.schema
 
@@ -326,10 +420,11 @@ params:
 
 ## Notes
 
-- Every agent step receives the full accumulated step outputs as a JSON envelope in its first user message. Keys are step IDs; the workflow input is always under the key `"input"`. Reference as `input.<field>` in JMESPath expressions (webhooks, transforms) and `input.<field>` / `<step-id>.<field>` in agent system prompts.
-- Fanout step output is always `{ "results": [...] }` in original array order; see the Fanout Input and Output Contract section for details.
-- Transform `depends_on` is derived from `inputs[].from` — do not declare it separately.
+- Every agent step receives the full pipeline envelope as JSON in its first user message. Reference values as `{{ params.field }}`, `{{ env.VAR }}`, or `{{ step.<id>.<field> }}` in agent system prompts. In bare JMESPath contexts (webhook conditions, transform op `expr:` fields), use `step.<id>.<field>` without `{{ }}`.
+- Fanout step output is always `{ "results": [...] }` in original array order. Reference as `{{ step.enrich.results }}`.
+- Transform `depends_on` is auto-derived from `step.*` references in ops — declare it explicitly when the dependency is not referenced in an op.
 - Webhook non-2xx or network error → step fails immediately; no retry.
 - Webhook `condition` false → step is `skipped`; downstream steps still run.
-- `on: approval` steps fire when a depended-on agent step hits a `require_approval` gate and enters `pending_approval`. They do not fire on normal step completion. A step can have both `on: approval` and `depends_on` — the `on` field only controls the trigger; `depends_on` still declares the structural dependency.
-- `pending_approval` is a non-terminal step status. The run does not fail — it waits for a decision via `POST /runs/{run_id}/steps/{step_id}/approval/decide`. Independent pipeline branches continue executing while the approval is pending.
+- `on: approval` steps fire when a depended-on agent step hits a `require_approval` gate. They do not fire on normal step completion.
+- `pending_approval` is non-terminal. Independent pipeline branches continue while approval is pending.
+- Sub-workflow `visibility: sub-workflow` — direct `POST /invoke` returns 404. Sub-workflows do not have `input.schema`; use `params.schema` instead.
