@@ -464,6 +464,29 @@ POST /runs/{run_id}/steps/{step_id}/approval/decide
 
 ### The Envelope
 
+The pipeline envelope (passed as the first user message to each agent) has three namespaced keys:
+
+```json
+{
+  "env": {
+    "SLACK_WEBHOOK_URL": "[hidden]",
+    "DATABASE_URL":      "postgres://prod.internal/ktsu"
+  },
+  "params": {
+    "message":    "I was charged twice for my subscription",
+    "user_id":    "U8821AB",
+    "channel_id": "C04XZ99"
+  },
+  "step": {
+    "parse":  { "intent": "billing" },
+    "triage": { "category": "billing", "priority": "high",
+                "ktsu_confidence": 0.91 }
+  }
+}
+```
+
+The full run envelope (returned by `GET /runs/{run_id}` and the `ktsu/envelope` server) includes run metadata and step status in addition to the pipeline data:
+
 ```json
 {
   "run_id":     "run_abc123",
