@@ -31,7 +31,7 @@
 
 13. **Every boundary is validated.** The Air-Lock checks output schema compliance at every step handoff. No step receives unvalidated data.
 
-14. **Secrets flow down via params, not sideways via env.** Only root workflows may read `env:` values. Agent files, server files, and sub-workflow files must use `param:` references instead. Violation is a boot error.
+14. **Secrets flow via declared env vars or params, not ad-hoc strings.** Workflows declare environment variables in the `env:` array; they are resolved at run start and injected into the envelope under `env`. Agent and server files may not use `env:` references directly — they receive env var values through params passed down from the workflow. Violation is a boot error.
 
 15. **Failure is explicit.** A step either completes or it fails the run. There is no continue-on-failure, no `optional` dependency, and no partial-failure semantics. If a step fails, the run fails immediately and all downstream steps are skipped.
 
@@ -39,7 +39,7 @@
 
 17. **Environment config never touches workflow files.** Dev/staging/prod differences live entirely in `environments/*.env.yaml`.
 
-18. **Workflow input is validated before the run is created.** The orchestrator checks `input.schema.required` fields against the invoke payload. Missing required fields return HTTP 422 and no run is created.
+18. **Workflow params are validated before the run is created.** For root workflows, the orchestrator validates the `POST /invoke` request body against `params.schema`. Missing required params return HTTP 422 and no run is created.
 
 19. **The envelope is orchestrator-written, agent-readable.** The orchestrator assembles the envelope from the state store. Agents read it via `ktsu/envelope`. No agent can modify run context.
 
@@ -77,9 +77,9 @@
 
 36. **Webhook execution in a sub-workflow requires dual opt-in:** the sub-workflow must declare `webhooks: execute` AND the parent pipeline step must also declare `webhooks: execute`. If either side omits this, webhooks inside the sub-workflow are suppressed (skipped, not failed).
 
-37. **Params (`params.schema`) declare named input values for a workflow or agent.** Required params have no default; optional params have a default. Callers must provide all required params or the invocation fails at validation time.
+37. **`params.schema` is the single interface declaration for all workflows.** For root workflows it is the API schema validated against the HTTP request body. For sub-workflows it declares named inputs the parent step must supply. Required params have no default; optional params have a default. Missing required params fail the invocation at validation time.
 
-38. **`ResolveValue` resolution order for param values in a workflow step's `params:` block:** (1) `env:VAR` — resolved from environment (root workflow only), (2) `param:NAME` — resolved from the caller's invocation params, (3) `` `literal` `` — backtick literal, (4) plain string — returned as-is, (5) JMESPath expression against accumulated step outputs.
+38. **Value resolution in a workflow step's `params:` block uses `{{ expr }}` syntax.** Plain strings are literals. `{{ expr }}` is evaluated as a path into the pipeline envelope: `{{ env.NAME }}` resolves an env var, `{{ params.name }}` resolves a workflow param, `{{ step.id.field }}` resolves a step output field. Type is preserved when the entire string is a single expression; mixed strings coerce to string.
 
 ---
 
