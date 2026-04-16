@@ -135,12 +135,13 @@ Any `ktsu_` field not in this list is a boot error.
 - id: parse
   agent: ktsu/secure-parser@1.0.0
   params:
-    source_field: message      # which workflow param contains the raw text
-    extract:
-      intent:
-        type: string
-        enum: [billing, technical, legal, other]
-        description: "What the user is asking for"
+    agent:
+      source_field: message      # which workflow param contains the raw text
+      extract:
+        intent:
+          type: string
+          enum: [billing, technical, legal, other]
+          description: "What the user is asking for"
   model:
     group: economy
     max_tokens: 512

@@ -72,8 +72,9 @@ name: <string>         # identity — used in logs and metrics
 description: <string>  # human-readable
 model: <group-name>    # references a group defined in gateway.yaml
 max_turns: <int>       # max reasoning turns before forced conclusion (default: 10)
-system: |
-  <system prompt and instructions for the agent>
+prompt:
+  system: |
+    <system prompt and instructions for the agent>
 servers:               # tool servers this agent may call (omit if toolless)
   - name: <string>     # logical name used in logs
     path: <string>     # path to .server.yaml file, relative to project root
@@ -453,16 +454,17 @@ A toolless, prompt-hardened parser for unstructured text from untrusted sources.
 - id: parse
   agent: ktsu/secure-parser@1.0.0
   params:
-    source_field: message     # which field from workflow input contains the raw text
-    extract:
-      intent:
-        type: string
-        enum: [billing, technical, legal, other]
-        description: "What the user is asking for"
-      urgency:
-        type: string
-        enum: [low, medium, high]
-        description: "How urgently the user needs a response"
+    agent:
+      source_field: message     # which workflow param contains the raw text
+      extract:
+        intent:
+          type: string
+          enum: [billing, technical, legal, other]
+          description: "What the user is asking for"
+        urgency:
+          type: string
+          enum: [low, medium, high]
+          description: "How urgently the user needs a response"
   model:
     group:      economy
     max_tokens: 512

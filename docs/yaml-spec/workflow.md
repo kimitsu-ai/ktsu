@@ -212,6 +212,7 @@ Example — if `triage.tickets` resolves to `[{...}, {...}, {...}]`, the agent f
 
 ```json
 {
+  "env":    { "SLACK_WEBHOOK_URL": "[hidden]" },
   "params": { "message": "...", "user_id": "..." },
   "step": {
     "parse":  { "intent": "billing" },
@@ -427,4 +428,4 @@ params:
 - Webhook `condition` false → step is `skipped`; downstream steps still run.
 - `on: approval` steps fire when a depended-on agent step hits a `require_approval` gate. They do not fire on normal step completion.
 - `pending_approval` is non-terminal. Independent pipeline branches continue while approval is pending.
-- Sub-workflow `visibility: sub-workflow` — direct `POST /invoke` returns 404. Sub-workflows do not have `input.schema`; use `params.schema` instead.
+- Sub-workflow `visibility: sub-workflow` — direct `POST /invoke` returns 404. They declare their named inputs using `params.schema`; the parent step must supply all required params.
