@@ -79,7 +79,7 @@ output:
 | `description` | string | no | Human-readable description |
 | `model` | string | yes | Model group name from `gateway.yaml` |
 | `max_turns` | number | no | Max reasoning turns before forced conclusion; default: 10 |
-| `params` | map | no | Declared parameters in JSON Schema format (`params.schema`). Required params have no `default`; optional params have a `default`. Missing required params are a boot error. Agent files may not use `env:` references — use `param:` references instead, resolved from the agent step's `params.agent` block at invocation time. |
+| `params` | map | no | Declared parameters in JSON Schema format (`params.schema`). Required params have no `default`; optional params have a `default`. Missing required params are a boot error. Agent files may not use `env:` references directly — values are passed in from the parent workflow's `params.agent.*` block and are available in the envelope as `{{ params.name }}`. |
 | `params.schema` | JSON Schema | no | Schema object declaring named params: `type: object`, optional `required: [...]`, and `properties` map with per-param `type`, `description`, and optional `default`. |
 | `params.schema.properties.<name>.description` | string | yes | Human-readable explanation of what the param controls |
 | `params.schema.properties.<name>.default` | string | no | Default value. Omit to make the param required. |
@@ -88,7 +88,7 @@ output:
 | `servers` | array | no | Tool servers this agent may call; omit for toolless agent |
 | `servers[].name` | string | yes | Logical name — used in logs |
 | `servers[].path` | string | yes | Path to `.server.yaml` file, relative to project root |
-| `servers[].params` | map | no | String values for this server's declared params. Overrides server defaults; can be overridden by workflow step `params.server.<name>.*`. Supports `env:VAR_NAME`. |
+| `servers[].params` | map | no | Values for this server's declared params. Overrides server defaults; can be overridden by workflow step `params.server.<name>.*`. Agent files may not use `env:` references — pass env var values down from the parent workflow via `params.agent.*`. |
 | `servers[].access.allowlist` | string[] or object[] | yes | Permitted tools: exact name, `prefix-*`, or `*`. Each entry may be a plain string or an object `{name, require_approval}` to add an approval policy. |
 | `servers[].access.allowlist[].require_approval.on_reject` | string | yes (if require_approval set) | `fail` — step fails on rejection. `recover` — agent receives a rejection message and may try an alternative. |
 | `servers[].access.allowlist[].require_approval.timeout` | duration | no | Approval deadline (e.g. `30m`, `2h`). If no decision is received in time, `timeout_behavior` applies. |
