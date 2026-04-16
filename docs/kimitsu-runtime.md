@@ -54,7 +54,8 @@ A long-running container that owns the pipeline lifecycle. It is the only compon
 Responsibilities:
 - Parse and validate workflow, agent, and tool server YAML files
 - Resolve the dependency graph and determine execution order
-- Validate workflow input schema on `POST /invoke/{workflow}` — reject invalid input with 422
+- Validate workflow `params.schema` on `POST /invoke/{workflow}` for root workflows — reject invalid params with 422
+- Resolve declared `env:` vars at run start and inject into the pipeline envelope
 - Execute transform op chains directly (no Agent Runtime involvement)
 - Dispatch webhook steps via HTTP POST, check 2xx, record result
 - Dispatch agent invocations to the Agent Runtime via HTTP
@@ -247,7 +248,7 @@ The orchestrator persists all run state in a relational database. The state stor
 | `status` | text | `running` \| `completed` \| `failed` |
 | `started_at` | timestamp | When the run began |
 | `completed_at` | timestamp | When the run finished (null if running) |
-| `input` | jsonb | Validated workflow input from the invoke request body |
+| `params` | jsonb | Validated workflow params from the invoke request body |
 | `cost_usd` | decimal | Accumulated cost across all steps |
 | `tokens_in` | integer | Accumulated input tokens |
 | `tokens_out` | integer | Accumulated output tokens |
@@ -356,7 +357,7 @@ state_store:
 # Production — PostgreSQL
 state_store:
   backend: postgres
-  connection: "env:DATABASE_URL"
+  connection: "{{ env.DATABASE_URL }}"   # env var resolved at orchestrator startup
   pool_size: 10
 ```
 
@@ -368,10 +369,11 @@ state_store:
 
 ```
 1. Invoke arrives         Orchestrator receives POST /invoke/{workflow} with JSON body
-2. Input validation       Orchestrator validates request body against workflow input.schema.
-                          Failure → 422 with error detail, no run created.
-3. Run created            Orchestrator creates runs row, generates run_id, pre-populates
-                          stepOutputs["input"] with the validated workflow input.
+2. Params validation      Orchestrator validates request body against workflow params.schema
+                          (root workflows only). Failure → 422 with error detail, no run created.
+3. Run created            Orchestrator creates runs row, generates run_id. Resolves declared
+                          env vars and pre-populates the envelope: env key with resolved env
+                          var values (secrets masked), params key with the validated request body.
 4. DAG resolves           Orchestrator determines which steps are now unblocked
 5. Fan-out                Agent steps dispatched to Agent Runtime;
                           transform steps executed directly by orchestrator;
@@ -439,7 +441,7 @@ pipeline:
     on: approval
     depends_on: [process-records]
     webhook:
-      url: "env:SLACK_WEBHOOK_URL"
+      url: "{{ env.SLACK_WEBHOOK_URL }}"
       method: POST
       timeout_s: 10
 ```
@@ -469,9 +471,9 @@ POST /runs/{run_id}/steps/{step_id}/approval/decide
   "workflow_v": "1.0.0",
   "started_at": "2026-03-14T09:11:44Z",
 
-  "input": {
-    "message": "I was charged twice for my subscription",
-    "user_id": "U8821AB",
+  "params": {
+    "message":    "I was charged twice for my subscription",
+    "user_id":    "U8821AB",
     "channel_id": "C04XZ99"
   },
 
