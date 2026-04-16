@@ -415,7 +415,7 @@ params:
 
 - **Required params** have no `default`. Callers must provide them or the invocation fails at validation time.
 - **Optional params** have a `default`. If the caller omits them, the default is used.
-- Param values in a parent workflow step's `params:` block are resolved via `ResolveValue` (see Value Sources for `params` above).
+- Param values in a parent workflow step's `params:` block use `{{ expr }}` syntax for envelope references; plain strings are literals.
 - Agent files and server files use the same param declaration pattern; see their respective YAML specs.
 
 ## Notes
