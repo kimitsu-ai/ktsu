@@ -357,7 +357,7 @@ state_store:
 # Production — PostgreSQL
 state_store:
   backend: postgres
-  connection: "{{ env.DATABASE_URL }}"   # env var resolved at orchestrator startup
+  connection: "{{ env.DATABASE_URL }}"   # orchestrator infrastructure — resolved at startup, not per-run
   pool_size: 10
 ```
 
@@ -485,7 +485,7 @@ The pipeline envelope (passed as the first user message to each agent) has three
 }
 ```
 
-The full run envelope (returned by `GET /runs/{run_id}` and the `ktsu/envelope` server) includes run metadata and step status in addition to the pipeline data:
+The full run status object (returned by `GET /runs/{run_id}`) includes run metadata, the validated params, and per-step status. It is not a superset of the pipeline envelope — live `env` values are not exposed.
 
 ```json
 {

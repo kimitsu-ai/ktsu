@@ -254,7 +254,7 @@ By default (`max_failures: 0`), a single item failure fails the entire step. Set
 
 ```yaml
 for_each:
-  from: search-hn.repos
+  from: step.search-hn.repos
   max_failures: 1    # tolerate up to 1 failure
 ```
 

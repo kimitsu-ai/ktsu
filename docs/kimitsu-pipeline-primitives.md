@@ -88,7 +88,7 @@ output:
       ...
 ```
 
-The agent `system` prompt receives the full pipeline envelope as JSON input. Reference upstream step outputs as `step.<step-id>.<field>` — for example, `{{ params.message }}` for a workflow param, or `step.parse.intent` for a field from the `parse` step.
+The agent `system` prompt receives the full pipeline envelope as JSON input. Reference workflow params as `{{ params.<field> }}` and upstream step outputs as `{{ step.<step-id>.<field> }}` — for example, `{{ params.message }}` for a workflow param, or `{{ step.parse.intent }}` for a field from the `parse` step.
 
 ### Full Agent Example
 
