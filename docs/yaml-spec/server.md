@@ -10,7 +10,7 @@
 name: wiki-search                # identity — used in logs and error messages
 description: "..."               # optional
 url: "https://mcp.internal/wiki" # base URL of the MCP server (HTTP/SSE)
-auth: "env:WIKI_TOKEN"           # bearer token or env:VAR_NAME; omit if no auth required
+auth: "param:auth_token"         # param:name reference — value passed from workflow step's params.server.<name>.*; omit if no auth required
 params:                          # optional — omit if server needs no configuration
   region:
     description: "AWS region to query"
