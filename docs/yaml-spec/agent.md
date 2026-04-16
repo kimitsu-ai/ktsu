@@ -27,10 +27,11 @@ params:                          # declared parameters — JSON Schema format
 
 prompt:
   system: |
-    You are a {{persona}}. The full pipeline envelope is provided as JSON in the first user message.
-    Escalate critical issues to the {{escalation_team}} team.
-    Reference upstream step outputs as <step-id>.<field> (e.g. parse.intent).
-    Workflow input fields are under input.<field> (e.g. input.message).
+    You are a {{ params.persona }}. The full pipeline envelope is provided as JSON in the first user message.
+    Escalate critical issues to the {{ params.escalation_team }} team.
+    Reference upstream step outputs as step.<id>.<field> (e.g. step.parse.intent).
+    Workflow params are under params.<field> (e.g. params.message).
+    Env vars are under env.<name> (e.g. env.DATABASE_URL).
 
 reflect: |
   Review your classification above.
@@ -82,8 +83,8 @@ output:
 | `params.schema` | JSON Schema | no | Schema object declaring named params: `type: object`, optional `required: [...]`, and `properties` map with per-param `type`, `description`, and optional `default`. |
 | `params.schema.properties.<name>.description` | string | yes | Human-readable explanation of what the param controls |
 | `params.schema.properties.<name>.default` | string | no | Default value. Omit to make the param required. |
-| `prompt.system` | string | yes | System prompt. May reference declared params as `{{param_name}}`. |
-| `reflect` | string | no | Reflection prompt. After the reasoning loop produces a draft output, the agent evaluates it in a single additional LLM turn before Air-Lock runs. The reflected output replaces the draft entirely. Supports `{{param}}` interpolation with the same resolved agent params as `prompt.system`. See Reflect Trigger Logic. |
+| `prompt.system` | string | yes | System prompt. May reference envelope values using `{{ expr }}` syntax: `{{ params.name }}`, `{{ env.VAR }}`, `{{ step.id.field }}`. |
+| `reflect` | string | no | Reflection prompt. After the reasoning loop produces a draft output, the agent evaluates it in a single additional LLM turn before Air-Lock runs. The reflected output replaces the draft entirely. Supports `{{ expr }}` interpolation against the full pipeline envelope. See Reflect Trigger Logic. |
 | `servers` | array | no | Tool servers this agent may call; omit for toolless agent |
 | `servers[].name` | string | yes | Logical name — used in logs |
 | `servers[].path` | string | yes | Path to `.server.yaml` file, relative to project root |
@@ -134,7 +135,7 @@ Any `ktsu_` field not in this list is a boot error.
 - id: parse
   agent: ktsu/secure-parser@1.0.0
   params:
-    source_field: message      # which workflow input field contains the raw text
+    source_field: message      # which workflow param contains the raw text
     extract:
       intent:
         type: string
@@ -149,36 +150,39 @@ Output always includes `ktsu_injection_attempt`, `ktsu_confidence`, `ktsu_low_qu
 
 ## Input Envelope
 
-Every agent receives the full pipeline state as a JSON object in its **first user message**. The runtime assembles this envelope by collecting all outputs produced so far, keyed by step ID, and adds `"input"` for the original workflow input:
+Every agent receives the full pipeline state as a JSON object in its **first user message**:
 
 ```json
 {
-  "input":  { "message": "...", "user_id": "..." },
-  "parse":  { "intent": "billing" },
-  "triage": { "category": "billing", "priority": "high" }
+  "env": {
+    "SLACK_WEBHOOK_URL": "[hidden]",
+    "DATABASE_URL":      "postgres://..."
+  },
+  "params": {
+    "message":  "I was charged twice for my subscription",
+    "user_id":  "U8821AB"
+  },
+  "step": {
+    "parse":  { "intent": "billing" },
+    "triage": { "category": "billing", "priority": "high" }
+  }
 }
-```
-
-The messages sent to the LLM are therefore:
-
-```
-system  → <system prompt text>
-user    → <JSON envelope above>
 ```
 
 **Referencing values in the system prompt:**
 
 | What you want | How to write it |
 |---|---|
-| Workflow input field `message` | `input.message` |
-| Output field `intent` from step `parse` | `parse.intent` |
-| Fan-out current item (inside `for_each` step) | `item` / `item_index` |
+| Workflow param `message` | `{{ params.message }}` |
+| Env var `DATABASE_URL` | `{{ env.DATABASE_URL }}` |
+| Output field `intent` from step `parse` | `{{ step.parse.intent }}` |
+| Fan-out current item (inside `for_each`) | `item` / `item_index` |
 
-These are just JSON path conventions for the LLM — use them in prose instructions inside `system`. For JMESPath expressions in `webhook.body` or transform ops, the same keys apply (e.g. `input.message`, `triage.category`).
+`{{ expr }}` resolves to the typed value when the entire value is the expression; coerces to string when mixed with literal text.
 
 ## Notes
 
-- Agent files may not use `env:` references. Use `param:` references instead, which are resolved from the agent step's `params.agent` block at invocation time.
+- Agent files may not use `env:` references directly. Declare env vars in the workflow file's `env:` array; they are available in the agent envelope as `env.<name>` and via `{{ env.NAME }}` interpolation.
 - A toolless agent (no `servers` block) has no tools to exploit — recommended as the first pipeline step when handling raw user input.
 - Allowlist wildcards: `*` (all tools), `prefix-*` (prefix match). Mid-string wildcards are a boot error.
 - Allowlist entries may be plain strings or objects with `require_approval` to gate tool calls on human approval. When matched, the agent runtime suspends the run and sends a `pending_approval` callback; execution resumes after a decision is posted to `POST /runs/{run_id}/steps/{step_id}/approval/decide`.
