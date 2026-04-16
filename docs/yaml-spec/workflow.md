@@ -187,8 +187,8 @@ Values in step `params:` blocks, webhook `body:` values, and `output.map` values
 | `agent` | string | yes | Built-in: `ktsu/<name>@<ver>`; local: `./agents/foo.agent.yaml` (optional `@<ver>`) |
 | `depends_on` | string[] | no | Step IDs to wait for; omit to receive workflow input |
 | `confidence_threshold` | number | no | Min `ktsu_confidence` required; agent output schema must declare `ktsu_confidence` |
-| `params.agent` | map | no | Values for the agent's declared params. Overrides agent-file defaults. Supports `env:VAR_NAME`. |
-| `params.server.<name>` | map | no | Values for the named server's declared params (`<name>` matches `servers[].name` in the agent file). Overrides agent-file server ref params and server defaults. Supports `env:VAR_NAME`. |
+| `params.agent` | map | no | Values for the agent's declared params. Overrides agent-file defaults. Values use `{{ expr }}` syntax for envelope references; plain strings are literals. |
+| `params.server.<name>` | map | no | Values for the named server's declared params (`<name>` matches `servers[].name` in the agent file). Overrides agent-file server ref params and server defaults. Values use `{{ expr }}` syntax for envelope references; plain strings are literals. |
 | `model.group` | string | no | Overrides agent file's model group |
 | `model.max_tokens` | number | no | Token limit override |
 | `for_each.from` | string | no | JMESPath resolving to an array; runs agent once per item |
@@ -199,9 +199,9 @@ Values in step `params:` blocks, webhook `body:` values, and `output.map` values
 
 ## Fanout Input and Output Contract
 
-When `for_each` is set, the runner resolves `from` as a JMESPath expression against all accumulated step outputs. It then invokes the agent once per element of the resulting array.
+When `for_each` is set, the runner resolves `from` as a JMESPath expression against the pipeline envelope. It then invokes the agent once per element of the resulting array.
 
-**Each agent invocation receives the standard input envelope** (all upstream step outputs keyed by step ID) **plus two additional keys:**
+**Each agent invocation receives the standard pipeline envelope** (`env`, `params`, and `step` keys) **plus two additional keys:**
 
 | Key | Value |
 |---|---|
