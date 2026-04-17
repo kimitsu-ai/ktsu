@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -17,24 +18,23 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"net/url"
 	"text/tabwriter"
 	"text/template"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/spf13/cobra"
 	"github.com/kimitsu-ai/ktsu/internal/builtins"
 	envelopepkg "github.com/kimitsu-ai/ktsu/internal/builtins/envelope"
 	"github.com/kimitsu-ai/ktsu/internal/config"
 	configbuiltins "github.com/kimitsu-ai/ktsu/internal/config/builtins"
 	"github.com/kimitsu-ai/ktsu/internal/gateway"
+	"github.com/kimitsu-ai/ktsu/internal/hub"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/dag"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
-	"github.com/kimitsu-ai/ktsu/internal/hub"
 	"github.com/kimitsu-ai/ktsu/internal/runtime"
+	"github.com/spf13/cobra"
 )
 
 func main() {
@@ -200,6 +200,11 @@ func runsGroupCmd() *cobra.Command {
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
+				var errResult map[string]interface{}
+				json.NewDecoder(resp.Body).Decode(&errResult)
+				if msg, ok := errResult["error"].(string); ok {
+					return fmt.Errorf("runs: %s (status %d)", msg, resp.StatusCode)
+				}
 				return fmt.Errorf("runs: orchestrator returned status %d", resp.StatusCode)
 			}
 
@@ -326,9 +331,9 @@ func startCmd() *cobra.Command {
 		all bool
 		// orchestrator flags
 		envPath, workflowDir, ownURL, projectDir string
-		storeType, dbPath                                 string
-		orchHost                                          string
-		orchPort                                          int
+		storeType, dbPath                        string
+		orchHost                                 string
+		orchPort                                 int
 		// gateway flags
 		gatewayConfigPath string
 		gwHost            string
