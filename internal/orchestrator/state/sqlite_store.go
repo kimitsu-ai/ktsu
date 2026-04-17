@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +57,8 @@ func (s *SQLiteStore) init() error {
 			ended_at DATETIME,
 			PRIMARY KEY (run_id, id)
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_workflow_name ON runs(workflow_name)`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC)`,
 	}
 
 	for _, q := range queries {
@@ -234,6 +237,56 @@ func (s *SQLiteStore) ListSteps(ctx context.Context, runID string) ([]*types.Ste
 		steps = append(steps, &step)
 	}
 	return steps, nil
+}
+
+func (s *SQLiteStore) ListRuns(ctx context.Context, filter ListRunsFilter) ([]*types.Run, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := `SELECT id, workflow_name, status, error, metadata, created_at, updated_at FROM runs`
+	var conditions []string
+	var args []any
+
+	if filter.WorkflowName != "" {
+		conditions = append(conditions, "workflow_name = ?")
+		args = append(args, filter.WorkflowName)
+	}
+	if filter.Status != "" {
+		conditions = append(conditions, "status = ?")
+		args = append(args, string(filter.Status))
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY created_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list runs query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*types.Run
+	for rows.Next() {
+		var run types.Run
+		var status, metadata string
+		if err := rows.Scan(&run.ID, &run.WorkflowName, &status, &run.Error, &metadata,
+			&run.CreatedAt, &run.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("list runs scan: %w", err)
+		}
+		run.Status = types.RunStatus(status)
+		if metadata != "" {
+			json.Unmarshal([]byte(metadata), &run.Metadata)
+		}
+		out = append(out, &run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list runs rows: %w", err)
+	}
+	return out, nil
 }
 
 func (s *SQLiteStore) GetEnvelope(ctx context.Context, runID string) (*types.Envelope, error) {

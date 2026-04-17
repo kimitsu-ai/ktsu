@@ -201,6 +201,75 @@ func TestSQLiteStore_reflected_roundtrip(t *testing.T) {
 	}
 }
 
+func TestSQLiteStore_ListRuns(t *testing.T) {
+	ctx := context.Background()
+	dbFile := "test_list_runs.db"
+	defer os.Remove(dbFile)
+
+	s, err := NewSQLiteStore(dbFile)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+
+	now := time.Now().Round(time.Second)
+	runs := []*types.Run{
+		{ID: "run-a", WorkflowName: "wf-one", Status: types.RunStatusComplete, CreatedAt: now.Add(-3 * time.Minute), UpdatedAt: now},
+		{ID: "run-b", WorkflowName: "wf-two", Status: types.RunStatusFailed, CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now},
+		{ID: "run-c", WorkflowName: "wf-one", Status: types.RunStatusRunning, CreatedAt: now.Add(-1 * time.Minute), UpdatedAt: now},
+	}
+	for _, r := range runs {
+		if err := s.CreateRun(ctx, r); err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+	}
+
+	t.Run("no filter returns all sorted desc", func(t *testing.T) {
+		got, err := s.ListRuns(ctx, ListRunsFilter{})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("want 3, got %d", len(got))
+		}
+		if got[0].ID != "run-c" || got[1].ID != "run-b" || got[2].ID != "run-a" {
+			t.Errorf("unexpected order: %v %v %v", got[0].ID, got[1].ID, got[2].ID)
+		}
+	})
+
+	t.Run("filter by workflow name", func(t *testing.T) {
+		got, err := s.ListRuns(ctx, ListRunsFilter{WorkflowName: "wf-one"})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("want 2, got %d", len(got))
+		}
+	})
+
+	t.Run("filter by status", func(t *testing.T) {
+		got, err := s.ListRuns(ctx, ListRunsFilter{Status: types.RunStatusFailed})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != "run-b" {
+			t.Errorf("want run-b only, got %v", got)
+		}
+	})
+
+	t.Run("limit", func(t *testing.T) {
+		got, err := s.ListRuns(ctx, ListRunsFilter{Limit: 1})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("want 1, got %d", len(got))
+		}
+		if got[0].ID != "run-c" {
+			t.Errorf("want most recent run-c, got %s", got[0].ID)
+		}
+	})
+}
+
 func TestSQLiteStore_reflected_migration(t *testing.T) {
 	// Simulate a pre-existing DB without the reflected column.
 	dbFile := "test_migration.db"

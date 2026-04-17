@@ -64,10 +64,6 @@ func NewStore(cfg StoreConfig) (Store, error) {
 	}
 }
 
-func (s *SQLiteStore) ListRuns(ctx context.Context, filter ListRunsFilter) ([]*types.Run, error) {
-	return nil, ErrNotImplemented
-}
-
 func (s *SQLiteStore) CreateApproval(ctx context.Context, approval *types.Approval) error {
 	return ErrNotImplemented
 }
