@@ -179,14 +179,14 @@ func orchestratorGroupCmd() *cobra.Command {
 }
 
 func orchestratorEnvelopeCmd() *cobra.Command {
-	var orchestratorURL, apiKey string
+	var orchestratorURL string
 	cmd := &cobra.Command{
 		Use:   "envelope <run_id>",
 		Short: "Print the envelope for a run",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runID := args[0]
-			resp, err := doRequest(cmd.Context(), "GET", orchestratorURL+"/envelope/"+runID, apiKey, nil)
+			resp, err := doRequest(cmd.Context(), "GET", orchestratorURL+"/envelope/"+runID, nil)
 			if err != nil {
 				return fmt.Errorf("envelope: %w", err)
 			}
@@ -213,7 +213,6 @@ func orchestratorEnvelopeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
 		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:5050"),
 		"orchestrator URL (env: KTSU_ORCHESTRATOR_URL)")
-	cmd.Flags().StringVar(&apiKey, "api-key", envOr("KTSU_API_KEY", ""), "orchestrator API key for bearer auth (env: KTSU_API_KEY)")
 	return cmd
 }
 
@@ -244,13 +243,10 @@ func envIntOr(envKey string, defaultVal int) int {
 	return defaultVal
 }
 
-func doRequest(ctx context.Context, method, url, apiKey string, body io.Reader) (*http.Response, error) {
+func doRequest(ctx context.Context, method, url string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, err
-	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	if method == "POST" || method == "PUT" {
 		req.Header.Set("Content-Type", "application/json")
@@ -262,7 +258,7 @@ func startCmd() *cobra.Command {
 	var (
 		all bool
 		// orchestrator flags
-		envPath, workflowDir, ownURL, projectDir, apiKey string
+		envPath, workflowDir, ownURL, projectDir string
 		storeType, dbPath                                 string
 		orchHost                                          string
 		orchPort                                          int
@@ -281,15 +277,6 @@ func startCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !all {
 				return cmd.Help()
-			}
-
-			// Fallback to environment variable if flag wasn't set and default was empty
-			if apiKey == "" {
-				apiKey = os.Getenv("KTSU_API_KEY")
-			}
-
-			if apiKey == "" {
-				return fmt.Errorf("KTSU_API_KEY is required for 'start --all'. Please ensure it is set as an environment variable or passed via the --api-key flag.")
 			}
 
 			var envCfg *config.EnvConfig
@@ -341,7 +328,6 @@ func startCmd() *cobra.Command {
 				GatewayURL:  gwURL,
 				OwnURL:      orchOwnURL,
 				ProjectDir:  projectDir,
-				APIKey:      apiKey,
 				StoreType:   state.StoreType(storeType),
 				StoreDSN:    dbPath,
 				Logger:      orchLogger,
@@ -395,7 +381,6 @@ func startCmd() *cobra.Command {
 	start.Flags().StringVar(&projectDir, "project-dir", envOr("KTSU_PROJECT_DIR", "."), "project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
 	start.Flags().StringVar(&orchHost, "orchestrator-host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "orchestrator bind host (env: KTSU_ORCHESTRATOR_HOST)")
 	start.Flags().IntVar(&orchPort, "orchestrator-port", envIntOr("KTSU_ORCHESTRATOR_PORT", 5050), "orchestrator port (env: KTSU_ORCHESTRATOR_PORT)")
-	start.Flags().StringVar(&apiKey, "api-key", envOr("KTSU_API_KEY", ""), "orchestrator API key for bearer auth (env: KTSU_API_KEY)")
 	start.Flags().StringVar(&storeType, "store-type", envOr("KTSU_STORE_TYPE", "memory"), "orchestrator store type: memory, sqlite (env: KTSU_STORE_TYPE)")
 	start.Flags().StringVar(&dbPath, "db-path", envOr("KTSU_DB_PATH", "ktsu.db"), "orchestrator database path for sqlite (env: KTSU_DB_PATH)")
 	start.Flags().StringVar(&gatewayConfigPath, "gateway-config", "gateway.yaml", "path to gateway config")
@@ -412,7 +397,7 @@ func startCmd() *cobra.Command {
 }
 
 func startOrchestratorCmd() *cobra.Command {
-	var envPath, workflowDir, host, runtimeURL, gatewayURL, ownURL, projectDir, apiKey string
+	var envPath, workflowDir, host, runtimeURL, gatewayURL, ownURL, projectDir string
 	var storeType, dbPath string
 	var port int
 	var workspaces []string
@@ -457,7 +442,6 @@ func startOrchestratorCmd() *cobra.Command {
 				GatewayURL:  gatewayURL,
 				OwnURL:      orchOwnURL,
 				ProjectDir:  projectDir,
-				APIKey:      apiKey,
 				StoreType:   state.StoreType(storeType),
 				StoreDSN:    dbPath,
 				Workspaces:  extraWorkspaces,
@@ -483,9 +467,6 @@ func startOrchestratorCmd() *cobra.Command {
 	cmd.Flags().StringVar(&projectDir, "project-dir",
 		envOr("KTSU_PROJECT_DIR", "."),
 		"project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
-	cmd.Flags().StringVar(&apiKey, "api-key",
-		envOr("KTSU_API_KEY", ""),
-		"orchestrator API key for bearer auth (env: KTSU_API_KEY)")
 	cmd.Flags().StringVar(&storeType, "store-type",
 		envOr("KTSU_STORE_TYPE", "memory"),
 		"orchestrator store type: memory, sqlite (env: KTSU_STORE_TYPE)")
@@ -582,7 +563,7 @@ func startBuiltinCmd(name string, defaultPort int, newFn func() builtins.Builtin
 }
 
 func invokeCmd() *cobra.Command {
-	var orchestratorURL, inputJSON, apiKey string
+	var orchestratorURL, inputJSON string
 	var wait bool
 	cmd := &cobra.Command{
 		Use:   "invoke <workflow>",
@@ -590,7 +571,7 @@ func invokeCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			workflow := args[0]
-			resp, err := doRequest(cmd.Context(), "POST", orchestratorURL+"/invoke/"+workflow, apiKey, strings.NewReader(inputJSON))
+			resp, err := doRequest(cmd.Context(), "POST", orchestratorURL+"/invoke/"+workflow, strings.NewReader(inputJSON))
 			if err != nil {
 				return fmt.Errorf("invoke: %w", err)
 			}
@@ -623,7 +604,7 @@ func invokeCmd() *cobra.Command {
 			// Poll GET /runs/{run_id} until the run reaches a terminal status.
 			for {
 				time.Sleep(1 * time.Second)
-				r, err := doRequest(cmd.Context(), "GET", orchestratorURL+"/runs/"+runID, apiKey, nil)
+				r, err := doRequest(cmd.Context(), "GET", orchestratorURL+"/runs/"+runID, nil)
 				if err != nil {
 					return fmt.Errorf("poll: %w", err)
 				}
@@ -652,7 +633,6 @@ func invokeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
 		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:5050"),
 		"orchestrator URL (env: KTSU_ORCHESTRATOR_URL)")
-	cmd.Flags().StringVar(&apiKey, "api-key", envOr("KTSU_API_KEY", ""), "orchestrator API key for bearer auth (env: KTSU_API_KEY)")
 	return cmd
 }
 

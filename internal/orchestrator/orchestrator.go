@@ -26,7 +26,6 @@ type Config struct {
 	GatewayURL  string          // URL of the LLM Gateway (e.g. "http://gateway:5052")
 	OwnURL      string          // this orchestrator's own URL, for constructing callback_url
 	ProjectDir  string          // root dir for resolving agent/server paths (default: ".")
-	APIKey      string          // optional bearer token; empty = auth disabled
 	StoreType   state.StoreType // "memory" (default), "sqlite"
 	StoreDSN    string          // database path for sqlite (default: "ktsu.db")
 	Logger      *log.Logger
