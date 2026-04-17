@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/kimitsu-ai/ktsu/internal/config"
+	"github.com/kimitsu-ai/ktsu/internal/orchestrator/runner"
 	"github.com/kimitsu-ai/ktsu/internal/orchestrator/state"
 	"github.com/kimitsu-ai/ktsu/internal/runtime/agent"
 	"github.com/kimitsu-ai/ktsu/pkg/types"
@@ -48,6 +49,110 @@ func postComplete(t *testing.T, s *server, runID, stepID string, payload any) *h
 	rr := httptest.NewRecorder()
 	s.handleStepComplete(rr, req)
 	return rr
+}
+
+// newInvokeAuthServer creates a minimal server for testing handleInvoke auth.
+func newInvokeAuthServer(t *testing.T, workflowYAML string) *server {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "myflow.workflow.yaml"), []byte(workflowYAML), 0600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	o := &Orchestrator{cfg: Config{WorkflowDir: dir}}
+	st := state.NewMemStore()
+	return &server{
+		o:                o,
+		store:            st,
+		runner:           runner.New(st),
+		pendingCallbacks: make(map[stepCallbackKey]chan agent.CallbackPayload),
+	}
+}
+
+func invokeRequest(t *testing.T, header, value string) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/invoke/myflow", strings.NewReader("{}"))
+	req.SetPathValue("workflow", "myflow")
+	if header != "" {
+		req.Header.Set(header, value)
+	}
+	return req
+}
+
+const rawAuthWorkflow = `
+kind: workflow
+name: myflow
+version: "1.0.0"
+visibility: root
+invoke:
+  auth:
+    header: X-Telegram-Bot-Api-Secret-Token
+    scheme: raw
+    secret: "` + "`supersecret`" + `"
+pipeline:
+  - id: noop
+    webhook:
+      url: https://example.com
+`
+
+const bearerAuthWorkflow = `
+kind: workflow
+name: myflow
+version: "1.0.0"
+visibility: root
+invoke:
+  auth:
+    header: Authorization
+    scheme: bearer
+    secret: "` + "`mytoken`" + `"
+pipeline:
+  - id: noop
+    webhook:
+      url: https://example.com
+`
+
+func TestHandleInvoke_auth_raw_missingHeader(t *testing.T) {
+	s := newInvokeAuthServer(t, rawAuthWorkflow)
+	rr := httptest.NewRecorder()
+	s.handleInvoke(rr, invokeRequest(t, "", ""))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rr.Code)
+	}
+}
+
+func TestHandleInvoke_auth_raw_wrongToken(t *testing.T) {
+	s := newInvokeAuthServer(t, rawAuthWorkflow)
+	rr := httptest.NewRecorder()
+	s.handleInvoke(rr, invokeRequest(t, "X-Telegram-Bot-Api-Secret-Token", "wrongtoken"))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rr.Code)
+	}
+}
+
+func TestHandleInvoke_auth_raw_correctToken(t *testing.T) {
+	s := newInvokeAuthServer(t, rawAuthWorkflow)
+	rr := httptest.NewRecorder()
+	s.handleInvoke(rr, invokeRequest(t, "X-Telegram-Bot-Api-Secret-Token", "supersecret"))
+	if rr.Code == http.StatusUnauthorized {
+		t.Fatalf("got unexpected 401 with correct token")
+	}
+}
+
+func TestHandleInvoke_auth_bearer_missingPrefix(t *testing.T) {
+	s := newInvokeAuthServer(t, bearerAuthWorkflow)
+	rr := httptest.NewRecorder()
+	s.handleInvoke(rr, invokeRequest(t, "Authorization", "mytoken"))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rr.Code)
+	}
+}
+
+func TestHandleInvoke_auth_bearer_correctToken(t *testing.T) {
+	s := newInvokeAuthServer(t, bearerAuthWorkflow)
+	rr := httptest.NewRecorder()
+	s.handleInvoke(rr, invokeRequest(t, "Authorization", "Bearer mytoken"))
+	if rr.Code == http.StatusUnauthorized {
+		t.Fatalf("got unexpected 401 with correct bearer token")
+	}
 }
 
 // TestHandleStepComplete_returns200 verifies a valid callback with a registered channel returns 200.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -119,30 +120,11 @@ func newServer(o *Orchestrator) (*server, error) {
 	return s, nil
 }
 
-func (s *server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if s.o.cfg.APIKey == "" {
-			h(w, r)
-			return
-		}
-		if r.Header.Get("Authorization") != "Bearer "+s.o.cfg.APIKey {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error":   "unauthorized",
-				"message": "Set Authorization: Bearer <key> header. See KTSU_API_KEY.",
-			})
-			return
-		}
-		h(w, r)
-	}
-}
-
 func (s *server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
-	s.mux.HandleFunc("POST /invoke/{workflow}", s.requireAuth(s.handleInvoke))
-	s.mux.HandleFunc("GET /runs/{run_id}", s.requireAuth(s.handleGetRun))
-	s.mux.HandleFunc("GET /envelope/{run_id}", s.requireAuth(s.handleGetEnvelope))
+	s.mux.HandleFunc("POST /invoke/{workflow}", s.handleInvoke)
+	s.mux.HandleFunc("GET /runs/{run_id}", s.handleGetRun)
+	s.mux.HandleFunc("GET /envelope/{run_id}", s.handleGetEnvelope)
 	s.mux.HandleFunc("POST /heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /runs/{run_id}/steps/{step_id}/complete", s.handleStepComplete)
 	s.mux.HandleFunc("GET /runs/{run_id}/steps/{step_id}/approval", s.handleGetApproval)
@@ -247,6 +229,48 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	if wf.Visibility == "sub-workflow" {
 		http.Error(w, fmt.Sprintf("workflow not found: %s", workflow), http.StatusNotFound)
 		return
+	}
+
+	// Per-workflow invoke auth: check invoke.auth if declared.
+	if auth := wf.Invoke.Auth; auth != nil {
+		secret, resolveErr := config.ResolveValue(auth.Secret, true, nil)
+		if resolveErr != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":   "server misconfiguration",
+				"message": resolveErr.Error(),
+			})
+			return
+		}
+		token := r.Header.Get(auth.Header)
+		switch auth.Scheme {
+		case "bearer":
+			const prefix = "Bearer "
+			if !strings.HasPrefix(token, prefix) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+				return
+			}
+			token = token[len(prefix):]
+		case "raw":
+			// token is the raw header value
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":   "server misconfiguration",
+				"message": "invoke.auth.scheme must be \"bearer\" or \"raw\"",
+			})
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(secret)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			return
+		}
 	}
 
 	if err := airlock.ValidateInput(input, wf.Input.Schema); err != nil {
