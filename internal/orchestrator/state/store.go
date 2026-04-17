@@ -22,11 +22,19 @@ type StoreConfig struct {
 	DSN  string // Data Source Name (e.g. database file path for SQLite)
 }
 
+// ListRunsFilter constrains which runs ListRuns returns.
+type ListRunsFilter struct {
+	WorkflowName string
+	Status       types.RunStatus
+	Limit        int // defaults to 50 when zero
+}
+
 // Store is the persistence interface for run and step state.
 type Store interface {
 	CreateRun(ctx context.Context, run *types.Run) error
 	UpdateRun(ctx context.Context, run *types.Run) error
 	GetRun(ctx context.Context, runID string) (*types.Run, error)
+	ListRuns(ctx context.Context, filter ListRunsFilter) ([]*types.Run, error)
 	CreateStep(ctx context.Context, step *types.Step) error
 	UpdateStep(ctx context.Context, step *types.Step) error
 	GetStep(ctx context.Context, runID, stepID string) (*types.Step, error)
