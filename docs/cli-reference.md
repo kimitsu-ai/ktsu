@@ -48,7 +48,7 @@ CLI flags take precedence over environment variables. All env vars are optional.
 |---|---|---|---|
 | `KTSU_ORCHESTRATOR_HOST` | `""` (all interfaces) | `start orchestrator` | Host interface to bind |
 | `KTSU_ORCHESTRATOR_PORT` | `5050` | `start orchestrator` | Port to listen on |
-| `KTSU_ORCHESTRATOR_URL` | `http://localhost:5050` | `start runtime`, `start envelope`, `invoke` | Orchestrator URL |
+| `KTSU_ORCHESTRATOR_URL` | `http://localhost:5050` | `start runtime`, `start envelope`, `invoke`, `runs`, `runs get` | Orchestrator URL |
 | `KTSU_OWN_URL` | `""` | `start orchestrator` | Orchestrator's own URL for callbacks |
 | `KTSU_PROJECT_DIR` | `.` | `start orchestrator` | Project root for resolving agent/server paths |
 | `KTSU_GATEWAY_HOST` | `""` (all interfaces) | `start gateway` | Host interface to bind |
@@ -258,6 +258,10 @@ Print the full envelope for a run as JSON. Includes step outputs, per-step metri
 ```
 ktsu runs get <run_id> [--orchestrator <url>]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--orchestrator` | `http://localhost:5050` | Orchestrator URL (env: `KTSU_ORCHESTRATOR_URL`) |
 
 ---
 
