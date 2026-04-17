@@ -80,6 +80,40 @@ pipeline:
 	}
 }
 
+func TestLoadWorkflow_invoke_auth(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "workflow.yaml", `
+kind: workflow
+name: telegram-echo
+version: "1.0.0"
+visibility: root
+invoke:
+  auth:
+    header: X-Telegram-Bot-Api-Secret-Token
+    scheme: raw
+    secret: "env:TELEGRAM_WEBHOOK_SECRET"
+pipeline:
+  - id: noop
+    webhook:
+      url: https://example.com
+`)
+	cfg, err := LoadWorkflow(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Invoke.Auth == nil {
+		t.Fatal("expected Invoke.Auth to be set")
+	}
+	if cfg.Invoke.Auth.Header != "X-Telegram-Bot-Api-Secret-Token" {
+		t.Errorf("Header: got %q", cfg.Invoke.Auth.Header)
+	}
+	if cfg.Invoke.Auth.Scheme != "raw" {
+		t.Errorf("Scheme: got %q", cfg.Invoke.Auth.Scheme)
+	}
+	if cfg.Invoke.Auth.Secret != "env:TELEGRAM_WEBHOOK_SECRET" {
+		t.Errorf("Secret: got %q", cfg.Invoke.Auth.Secret)
+	}
+}
+
 func TestLoadWorkflow_error_missing_file(t *testing.T) {
 	_, err := LoadWorkflow("/nonexistent/path/workflow.yaml")
 	if err == nil {

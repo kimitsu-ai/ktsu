@@ -24,6 +24,19 @@ type PromptConfig struct {
 	System string `yaml:"system"`
 }
 
+// InvokeAuthConfig declares how the orchestrator authenticates incoming /invoke requests
+// for this workflow. If absent, the endpoint is unauthenticated.
+type InvokeAuthConfig struct {
+	Header string `yaml:"header"` // HTTP header name to read the token from
+	Scheme string `yaml:"scheme"` // "bearer" (strip "Bearer " prefix) or "raw" (compare as-is)
+	Secret string `yaml:"secret"` // value expression: env:VAR, param:NAME, or backtick literal
+}
+
+// InvokeConfig holds the invoke-time configuration for a workflow.
+type InvokeConfig struct {
+	Auth *InvokeAuthConfig `yaml:"auth,omitempty"`
+}
+
 // WorkflowConfig represents a workflow.yaml file (kind: workflow)
 type WorkflowConfig struct {
 	Kind        string           `yaml:"kind"`
@@ -36,6 +49,7 @@ type WorkflowConfig struct {
 	Input       WorkflowInput    `yaml:"input,omitempty"`
 	Pipeline    []PipelineStep   `yaml:"pipeline"`
 	ModelPolicy *ModelPolicy     `yaml:"model_policy,omitempty"`
+	Invoke      InvokeConfig     `yaml:"invoke,omitempty"`
 }
 
 // WorkflowInput declares the expected input schema for a workflow.
