@@ -1113,6 +1113,97 @@ func TestHandleStepComplete_ResumeAccumulatesMetrics(t *testing.T) {
 	}
 }
 
+func TestHandleListRuns(t *testing.T) {
+	ctx := context.Background()
+	s := newHandlerServerWithStore()
+
+	now := time.Now()
+	runs := []*types.Run{
+		{ID: "run-1", WorkflowName: "wf-a", Status: types.RunStatusComplete, CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now},
+		{ID: "run-2", WorkflowName: "wf-b", Status: types.RunStatusFailed, CreatedAt: now.Add(-1 * time.Minute), UpdatedAt: now},
+	}
+	for _, r := range runs {
+		if err := s.store.CreateRun(ctx, r); err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+	}
+
+	t.Run("no filter returns all runs", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/runs", nil)
+		rr := httptest.NewRecorder()
+		s.handleListRuns(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body)
+		}
+		var result struct {
+			Runs []types.Run `json:"runs"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&result); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(result.Runs) != 2 {
+			t.Errorf("want 2 runs, got %d", len(result.Runs))
+		}
+	})
+
+	t.Run("filter by workflow", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/runs?workflow=wf-a", nil)
+		rr := httptest.NewRecorder()
+		s.handleListRuns(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("want 200, got %d", rr.Code)
+		}
+		var result struct {
+			Runs []types.Run `json:"runs"`
+		}
+		json.NewDecoder(rr.Body).Decode(&result)
+		if len(result.Runs) != 1 || result.Runs[0].ID != "run-1" {
+			t.Errorf("want run-1 only, got %v", result.Runs)
+		}
+	})
+
+	t.Run("filter by status", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/runs?status=failed", nil)
+		rr := httptest.NewRecorder()
+		s.handleListRuns(rr, req)
+
+		var result struct {
+			Runs []types.Run `json:"runs"`
+		}
+		json.NewDecoder(rr.Body).Decode(&result)
+		if len(result.Runs) != 1 || result.Runs[0].ID != "run-2" {
+			t.Errorf("want run-2 only, got %v", result.Runs)
+		}
+	})
+}
+
+func TestHandleGetEnvelope_NewPath(t *testing.T) {
+	ctx := context.Background()
+	s := newHandlerServerWithStore()
+
+	run := &types.Run{
+		ID:           "run-env",
+		WorkflowName: "wf-env",
+		Status:       types.RunStatusComplete,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	if err := s.store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-env/envelope", nil)
+	req.SetPathValue("run_id", "run-env")
+	rr := httptest.NewRecorder()
+	s.handleGetEnvelope(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body)
+	}
+}
+
 func TestHandleListApprovals_ReturnsPendingApprovals(t *testing.T) {
 	s := newHandlerServerWithStore()
 	ctx := context.Background()

@@ -123,8 +123,9 @@ func newServer(o *Orchestrator) (*server, error) {
 func (s *server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /invoke/{workflow}", s.handleInvoke)
+	s.mux.HandleFunc("GET /runs", s.handleListRuns)
 	s.mux.HandleFunc("GET /runs/{run_id}", s.handleGetRun)
-	s.mux.HandleFunc("GET /envelope/{run_id}", s.handleGetEnvelope)
+	s.mux.HandleFunc("GET /runs/{run_id}/envelope", s.handleGetEnvelope)
 	s.mux.HandleFunc("POST /heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /runs/{run_id}/steps/{step_id}/complete", s.handleStepComplete)
 	s.mux.HandleFunc("GET /runs/{run_id}/steps/{step_id}/approval", s.handleGetApproval)
@@ -332,6 +333,29 @@ func generateRunID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return "run_" + hex.EncodeToString(b)
+}
+
+func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
+	filter := state.ListRunsFilter{
+		WorkflowName: r.URL.Query().Get("workflow"),
+		Status:       types.RunStatus(r.URL.Query().Get("status")),
+	}
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
+			filter.Limit = n
+		}
+	}
+
+	runs, err := s.store.ListRuns(r.Context(), filter)
+	if err != nil {
+		http.Error(w, "failed to list runs", http.StatusInternalServerError)
+		return
+	}
+	if runs == nil {
+		runs = []*types.Run{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"runs": runs})
 }
 
 func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request) {
