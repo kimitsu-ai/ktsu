@@ -50,7 +50,6 @@ CLI flags take precedence over environment variables. All env vars are optional.
 | `KTSU_ORCHESTRATOR_URL` | `http://localhost:5050` | `start runtime`, `start envelope`, `invoke` | Orchestrator URL |
 | `KTSU_OWN_URL` | `""` | `start orchestrator` | Orchestrator's own URL for callbacks |
 | `KTSU_PROJECT_DIR` | `.` | `start orchestrator` | Project root for resolving agent/server paths |
-| `KTSU_API_KEY` | `""` (disabled) | `start orchestrator`, `invoke`, `orchestrator envelope` | Bearer token required on protected routes; unset = auth disabled |
 | `KTSU_GATEWAY_HOST` | `""` (all interfaces) | `start gateway` | Host interface to bind |
 | `KTSU_GATEWAY_PORT` | `5052` | `start gateway` | Port to listen on |
 | `KTSU_GATEWAY_URL` | `http://localhost:5052` | `start runtime` | LLM gateway URL |
@@ -86,7 +85,6 @@ ktsu start --all [flags]
 | `--project-dir` | `.` | `KTSU_PROJECT_DIR` | Project root for resolving agent/server paths |
 | `--orchestrator-host` | `""` | `KTSU_ORCHESTRATOR_HOST` | Orchestrator bind host |
 | `--orchestrator-port` | `5050` | `KTSU_ORCHESTRATOR_PORT` | Orchestrator port |
-| `--api-key` | `""` | `KTSU_API_KEY` | Orchestrator bearer token; unset = auth disabled |
 | `--gateway-config` | `gateway.yaml` | — | Path to gateway config file |
 | `--gateway-host` | `""` | `KTSU_GATEWAY_HOST` | Gateway bind host |
 | `--gateway-port` | `5052` | `KTSU_GATEWAY_PORT` | Gateway port |
@@ -121,7 +119,6 @@ ktsu start orchestrator [flags]
 | `--runtime-url` | `""` | `KTSU_RUNTIME_URL` | Agent runtime URL |
 | `--own-url` | `""` | `KTSU_OWN_URL` | Orchestrator's own URL for callbacks |
 | `--project-dir` | `.` | `KTSU_PROJECT_DIR` | Project root for resolving agent/server paths |
-| `--api-key` | `""` | `KTSU_API_KEY` | Bearer token required on protected routes; unset = auth disabled |
 | `--store-type` | `memory` | `KTSU_STORE_TYPE` | Orchestrator store type: `memory`, `sqlite` |
 | `--db-path` | `ktsu.db` | `KTSU_DB_PATH` | Database path for SQLite |
 | `--workspace` | *(none)* | — | Additional workspace root. Repeatable. |
@@ -215,7 +212,6 @@ ktsu invoke <workflow> [flags]
 | `--input` | `{}` | — | JSON input for the workflow |
 | `--wait` | `false` | — | Poll until the run completes and print result |
 | `--orchestrator` | `http://localhost:5050` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL |
-| `--api-key` | `""` | `KTSU_API_KEY` | Orchestrator bearer token; unset = auth disabled |
 
 **Without `--wait`:** prints `run_id: <id>` immediately and exits.
 
@@ -232,7 +228,7 @@ ktsu invoke hello --input '{"name": "World"}'
 ktsu invoke hello --input '{"name": "World"}' --wait
 
 # Remote orchestrator
-ktsu invoke hello --orchestrator http://example.com:5050 --wait --api-key secret-key
+ktsu invoke hello --orchestrator http://example.com:5050 --wait
 ```
 
 ---
@@ -252,11 +248,10 @@ ktsu orchestrator envelope <run_id> [flags]
 | Flag | Default | Env | Description |
 |---|---|---|---|
 | `--orchestrator` | `http://localhost:5050` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL |
-| `--api-key` | `""` | `KTSU_API_KEY` | Orchestrator bearer token; unset = auth disabled |
 
 ```bash
 ktsu orchestrator envelope run_a1b2c3d4e5f6
-ktsu orc envelope run_a1b2c3d4e5f6 --api-key secret-key
+ktsu orc envelope run_a1b2c3d4e5f6
 ```
 
 ---

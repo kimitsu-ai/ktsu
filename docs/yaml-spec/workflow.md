@@ -32,6 +32,12 @@ env:
     secret: true
     description: "Webhook URL for approval notifications"
 
+invoke:
+  auth:
+    header: X-Telegram-Bot-Api-Secret-Token   # header to read the token from
+    scheme: raw                                # "raw" = compare as-is; "bearer" = strip "Bearer " prefix
+    secret: "env:TELEGRAM_WEBHOOK_SECRET"      # value expression; env:VAR, param:NAME, or backtick literal
+
 pipeline:
 
   # ── Agent step ────────────────────────────────────────────────────────────
@@ -126,6 +132,10 @@ model_policy:
 | `version` | string | yes | Semver string |
 | `description` | string | no | Human-readable description |
 | `visibility` | string | no | `"root"` (default for local files) \| `"sub-workflow"` — root workflows can be invoked via `POST /invoke`; sub-workflows return 404 on direct invocation |
+| `invoke.auth` | object | no | Per-workflow invoke authentication. If absent, the endpoint is unauthenticated. |
+| `invoke.auth.header` | string | yes (if auth set) | HTTP header name to read the token from |
+| `invoke.auth.scheme` | string | yes (if auth set) | `"bearer"` strips `Bearer ` prefix before comparing; `"raw"` compares the header value as-is |
+| `invoke.auth.secret` | string | yes (if auth set) | Value expression for the expected token. Supports `env:VAR`, `param:NAME`, and backtick literals. Resolved at request time. |
 | `params.schema` | JSON Schema | yes (root) | For root workflows: validated against the HTTP request body; 422 on failure. For sub-workflows: declares named params the parent step must supply. |
 | `env` | array | no | Declared environment variables. Each entry: `name` (string, required), `secret` (bool, default false), `description` (string, optional). Resolved at run start and injected into the envelope under `env`. Referencing an undeclared env var is a boot error. |
 | `pipeline` | array | yes | Ordered list of pipeline steps |
@@ -135,6 +145,8 @@ model_policy:
 | `model_policy.group_map` | object | no | Remaps model group names |
 | `model_policy.force_group` | string | no | Overrides ALL model group declarations |
 | `model_policy.timeout_s` | number | no | Per-run wall-clock timeout in seconds |
+
+`invoke.auth` is only meaningful on `visibility: root` workflows. Sub-workflows cannot be directly invoked and this field is ignored if present.
 
 ## Pipeline Envelope
 

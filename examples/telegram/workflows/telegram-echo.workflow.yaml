@@ -1,0 +1,51 @@
+kind: workflow
+name: telegram-echo
+version: "1.0.0"
+description: "Example root workflow. Receives a Telegram message and echoes the text back to the sender."
+visibility: root
+
+env:
+  - name: TELEGRAM_BOT_TOKEN
+    secret: true
+    description: "Telegram bot token from @BotFather"
+  - name: TELEGRAM_WEBHOOK_SECRET
+    secret: true
+    description: "Secret token configured in Telegram setWebhook call (X-Telegram-Bot-Api-Secret-Token)"
+
+invoke:
+  auth:
+    header: X-Telegram-Bot-Api-Secret-Token
+    scheme: raw
+    secret: "env:TELEGRAM_WEBHOOK_SECRET"
+
+params:
+  schema:
+    type: object
+    required: [update_id]
+    additionalProperties: true
+    properties:
+      update_id:      { type: integer }
+      message:        { type: object }
+      edited_message: { type: object }
+      callback_query: { type: object }
+      inline_query:   { type: object }
+
+pipeline:
+  - id: receive
+    workflow: ../../../../agent-toolshed/workflows/telegram/telegram-receive.workflow.yaml
+    params:
+      update_id:      "{{ params.update_id }}"
+      message:        "{{ params.message }}"
+      edited_message: "{{ params.edited_message }}"
+      callback_query: "{{ params.callback_query }}"
+      inline_query:   "{{ params.inline_query }}"
+
+  - id: send
+    workflow: ../../../../agent-toolshed/workflows/telegram/telegram-send.workflow.yaml
+    params:
+      bot_token:           "{{ env.TELEGRAM_BOT_TOKEN }}"
+      chat_id:             "{{ step.receive.chat_id }}"
+      reply_to_message_id: "{{ step.receive.message_id }}"
+      text:                "{{ step.receive.text }}"
+    condition: "step.receive.text != null"
+    depends_on: [receive]
