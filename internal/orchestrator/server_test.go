@@ -1177,6 +1177,23 @@ func TestHandleListRuns(t *testing.T) {
 			t.Errorf("want run-2 only, got %v", result.Runs)
 		}
 	})
+
+	t.Run("limit param is respected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/runs?limit=1", nil)
+		rr := httptest.NewRecorder()
+		s.handleListRuns(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("want 200, got %d", rr.Code)
+		}
+		var result struct {
+			Runs []types.Run `json:"runs"`
+		}
+		json.NewDecoder(rr.Body).Decode(&result)
+		if len(result.Runs) != 1 {
+			t.Errorf("want 1 run with limit=1, got %d", len(result.Runs))
+		}
+	})
 }
 
 func TestHandleGetEnvelope_NewPath(t *testing.T) {
@@ -1201,6 +1218,16 @@ func TestHandleGetEnvelope_NewPath(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body)
+	}
+	var envelope struct {
+		RunID    string `json:"run_id"`
+		Workflow string `json:"workflow"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.RunID != "run-env" {
+		t.Errorf("want run_id=run-env, got %q", envelope.RunID)
 	}
 }
 
