@@ -430,3 +430,77 @@ func TestMemStore_GetEnvelope_buildsFromSteps(t *testing.T) {
 		t.Errorf("DurationMS = %d, want > 0", so.Metrics.DurationMS)
 	}
 }
+
+func TestMemStore_ListRuns(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemStore()
+
+	now := time.Now()
+	runs := []*types.Run{
+		{ID: "run-a", WorkflowName: "wf-one", Status: types.RunStatusComplete, CreatedAt: now.Add(-3 * time.Minute), UpdatedAt: now},
+		{ID: "run-b", WorkflowName: "wf-two", Status: types.RunStatusFailed, CreatedAt: now.Add(-2 * time.Minute), UpdatedAt: now},
+		{ID: "run-c", WorkflowName: "wf-one", Status: types.RunStatusRunning, CreatedAt: now.Add(-1 * time.Minute), UpdatedAt: now},
+	}
+	for _, r := range runs {
+		if err := s.CreateRun(ctx, r); err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+	}
+
+	t.Run("no filter returns all sorted by created_at desc", func(t *testing.T) {
+		got, err := s.ListRuns(ctx, ListRunsFilter{})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("want 3 runs, got %d", len(got))
+		}
+		if got[0].ID != "run-c" || got[1].ID != "run-b" || got[2].ID != "run-a" {
+			t.Errorf("unexpected order: %v %v %v", got[0].ID, got[1].ID, got[2].ID)
+		}
+	})
+
+	t.Run("filter by workflow name", func(t *testing.T) {
+		got, err := s.ListRuns(ctx, ListRunsFilter{WorkflowName: "wf-one"})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("want 2 runs, got %d", len(got))
+		}
+		for _, r := range got {
+			if r.WorkflowName != "wf-one" {
+				t.Errorf("unexpected workflow: %s", r.WorkflowName)
+			}
+		}
+	})
+
+	t.Run("filter by status", func(t *testing.T) {
+		got, err := s.ListRuns(ctx, ListRunsFilter{Status: types.RunStatusFailed})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != "run-b" {
+			t.Errorf("want run-b only, got %v", got)
+		}
+	})
+
+	t.Run("limit is respected", func(t *testing.T) {
+		got, err := s.ListRuns(ctx, ListRunsFilter{Limit: 2})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("want 2, got %d", len(got))
+		}
+	})
+
+	t.Run("returns copy not reference", func(t *testing.T) {
+		got, _ := s.ListRuns(ctx, ListRunsFilter{})
+		got[0].WorkflowName = "mutated"
+		got2, _ := s.ListRuns(ctx, ListRunsFilter{})
+		if got2[0].WorkflowName == "mutated" {
+			t.Error("ListRuns returned a reference, not a copy")
+		}
+	})
+}

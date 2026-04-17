@@ -24,9 +24,9 @@ type StoreConfig struct {
 
 // ListRunsFilter constrains which runs ListRuns returns.
 type ListRunsFilter struct {
-	WorkflowName string
-	Status       types.RunStatus
-	Limit        int // defaults to 50 when zero
+	WorkflowName string          // empty means no filter
+	Status       types.RunStatus // empty means no filter
+	Limit        int             // defaults to 50 when zero
 }
 
 // Store is the persistence interface for run and step state.
@@ -62,6 +62,10 @@ func NewStore(cfg StoreConfig) (Store, error) {
 		}
 		return nil, fmt.Errorf("unknown store type: %s", cfg.Type)
 	}
+}
+
+func (s *SQLiteStore) ListRuns(ctx context.Context, filter ListRunsFilter) ([]*types.Run, error) {
+	return nil, ErrNotImplemented
 }
 
 func (s *SQLiteStore) CreateApproval(ctx context.Context, approval *types.Approval) error {

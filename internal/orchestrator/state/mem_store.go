@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -116,6 +117,36 @@ func (m *MemStore) GetRun(_ context.Context, runID string) (*types.Run, error) {
 		return nil, errRunNotFound
 	}
 	return copyRun(r), nil
+}
+
+// ListRuns returns runs matching filter, ordered by CreatedAt descending.
+func (m *MemStore) ListRuns(_ context.Context, filter ListRunsFilter) ([]*types.Run, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var out []*types.Run
+	for _, r := range m.runs {
+		if filter.WorkflowName != "" && r.WorkflowName != filter.WorkflowName {
+			continue
+		}
+		if filter.Status != "" && r.Status != filter.Status {
+			continue
+		}
+		out = append(out, copyRun(r))
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 // CreateStep stores a copy of the step under steps[runID][stepID].
