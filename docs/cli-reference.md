@@ -16,7 +16,8 @@ See also: [YAML Spec](yaml-spec/index.md) · [Overview](kimitsu-overview.md) · 
 | `ktsu start gateway` | Start the LLM gateway | Running the full stack or gateway only |
 | `ktsu start envelope` | Start the shipped envelope tool server | Adding the envelope server to a running stack |
 | `ktsu invoke <workflow>` | Invoke a workflow | Development and testing |
-| `ktsu orchestrator envelope <run_id>` | Print the envelope for a run | Query debugging data from orchestrator |
+| `ktsu runs [--workflow <name>]` | List workflow runs | Discover and filter past runs |
+| `ktsu runs get <run_id>` | Print the full envelope for a run | Inspect step outputs and metrics |
 | `ktsu workflow tree <workflow-file>` | Print full dependency tree | Auditing sub-workflow, agent, and server references |
 | `ktsu validate [project-dir]` | Validate config files | CI, pre-deploy checks, local debugging |
 | `ktsu new project <name>` | Scaffold a new project | Starting a new Kimitsu project |
@@ -233,25 +234,29 @@ ktsu invoke hello --orchestrator http://example.com:5050 --wait
 
 ---
 
-## ktsu orchestrator
+## `ktsu runs`
 
-Query and interact with a running orchestrator.
-
-### ktsu orchestrator envelope <run_id>
-
-Print the full envelope (context) for a given run as JSON.
+List runs from a running orchestrator, filtered by workflow name or status.
 
 ```
-ktsu orchestrator envelope <run_id> [flags]
+ktsu runs [--workflow <name>] [--status <status>] [--limit <n>] [--orchestrator <url>]
 ```
 
-| Flag | Default | Env | Description |
-|---|---|---|---|
-| `--orchestrator` | `http://localhost:5050` | `KTSU_ORCHESTRATOR_URL` | Orchestrator URL |
+Output columns: run ID, workflow name, status, started timestamp, duration.
 
-```bash
-ktsu orchestrator envelope run_a1b2c3d4e5f6
-ktsu orc envelope run_a1b2c3d4e5f6
+| Flag | Default | Description |
+|---|---|---|
+| `--workflow` | — | Filter by workflow name (exact match) |
+| `--status` | — | Filter by status: `pending`, `running`, `complete`, `failed` |
+| `--limit` | 50 | Maximum results to return |
+| `--orchestrator` | `http://localhost:5050` | Orchestrator URL (env: `KTSU_ORCHESTRATOR_URL`) |
+
+## `ktsu runs get <run_id>`
+
+Print the full envelope for a run as JSON. Includes step outputs, per-step metrics, and aggregated totals. On failure, shows all steps that completed before the failure.
+
+```
+ktsu runs get <run_id> [--orchestrator <url>]
 ```
 
 ---
