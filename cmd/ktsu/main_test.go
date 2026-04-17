@@ -343,9 +343,9 @@ url: http://myserver
 	}
 }
 
-// TestOrchestratorEnvelopeCmd_printsEnvelopeJSON verifies that ktsu orchestrator envelope
-// sends GET /envelope/{run_id} and pretty-prints the JSON response.
-func TestOrchestratorEnvelopeCmd_printsEnvelopeJSON(t *testing.T) {
+// TestRunsGetCmd_printsEnvelopeJSON verifies that ktsu runs get sends GET /runs/{run_id}/envelope
+// and pretty-prints the JSON response.
+func TestRunsGetCmd_printsEnvelopeJSON(t *testing.T) {
 	envelope := map[string]interface{}{
 		"run_id":   "run-abc123",
 		"workflow": "my-workflow",
@@ -354,7 +354,7 @@ func TestOrchestratorEnvelopeCmd_printsEnvelopeJSON(t *testing.T) {
 		"totals":   map[string]interface{}{"duration_ms": float64(1200)},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/envelope/run-abc123" {
+		if r.Method != http.MethodGet || r.URL.Path != "/runs/run-abc123/envelope" {
 			http.NotFound(w, r)
 			return
 		}
@@ -364,13 +364,13 @@ func TestOrchestratorEnvelopeCmd_printsEnvelopeJSON(t *testing.T) {
 	defer srv.Close()
 
 	var buf strings.Builder
-	cmd := orchestratorEnvelopeCmd()
+	cmd := runsGetCmd()
 	cmd.SetContext(context.Background())
 	cmd.Flags().Set("orchestrator", srv.URL)
 	cmd.SetOut(&buf)
 
 	if err := cmd.RunE(cmd, []string{"run-abc123"}); err != nil {
-		t.Fatalf("orchestratorEnvelopeCmd.RunE: %v", err)
+		t.Fatalf("runsGetCmd.RunE: %v", err)
 	}
 
 	var got map[string]interface{}
@@ -382,9 +382,9 @@ func TestOrchestratorEnvelopeCmd_printsEnvelopeJSON(t *testing.T) {
 	}
 }
 
-// TestOrchestratorEnvelopeCmd_notFound verifies that a 404 from the orchestrator
+// TestRunsGetCmd_notFound verifies that a 404 from the orchestrator
 // surfaces as an error containing the server's error message.
-func TestOrchestratorEnvelopeCmd_notFound(t *testing.T) {
+func TestRunsGetCmd_notFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -392,7 +392,7 @@ func TestOrchestratorEnvelopeCmd_notFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cmd := orchestratorEnvelopeCmd()
+	cmd := runsGetCmd()
 	cmd.SetContext(context.Background())
 	cmd.Flags().Set("orchestrator", srv.URL)
 
@@ -405,16 +405,15 @@ func TestOrchestratorEnvelopeCmd_notFound(t *testing.T) {
 	}
 }
 
-// TestOrchestratorGroupCmd_hasOrcAlias verifies the orchestrator command group
-// registers "orc" as an alias.
-func TestOrchestratorGroupCmd_hasOrcAlias(t *testing.T) {
-	cmd := orchestratorGroupCmd()
-	for _, a := range cmd.Aliases {
-		if a == "orc" {
+// TestRunsGroupCmd_hasGetSubcommand verifies the runs command group registers the get subcommand.
+func TestRunsGroupCmd_hasGetSubcommand(t *testing.T) {
+	cmd := runsGroupCmd()
+	for _, sub := range cmd.Commands() {
+		if sub.Use == "get <run_id>" {
 			return
 		}
 	}
-	t.Error("want 'orc' alias on orchestrator command group")
+	t.Error("want 'get' subcommand on runs command group")
 }
 
 func writeFile(path, content string) error {

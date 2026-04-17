@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"net/url"
+	"text/tabwriter"
 	"text/template"
 	"time"
 
@@ -56,7 +58,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(invokeCmd())
 	root.AddCommand(lockCmd())
 	root.AddCommand(newCmd())
-	root.AddCommand(orchestratorGroupCmd())
+	root.AddCommand(runsGroupCmd())
 	root.AddCommand(workflowGroupCmd())
 	if hubEnabled() {
 		root.AddCommand(hubCmd())
@@ -168,27 +170,92 @@ func hubSearchCmd() *cobra.Command {
 	return cmd
 }
 
-func orchestratorGroupCmd() *cobra.Command {
+func runsGroupCmd() *cobra.Command {
+	var orchestratorURL, workflow, status string
+	var limit int
+
 	cmd := &cobra.Command{
-		Use:     "orchestrator",
-		Aliases: []string{"orc"},
-		Short:   "Query and interact with a running orchestrator",
+		Use:   "runs",
+		Short: "List and inspect workflow runs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			u := orchestratorURL + "/runs"
+			params := url.Values{}
+			if workflow != "" {
+				params.Set("workflow", workflow)
+			}
+			if status != "" {
+				params.Set("status", status)
+			}
+			if limit > 0 {
+				params.Set("limit", strconv.Itoa(limit))
+			}
+			if len(params) > 0 {
+				u += "?" + params.Encode()
+			}
+
+			resp, err := doRequest(cmd.Context(), "GET", u, nil)
+			if err != nil {
+				return fmt.Errorf("runs: %w", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("runs: orchestrator returned status %d", resp.StatusCode)
+			}
+
+			var result struct {
+				Runs []struct {
+					ID           string    `json:"id"`
+					WorkflowName string    `json:"workflow_name"`
+					Status       string    `json:"status"`
+					CreatedAt    time.Time `json:"created_at"`
+					UpdatedAt    time.Time `json:"updated_at"`
+					Error        string    `json:"error,omitempty"`
+				} `json:"runs"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				return fmt.Errorf("runs: decode: %w", err)
+			}
+
+			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "RUN ID\tWORKFLOW\tSTATUS\tSTARTED\tDURATION")
+			for _, r := range result.Runs {
+				duration := "-"
+				if r.Status == "complete" || r.Status == "failed" {
+					d := r.UpdatedAt.Sub(r.CreatedAt).Round(time.Second)
+					duration = d.String()
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+					r.ID, r.WorkflowName, r.Status,
+					r.CreatedAt.Local().Format("2006-01-02 15:04:05"),
+					duration)
+			}
+			tw.Flush()
+			return nil
+		},
 	}
-	cmd.AddCommand(orchestratorEnvelopeCmd())
+	cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
+		envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:5050"),
+		"orchestrator URL (env: KTSU_ORCHESTRATOR_URL)")
+	cmd.Flags().StringVar(&workflow, "workflow", "", "filter by workflow name")
+	cmd.Flags().StringVar(&status, "status", "", "filter by status (pending, running, complete, failed)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "max results (default 50)")
+
+	cmd.AddCommand(runsGetCmd())
 	return cmd
 }
 
-func orchestratorEnvelopeCmd() *cobra.Command {
+func runsGetCmd() *cobra.Command {
 	var orchestratorURL string
 	cmd := &cobra.Command{
-		Use:   "envelope <run_id>",
+		Use:   "get <run_id>",
 		Short: "Print the envelope for a run",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runID := args[0]
-			resp, err := doRequest(cmd.Context(), "GET", orchestratorURL+"/envelope/"+runID, nil)
+			resp, err := doRequest(cmd.Context(), "GET", orchestratorURL+"/runs/"+runID+"/envelope", nil)
 			if err != nil {
-				return fmt.Errorf("envelope: %w", err)
+				return fmt.Errorf("runs get: %w", err)
 			}
 			defer resp.Body.Close()
 
@@ -196,14 +263,14 @@ func orchestratorEnvelopeCmd() *cobra.Command {
 				var result map[string]interface{}
 				json.NewDecoder(resp.Body).Decode(&result)
 				if msg, ok := result["error"].(string); ok {
-					return fmt.Errorf("envelope: %s (status %d)", msg, resp.StatusCode)
+					return fmt.Errorf("runs get: %s (status %d)", msg, resp.StatusCode)
 				}
-				return fmt.Errorf("envelope: orchestrator returned status %d", resp.StatusCode)
+				return fmt.Errorf("runs get: orchestrator returned status %d", resp.StatusCode)
 			}
 
 			var envelope interface{}
 			if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-				return fmt.Errorf("envelope: decode: %w", err)
+				return fmt.Errorf("runs get: decode: %w", err)
 			}
 			data, _ := json.MarshalIndent(envelope, "", "  ")
 			fmt.Fprintln(cmd.OutOrStdout(), string(data))
