@@ -86,12 +86,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 		stepByID[wf.Pipeline[i].ID] = &wf.Pipeline[i]
 	}
 
-	// Pre-populate workflow input as a synthetic step output.
-	// All pipeline steps can reference upstream outputs via stepOutputs["input"].
 	stepOutputs := make(map[string]map[string]interface{})
-	if input != nil {
-		stepOutputs["input"] = input
-	}
 
 	// Build env context from declared env vars (root workflow only).
 	envVars := make(map[string]string, len(wf.Env))
@@ -147,7 +142,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 
 			// Evaluate condition before dispatching any step type.
 			if step.Condition != "" {
-				condCtx := buildExprContext(stepOutputs, nil, envVars)
+				condCtx := buildExprContext(stepOutputs, input, envVars)
 				expr := stripTemplate(step.Condition)
 				result, err := jmespath.Search(sanitizeExpr(expr), condCtx)
 				if err != nil || isFalsy(result) {
@@ -171,12 +166,12 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			case types.StepTypeTransform:
 				rawOutput, execErr = r.executeTransform(ctx, step, stepOutputs)
 			case types.StepTypeWebhook:
-				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs, invocationParams, nil, envVars)
+				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs, invocationParams, input, envVars)
 			case types.StepTypeWorkflow:
-				rawOutput, stepMetrics, execErr = r.executeWorkflow(ctx, step, stepOutputs, runID, invocationParams, ".", envVars)
+				rawOutput, stepMetrics, execErr = r.executeWorkflow(ctx, step, stepOutputs, runID, invocationParams, ".", envVars, input)
 			case types.StepTypeAgent:
 				if step.ForEach != nil {
-					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID)
+					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID, input)
 				} else {
 					rawOutput, stepMetrics, execErr = r.executeAgent(ctx, step, stepOutputs, runID)
 				}
@@ -273,17 +268,20 @@ func (r *Runner) executeAgent(ctx context.Context, step *config.PipelineStep, st
 // executeFanout iterates an agent step over an array resolved from ForEach.From,
 // dispatching each item concurrently up to ForEach.Concurrency goroutines.
 // Returns {"results": [...]} with each item's output in order.
-func (r *Runner) executeFanout(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, runID string) (map[string]interface{}, types.StepMetrics, error) {
+func (r *Runner) executeFanout(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, runID string, richParams map[string]interface{}) (map[string]interface{}, types.StepMetrics, error) {
 	if r.dispatcher == nil {
 		return map[string]interface{}{"results": []interface{}{}}, types.StepMetrics{}, nil
 	}
 
 	spec := step.ForEach
 
-	// Build JMESPath search context from accumulated step outputs.
+	// Build JMESPath search context from accumulated step outputs plus params.
 	searchCtx := make(map[string]interface{})
 	for k, v := range stepOutputs {
 		searchCtx[k] = v
+	}
+	if richParams != nil {
+		searchCtx["params"] = richParams
 	}
 
 	raw, err := jmespath.Search(sanitizeExpr(spec.From), searchCtx)
@@ -785,6 +783,8 @@ func isFalsy(v interface{}) bool {
 // It resolves the workflow reference, maps step inputs, resolves params,
 // enforces webhook suppression policy, and runs the sub-workflow inline.
 // envVars is non-nil only for root workflows; sub-workflows receive nil.
+// parentRichParams carries the caller's typed param values so {{ params.X }} in step
+// params and workflow_input expressions can reference them.
 // Returns the final step output and aggregated metrics.
 func (r *Runner) executeWorkflow(
 	ctx context.Context,
@@ -794,6 +794,7 @@ func (r *Runner) executeWorkflow(
 	parentParams map[string]string,
 	projectDir string,
 	envVars map[string]string,
+	parentRichParams map[string]interface{},
 ) (map[string]interface{}, types.StepMetrics, error) {
 	subWF, err := builtins.ResolveWorkflowRef(step.Workflow, projectDir)
 	if err != nil {
@@ -801,7 +802,7 @@ func (r *Runner) executeWorkflow(
 	}
 
 	// Build parent expression context for resolving {{ }} param templates.
-	parentCtx := buildExprContext(stepOutputs, nil, envVars)
+	parentCtx := buildExprContext(stepOutputs, parentRichParams, envVars)
 
 	resolvedParams := make(map[string]string, len(step.Params))
 	richParams := make(map[string]interface{}, len(step.Params))
@@ -873,6 +874,14 @@ func (r *Runner) executeWorkflow(
 		subInput[field] = val
 	}
 
+	// Merge subInput fields into richParams so parent-provided structured data is
+	// accessible under params.* inside the sub-workflow. Params fields take precedence.
+	for k, v := range subInput {
+		if _, exists := richParams[k]; !exists {
+			richParams[k] = v
+		}
+	}
+
 	suppressWebhooks := true
 	if subWF.Webhooks == "execute" && step.WorkflowWebhooks == "execute" {
 		suppressWebhooks = false
@@ -933,9 +942,6 @@ func (r *Runner) executeSubWorkflow(
 	}
 
 	stepOutputs := make(map[string]map[string]interface{})
-	if input != nil {
-		stepOutputs["input"] = input
-	}
 
 	markFailed := func(stepRec *types.Step, errMsg string) (map[string]interface{}, types.StepMetrics, error) {
 		t := time.Now()
@@ -1024,10 +1030,10 @@ func (r *Runner) executeSubWorkflow(
 				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs, invocationParams, richParams, nil)
 			case types.StepTypeWorkflow:
 				// Sub-workflows don't inherit envVars — pass nil to enforce root-only env access.
-				rawOutput, stepMetrics, execErr = r.executeWorkflow(ctx, step, stepOutputs, runID, invocationParams, projectDir, nil)
+				rawOutput, stepMetrics, execErr = r.executeWorkflow(ctx, step, stepOutputs, runID, invocationParams, projectDir, nil, richParams)
 			case types.StepTypeAgent:
 				if step.ForEach != nil {
-					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID)
+					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID, richParams)
 				} else {
 					rawOutput, stepMetrics, execErr = r.executeAgent(ctx, step, stepOutputs, runID)
 				}

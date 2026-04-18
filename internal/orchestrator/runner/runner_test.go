@@ -209,16 +209,29 @@ func TestRunner_transformStep_merge(t *testing.T) {
 	}
 }
 
-// TestRunner_transformStep_filter verifies filter op on an array from workflow input.
+// TestRunner_transformStep_filter verifies filter op on an array from a prior step output.
 func TestRunner_transformStep_filter(t *testing.T) {
+	items := []interface{}{
+		map[string]interface{}{"status": "active", "name": "item1"},
+		map[string]interface{}{"status": "inactive", "name": "item2"},
+	}
 	store := state.NewMemStore()
-	r := New(store)
+	r := NewWithDispatcher(store, &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"data_provider": {"items": items},
+		},
+	})
 
 	wf := makeWorkflow(
 		config.PipelineStep{
+			ID:    "data_provider",
+			Agent: "agents/data.agent.yaml",
+		},
+		config.PipelineStep{
 			ID:        "filter_step",
+			DependsOn: []string{"data_provider"},
 			Transform: &config.TransformSpec{
-				Inputs: []config.TransformInput{{From: "input"}},
+				Inputs: []config.TransformInput{{From: "data_provider"}},
 				Ops: []map[string]interface{}{
 					{"map": map[string]interface{}{"expr": "items"}},
 					{"flatten": nil},
@@ -228,15 +241,8 @@ func TestRunner_transformStep_filter(t *testing.T) {
 		},
 	)
 
-	input := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"status": "active", "name": "item1"},
-			map[string]interface{}{"status": "inactive", "name": "item2"},
-		},
-	}
-
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-filter", wf, input, nil)
+	err := r.Execute(ctx, "test-workflow", "run-filter", wf, nil, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -261,16 +267,30 @@ func TestRunner_transformStep_filter(t *testing.T) {
 	}
 }
 
-// TestRunner_transformStep_sort verifies sort op on array from workflow input.
+// TestRunner_transformStep_sort verifies sort op on array from a prior step output.
 func TestRunner_transformStep_sort(t *testing.T) {
+	items := []interface{}{
+		map[string]interface{}{"name": "Charlie", "age": float64(30)},
+		map[string]interface{}{"name": "Alice", "age": float64(25)},
+		map[string]interface{}{"name": "Bob", "age": float64(28)},
+	}
 	store := state.NewMemStore()
-	r := New(store)
+	r := NewWithDispatcher(store, &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"data_provider": {"items": items},
+		},
+	})
 
 	wf := makeWorkflow(
 		config.PipelineStep{
+			ID:    "data_provider",
+			Agent: "agents/data.agent.yaml",
+		},
+		config.PipelineStep{
 			ID:        "sort_step",
+			DependsOn: []string{"data_provider"},
 			Transform: &config.TransformSpec{
-				Inputs: []config.TransformInput{{From: "input"}},
+				Inputs: []config.TransformInput{{From: "data_provider"}},
 				Ops: []map[string]interface{}{
 					{"map": map[string]interface{}{"expr": "items"}},
 					{"flatten": nil},
@@ -280,16 +300,8 @@ func TestRunner_transformStep_sort(t *testing.T) {
 		},
 	)
 
-	input := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"name": "Charlie", "age": float64(30)},
-			map[string]interface{}{"name": "Alice", "age": float64(25)},
-			map[string]interface{}{"name": "Bob", "age": float64(28)},
-		},
-	}
-
 	ctx := context.Background()
-	err := r.Execute(ctx, "test-workflow", "run-sort", wf, input, nil)
+	err := r.Execute(ctx, "test-workflow", "run-sort", wf, nil, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -333,7 +345,7 @@ func TestRunner_webhookStep_success(t *testing.T) {
 			URL:    srv.URL,
 			Method: "POST",
 			Body: map[string]interface{}{
-				"message": "input.msg",
+				"message": "params.msg",
 			},
 		},
 	})
@@ -726,7 +738,7 @@ func TestRunner_fanout_basic(t *testing.T) {
 		ID:    "process",
 		Agent: "agents/processor.agent.yaml",
 		ForEach: &config.ForEachSpec{
-			From: "input.items",
+			From: "params.items",
 		},
 	})
 
@@ -769,7 +781,7 @@ func TestRunner_fanout_maxItems(t *testing.T) {
 		ID:    "process",
 		Agent: "agents/processor.agent.yaml",
 		ForEach: &config.ForEachSpec{
-			From:     "input.items",
+			From:     "params.items",
 			MaxItems: 2,
 		},
 	})
@@ -804,7 +816,7 @@ func TestRunner_fanout_itemAndIndex(t *testing.T) {
 		ID:    "process",
 		Agent: "agents/processor.agent.yaml",
 		ForEach: &config.ForEachSpec{
-			From: "input.items",
+			From: "params.items",
 		},
 	})
 
@@ -846,7 +858,7 @@ func TestRunner_fanout_emptyArray(t *testing.T) {
 		ID:    "process",
 		Agent: "agents/processor.agent.yaml",
 		ForEach: &config.ForEachSpec{
-			From: "input.items",
+			From: "params.items",
 		},
 	})
 
@@ -880,7 +892,7 @@ func TestRunner_fanout_metricsAggregated(t *testing.T) {
 		ID:    "process",
 		Agent: "agents/processor.agent.yaml",
 		ForEach: &config.ForEachSpec{
-			From: "input.items",
+			From: "params.items",
 		},
 	})
 
@@ -1056,7 +1068,7 @@ func TestRunner_fanout_defaultFailFast(t *testing.T) {
 		ID:    "process",
 		Agent: "agents/foo.agent.yaml",
 		ForEach: &config.ForEachSpec{
-			From: "input.items",
+			From: "params.items",
 		},
 	})
 
@@ -1094,7 +1106,7 @@ func TestRunner_fanout_maxFailures_tolerateOne(t *testing.T) {
 		ID:    "process",
 		Agent: "agents/foo.agent.yaml",
 		ForEach: &config.ForEachSpec{
-			From:        "input.items",
+			From:        "params.items",
 			MaxFailures: 1,
 		},
 	})
@@ -1152,7 +1164,7 @@ func TestRunner_fanout_maxFailures_exceedThreshold(t *testing.T) {
 		ID:    "process",
 		Agent: "agents/foo.agent.yaml",
 		ForEach: &config.ForEachSpec{
-			From:        "input.items",
+			From:        "params.items",
 			MaxFailures: 1,
 		},
 	})
@@ -1186,7 +1198,7 @@ func TestRunner_fanout_maxFailures_unlimited(t *testing.T) {
 		ID:    "process",
 		Agent: "agents/foo.agent.yaml",
 		ForEach: &config.ForEachSpec{
-			From:        "input.items",
+			From:        "params.items",
 			MaxFailures: -1,
 		},
 	})
@@ -1349,7 +1361,7 @@ func TestRunner_fanoutAgentStep_setsReflected(t *testing.T) {
 		ID:    "step-fanout",
 		Agent: "agents/foo.agent.yaml",
 		ForEach: &config.ForEachSpec{
-			From: "input.items",
+			From: "params.items",
 		},
 	}
 	wf := makeWorkflow(step)
@@ -1410,22 +1422,14 @@ func TestRunner_nonAgentStep_nilReflected(t *testing.T) {
 
 func TestRunner_workflowStep_executesTransformInline(t *testing.T) {
 	dir := t.TempDir()
+	// Sub-workflow uses output.map to surface params.message as the result.
 	subWFYAML := `kind: workflow
 name: inner
 version: "1.0.0"
-pipeline:
-  - id: greet
-    transform:
-      inputs:
-        - from: input
-      ops:
-        - map:
-            expr: "{result: message}"
-    output:
-      schema:
-        type: object
-        properties:
-          result: {type: string}
+pipeline: []
+output:
+  map:
+    result: "{{ params.message }}"
 `
 	subPath := filepath.Join(dir, "inner.workflow.yaml")
 	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
@@ -1435,8 +1439,8 @@ pipeline:
 	parentWF := makeWorkflow(config.PipelineStep{
 		ID:       "call",
 		Workflow: subPath,
-		WorkflowInput: map[string]interface{}{
-			"message": "input.greeting",
+		Params: map[string]interface{}{
+			"message": "{{ params.greeting }}",
 		},
 	})
 	parentWF.Name = "parent"
@@ -1462,15 +1466,9 @@ pipeline:
 	if callStep.Status != types.StepStatusComplete {
 		t.Errorf("expected complete, got %s: %s", callStep.Status, callStep.Error)
 	}
-	// The sub-workflow's final step output is surfaced as the workflow step's output.
-	// Transform's map op produces [{result: hello}] wrapped in {result: ...}.
-	res, ok := callStep.Output["result"].([]interface{})
-	if !ok || len(res) != 1 {
-		t.Fatalf("expected result array of len 1, got %v", callStep.Output)
-	}
-	first, _ := res[0].(map[string]interface{})
-	if first["result"] != "hello" {
-		t.Errorf("expected nested result=hello, got %v", callStep.Output)
+	// The sub-workflow's output.map surfaces params.message as result.
+	if callStep.Output["result"] != "hello" {
+		t.Errorf("expected result=hello, got %v", callStep.Output["result"])
 	}
 }
 
@@ -1567,19 +1565,10 @@ params:
     required: [greeting]
     properties:
       greeting: {type: string}
-pipeline:
-  - id: echo
-    transform:
-      inputs:
-        - from: input
-      ops:
-        - map:
-            expr: "{result: message}"
-    output:
-      schema:
-        type: object
-        properties:
-          result: {type: string}
+pipeline: []
+output:
+  map:
+    result: "{{ params.greeting }}"
 `
 	subPath := filepath.Join(dir, "sub.workflow.yaml")
 	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
@@ -1590,9 +1579,6 @@ pipeline:
 		ID:       "call",
 		Workflow: subPath,
 		Params:   map[string]interface{}{"greeting": "`hello`"},
-		WorkflowInput: map[string]interface{}{
-			"message": "input.text",
-		},
 	})
 	parentWF.Name = "parent"
 
@@ -1625,14 +1611,7 @@ params:
     required: [webhook_url]
     properties:
       webhook_url: {type: string}
-pipeline:
-  - id: noop
-    transform:
-      inputs:
-        - from: input
-      ops:
-        - map:
-            expr: "{ok: true}"
+pipeline: []
 `
 	subPath := filepath.Join(dir, "sub.workflow.yaml")
 	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
@@ -1666,31 +1645,24 @@ func TestRunner_workflowStep_condition_skips(t *testing.T) {
 	subWFYAML := `kind: workflow
 name: inner
 version: "1.0.0"
-pipeline:
-  - id: noop
-    transform:
-      inputs:
-        - from: input
-      ops:
-        - map:
-            expr: "val"
+pipeline: []
 `
 	subPath := filepath.Join(dir, "inner.workflow.yaml")
 	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
 		t.Fatalf("write sub-workflow: %v", err)
 	}
 
-	// input.text is null → condition evaluates to false → workflow step skipped
+	// params.text is null → condition evaluates to false → workflow step skipped
 	parentWF := makeWorkflow(config.PipelineStep{
 		ID:        "call",
 		Workflow:  subPath,
-		Condition: "input.text != null",
+		Condition: "params.text != null",
 	})
 	parentWF.Name = "parent"
 
 	store := state.NewMemStore()
 	r := New(store)
-	// No "text" in input → condition false → step should be skipped
+	// No "text" in input → params.text is null → condition false → step should be skipped
 	if err := r.Execute(context.Background(), "parent", "run1", parentWF, map[string]interface{}{}, nil); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -1711,31 +1683,24 @@ func TestRunner_workflowStep_condition_executes(t *testing.T) {
 	subWFYAML := `kind: workflow
 name: inner
 version: "1.0.0"
-pipeline:
-  - id: noop
-    transform:
-      inputs:
-        - from: input
-      ops:
-        - map:
-            expr: "val"
+pipeline: []
 `
 	subPath := filepath.Join(dir, "inner.workflow.yaml")
 	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
 		t.Fatalf("write sub-workflow: %v", err)
 	}
 
-	// input.text is "hello" → condition evaluates to true → workflow step executes
+	// params.text is "hello" → condition evaluates to true → workflow step executes
 	parentWF := makeWorkflow(config.PipelineStep{
 		ID:        "call",
 		Workflow:  subPath,
-		Condition: "input.text != null",
+		Condition: "params.text != null",
 	})
 	parentWF.Name = "parent"
 
 	store := state.NewMemStore()
 	r := New(store)
-	if err := r.Execute(context.Background(), "parent", "run1", parentWF, map[string]interface{}{"text": "hello", "val": "x"}, nil); err != nil {
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, map[string]interface{}{"text": "hello"}, nil); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -1775,7 +1740,7 @@ output:
 		ID:       "norm",
 		Workflow: subPath,
 		Params: map[string]interface{}{
-			"message": "{{ input.msg }}",
+			"message": "{{ params.msg }}",
 		},
 	})
 	parentWF.Name = "parent"
@@ -1827,7 +1792,7 @@ output:
 	parentWF := makeWorkflow(config.PipelineStep{
 		ID:      "call",
 		Workflow: subPath,
-		Params:  map[string]interface{}{"val": "{{ input.number }}"},
+		Params:  map[string]interface{}{"val": "{{ params.number }}"},
 	})
 	parentWF.Name = "parent"
 
@@ -1985,8 +1950,8 @@ pipeline:
 		ID:      "call",
 		Workflow: subPath,
 		Params: map[string]interface{}{
-			"chat_id": "{{ input.chat_id }}",
-			"text":    "{{ input.text }}",
+			"chat_id": "{{ params.chat_id }}",
+			"text":    "{{ params.text }}",
 		},
 		WorkflowWebhooks: "execute",
 	})
