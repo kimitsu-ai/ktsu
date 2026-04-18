@@ -61,6 +61,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 		ID:           runID,
 		WorkflowName: workflowName,
 		Status:       types.RunStatusRunning,
+		Payload:      input,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -90,6 +91,12 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 	stepOutputs := make(map[string]map[string]interface{})
 	if input != nil {
 		stepOutputs["input"] = input
+	}
+
+	// Build env context from declared env vars (root workflow only).
+	envVars := make(map[string]string, len(wf.Env))
+	for _, decl := range wf.Env {
+		envVars[decl.Name] = os.Getenv(decl.Name)
 	}
 
 	failRun := func(stepRec *types.Step, errMsg string) error {
@@ -138,6 +145,23 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 				return fmt.Errorf("create step %s: %w", step.ID, err)
 			}
 
+			// Evaluate condition before dispatching any step type.
+			if step.Condition != "" {
+				condCtx := buildExprContext(stepOutputs, nil, envVars)
+				expr := stripTemplate(step.Condition)
+				result, err := jmespath.Search(sanitizeExpr(expr), condCtx)
+				if err != nil || isFalsy(result) {
+					now := time.Now()
+					stepRec.Status = types.StepStatusSkipped
+					stepRec.EndedAt = &now
+					if err := r.store.UpdateStep(ctx, stepRec); err != nil {
+						return fmt.Errorf("update step %s: %w", step.ID, err)
+					}
+					stepOutputs[step.ID] = map[string]interface{}{"skipped": true, "reason": "condition_false"}
+					continue
+				}
+			}
+
 			// Execute step
 			var rawOutput map[string]interface{}
 			var stepMetrics types.StepMetrics
@@ -147,9 +171,9 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 			case types.StepTypeTransform:
 				rawOutput, execErr = r.executeTransform(ctx, step, stepOutputs)
 			case types.StepTypeWebhook:
-				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs, invocationParams)
+				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs, invocationParams, nil, envVars)
 			case types.StepTypeWorkflow:
-				rawOutput, stepMetrics, execErr = r.executeWorkflow(ctx, step, stepOutputs, runID, invocationParams, ".")
+				rawOutput, stepMetrics, execErr = r.executeWorkflow(ctx, step, stepOutputs, runID, invocationParams, ".", envVars)
 			case types.StepTypeAgent:
 				if step.ForEach != nil {
 					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID)
@@ -357,36 +381,36 @@ func (r *Runner) executeFanout(ctx context.Context, step *config.PipelineStep, s
 	return map[string]interface{}{"results": outputs}, totals, nil
 }
 
-// executeWebhook executes a webhook step: evaluates the condition, builds the body
-// via JMESPath, and POSTs to the configured URL. Expects a 2xx response for success.
-func (r *Runner) executeWebhook(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, invocationParams map[string]string) (map[string]interface{}, error) {
+// executeWebhook executes a webhook step: builds the body via JMESPath, and POSTs to
+// the configured URL. Expects a 2xx response for success. Condition evaluation is
+// handled by the caller before dispatch. richParams carries typed {{ }} param values;
+// envVars is non-nil only for root-workflow webhook steps.
+func (r *Runner) executeWebhook(
+	ctx context.Context,
+	step *config.PipelineStep,
+	stepOutputs map[string]map[string]interface{},
+	invocationParams map[string]string,
+	richParams map[string]interface{},
+	envVars map[string]string,
+) (map[string]interface{}, error) {
 	spec := step.Webhook
 
-	// Check condition
-	if step.Condition != "" {
-		envelopeCtx := make(map[string]interface{})
-		for k, v := range stepOutputs {
-			envelopeCtx[k] = v
-		}
-		result, err := jmespath.Search(sanitizeExpr(step.Condition), envelopeCtx)
-		if err != nil || isFalsy(result) {
-			return map[string]interface{}{"skipped": true, "reason": "condition_false"}, nil
-		}
-	}
+	// Build rich expression context.
+	exprCtx := buildExprContext(stepOutputs, richParams, envVars)
 
-	// Resolve URL — root workflows allow env:, sub-workflows use param: only.
-	url, err := config.ResolveValue(spec.URL, invocationParams == nil, invocationParams)
+	// Resolve URL: apply config.ResolveValue for env:/param: prefixes, then
+	// interpolate any {{ expr }} templates for inline substitutions (e.g. URLs).
+	url, err := config.ResolveValue(spec.URL, envVars != nil, invocationParams)
 	if err != nil {
 		return nil, fmt.Errorf("webhook url: %w", err)
 	}
-
-	// Build body context from all step outputs
-	outCtx := make(map[string]interface{})
-	for k, v := range stepOutputs {
-		outCtx[k] = v
+	url, err = interpolateTemplates(url, exprCtx)
+	if err != nil {
+		return nil, fmt.Errorf("webhook url template: %w", err)
 	}
 
-	// Apply body mapping via JMESPath or env:VAR_NAME
+	// Apply body mapping via JMESPath. Expressions may be bare or {{ wrapped }}.
+	// env:VAR shorthand is still supported for backward compatibility.
 	body := make(map[string]interface{})
 	for key, jmesExprRaw := range spec.Body {
 		jmesExpr, ok := jmesExprRaw.(string)
@@ -400,7 +424,8 @@ func (r *Runner) executeWebhook(ctx context.Context, step *config.PipelineStep, 
 			}
 			continue
 		}
-		val, err := jmespath.Search(sanitizeExpr(jmesExpr), outCtx)
+		expr := stripTemplate(jmesExpr)
+		val, err := jmespath.Search(sanitizeExpr(expr), exprCtx)
 		if err != nil {
 			return nil, fmt.Errorf("jmespath webhook body %q: %w", jmesExpr, err)
 		}
@@ -759,6 +784,7 @@ func isFalsy(v interface{}) bool {
 // executeWorkflow runs a sub-workflow as a pipeline step.
 // It resolves the workflow reference, maps step inputs, resolves params,
 // enforces webhook suppression policy, and runs the sub-workflow inline.
+// envVars is non-nil only for root workflows; sub-workflows receive nil.
 // Returns the final step output and aggregated metrics.
 func (r *Runner) executeWorkflow(
 	ctx context.Context,
@@ -767,17 +793,18 @@ func (r *Runner) executeWorkflow(
 	parentRunID string,
 	parentParams map[string]string,
 	projectDir string,
+	envVars map[string]string,
 ) (map[string]interface{}, types.StepMetrics, error) {
 	subWF, err := builtins.ResolveWorkflowRef(step.Workflow, projectDir)
 	if err != nil {
 		return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q: resolve %q: %w", step.ID, step.Workflow, err)
 	}
 
+	// Build parent expression context for resolving {{ }} param templates.
+	parentCtx := buildExprContext(stepOutputs, nil, envVars)
+
 	resolvedParams := make(map[string]string, len(step.Params))
-	searchCtx := make(map[string]interface{})
-	for id, out := range stepOutputs {
-		searchCtx[id] = out
-	}
+	richParams := make(map[string]interface{}, len(step.Params))
 	for k, rawVal := range step.Params {
 		if k == "agent" || k == "server" {
 			continue
@@ -786,9 +813,25 @@ func (r *Runner) executeWorkflow(
 		if !ok {
 			return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q param %q: value must be a string, got %T", step.ID, k, rawVal)
 		}
-		val, err := config.ResolveValue(s, parentParams == nil, parentParams)
+
+		if strings.HasPrefix(strings.TrimSpace(s), "{{") {
+			// Template expression — evaluate against parent context, preserve type.
+			expr := stripTemplate(s)
+			jval, jerr := jmespath.Search(sanitizeExpr(expr), parentCtx)
+			if jerr != nil {
+				return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q param %q: template %q: %w", step.ID, k, expr, jerr)
+			}
+			richParams[k] = jval
+			if jval != nil {
+				resolvedParams[k] = fmt.Sprintf("%v", jval)
+			}
+			continue
+		}
+
+		val, err := config.ResolveValue(s, envVars != nil, parentParams)
 		if err != nil {
-			jval, jerr := jmespath.Search(s, searchCtx)
+			// Fallback: try as bare JMESPath expression (backward compat).
+			jval, jerr := jmespath.Search(sanitizeExpr(s), parentCtx)
 			if jerr != nil {
 				return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q param %q: %w", step.ID, k, err)
 			}
@@ -801,6 +844,7 @@ func (r *Runner) executeWorkflow(
 			}
 		}
 		resolvedParams[k] = val
+		richParams[k] = val
 	}
 
 	// Validate required params from the sub-workflow's params.schema.
@@ -822,7 +866,7 @@ func (r *Runner) executeWorkflow(
 		if !ok {
 			return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q input %q: must be a string JMESPath expression", step.ID, field)
 		}
-		val, err := jmespath.Search(sanitizeExpr(expr), searchCtx)
+		val, err := jmespath.Search(sanitizeExpr(expr), parentCtx)
 		if err != nil {
 			return nil, types.StepMetrics{}, fmt.Errorf("workflow step %q input %q: JMESPath %q: %w", step.ID, field, expr, err)
 		}
@@ -835,7 +879,8 @@ func (r *Runner) executeWorkflow(
 	}
 
 	subRunID := parentRunID + "/" + step.ID
-	finalOutput, agg, err := r.executeSubWorkflow(ctx, subWF, subRunID, subInput, resolvedParams, suppressWebhooks, projectDir)
+	// Sub-workflows don't inherit envVars — pass nil to enforce root-only env access.
+	finalOutput, agg, err := r.executeSubWorkflow(ctx, subWF, subRunID, subInput, resolvedParams, richParams, suppressWebhooks, projectDir)
 	if err != nil {
 		return nil, types.StepMetrics{}, fmt.Errorf("sub-workflow %q failed: %w", step.Workflow, err)
 	}
@@ -843,7 +888,8 @@ func (r *Runner) executeWorkflow(
 }
 
 // executeSubWorkflow runs a sub-workflow's pipeline inline under the given subRunID.
-// invocationParams holds resolved param: values for the sub-workflow's steps.
+// invocationParams holds resolved param: string values for the sub-workflow's steps.
+// richParams holds the typed (non-stringified) param values for {{ }} expression context.
 // suppressWebhooks controls whether webhook steps fire or are skipped.
 // Returns the last completed step's output and aggregated metrics across all steps.
 func (r *Runner) executeSubWorkflow(
@@ -852,6 +898,7 @@ func (r *Runner) executeSubWorkflow(
 	runID string,
 	input map[string]interface{},
 	invocationParams map[string]string,
+	richParams map[string]interface{},
 	suppressWebhooks bool,
 	projectDir string,
 ) (map[string]interface{}, types.StepMetrics, error) {
@@ -863,6 +910,7 @@ func (r *Runner) executeSubWorkflow(
 		ID:           runID,
 		WorkflowName: wf.Name,
 		Status:       types.RunStatusRunning,
+		Payload:      input,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -950,6 +998,21 @@ func (r *Runner) executeSubWorkflow(
 				return nil, types.StepMetrics{}, fmt.Errorf("create step %s: %w", step.ID, err)
 			}
 
+			// Evaluate condition before dispatching any step type.
+			if step.Condition != "" {
+				condCtx := buildExprContext(stepOutputs, richParams, nil)
+				expr := stripTemplate(step.Condition)
+				result, cerr := jmespath.Search(sanitizeExpr(expr), condCtx)
+				if cerr != nil || isFalsy(result) {
+					t := time.Now()
+					stepRec.Status = types.StepStatusSkipped
+					stepRec.EndedAt = &t
+					_ = r.store.UpdateStep(ctx, stepRec)
+					stepOutputs[step.ID] = map[string]interface{}{"skipped": true, "reason": "condition_false"}
+					continue
+				}
+			}
+
 			var rawOutput map[string]interface{}
 			var stepMetrics types.StepMetrics
 			var execErr error
@@ -958,9 +1021,10 @@ func (r *Runner) executeSubWorkflow(
 			case types.StepTypeTransform:
 				rawOutput, execErr = r.executeTransform(ctx, step, stepOutputs)
 			case types.StepTypeWebhook:
-				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs, invocationParams)
+				rawOutput, execErr = r.executeWebhook(ctx, step, stepOutputs, invocationParams, richParams, nil)
 			case types.StepTypeWorkflow:
-				rawOutput, stepMetrics, execErr = r.executeWorkflow(ctx, step, stepOutputs, runID, invocationParams, projectDir)
+				// Sub-workflows don't inherit envVars — pass nil to enforce root-only env access.
+				rawOutput, stepMetrics, execErr = r.executeWorkflow(ctx, step, stepOutputs, runID, invocationParams, projectDir, nil)
 			case types.StepTypeAgent:
 				if step.ForEach != nil {
 					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID)
@@ -1023,6 +1087,20 @@ func (r *Runner) executeSubWorkflow(
 			stepOutputs[step.ID] = cleanOutput
 			finalOutput = cleanOutput
 		}
+	}
+
+	// Evaluate output.map if declared — overrides the last step's output.
+	if wf.Output != nil && len(wf.Output.Map) > 0 {
+		mapCtx := buildExprContext(stepOutputs, richParams, nil)
+		mapped := make(map[string]interface{}, len(wf.Output.Map))
+		for field, rawExpr := range wf.Output.Map {
+			expr := stripTemplate(rawExpr)
+			val, err := jmespath.Search(sanitizeExpr(expr), mapCtx)
+			if err == nil && val != nil {
+				mapped[field] = val
+			}
+		}
+		finalOutput = mapped
 	}
 
 	if finalOutput == nil {

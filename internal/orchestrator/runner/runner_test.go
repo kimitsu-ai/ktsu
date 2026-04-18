@@ -85,6 +85,38 @@ func (f *failingDispatcher) Dispatch(_ context.Context, _, stepID string, _ *con
 	return f.successOutput, types.StepMetrics{TokensIn: 10, TokensOut: 5, CostUSD: 0.001, LLMCalls: 1}, nil
 }
 
+// TestRunner_envelopePayload verifies that the invoke payload is stored on the run record.
+func TestRunner_envelopePayload(t *testing.T) {
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, &mockDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"step1": {"ok": true},
+		},
+	})
+
+	wf := makeWorkflow(config.PipelineStep{
+		ID:    "step1",
+		Agent: "agents/foo.agent.yaml",
+	})
+
+	payload := map[string]interface{}{"name": "world"}
+	ctx := context.Background()
+	if err := r.Execute(ctx, "test-workflow", "run-payload", wf, payload, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	run, err := store.GetRun(ctx, "run-payload")
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if run.Payload == nil {
+		t.Fatal("expected run payload to be set")
+	}
+	if run.Payload["name"] != "world" {
+		t.Errorf("expected payload.name=world, got %v", run.Payload["name"])
+	}
+}
+
 // TestRunner_workflowInput verifies the workflow input is available to pipeline steps.
 func TestRunner_workflowInput(t *testing.T) {
 	store := state.NewMemStore()
@@ -1622,5 +1654,355 @@ pipeline:
 	}
 	if !strings.Contains(err.Error(), "missing required param") {
 		t.Errorf("expected 'missing required param' in error, got: %v", err)
+	}
+}
+
+// --- Expression system: {{ expr }} templates, rich context, output.map, condition for all step types ---
+
+// TestRunner_workflowStep_condition_skips verifies that a workflow step with a condition
+// that evaluates to false is skipped.
+func TestRunner_workflowStep_condition_skips(t *testing.T) {
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: inner
+version: "1.0.0"
+pipeline:
+  - id: noop
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "val"
+`
+	subPath := filepath.Join(dir, "inner.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	// input.text is null → condition evaluates to false → workflow step skipped
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:        "call",
+		Workflow:  subPath,
+		Condition: "input.text != null",
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	// No "text" in input → condition false → step should be skipped
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, map[string]interface{}{}, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	callStep, err := store.GetStep(context.Background(), "run1", "call")
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	if callStep.Status != types.StepStatusSkipped {
+		t.Errorf("expected skipped, got %s (error: %s)", callStep.Status, callStep.Error)
+	}
+}
+
+// TestRunner_workflowStep_condition_executes verifies that a workflow step with a condition
+// that evaluates to true is executed normally.
+func TestRunner_workflowStep_condition_executes(t *testing.T) {
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: inner
+version: "1.0.0"
+pipeline:
+  - id: noop
+    transform:
+      inputs:
+        - from: input
+      ops:
+        - map:
+            expr: "val"
+`
+	subPath := filepath.Join(dir, "inner.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	// input.text is "hello" → condition evaluates to true → workflow step executes
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:        "call",
+		Workflow:  subPath,
+		Condition: "input.text != null",
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, map[string]interface{}{"text": "hello", "val": "x"}, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	callStep, err := store.GetStep(context.Background(), "run1", "call")
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	if callStep.Status != types.StepStatusComplete {
+		t.Errorf("expected complete, got %s (error: %s)", callStep.Status, callStep.Error)
+	}
+}
+
+// TestRunner_subWorkflow_outputMap verifies that a sub-workflow with an empty pipeline
+// and an output.map section produces the mapped output using params.* context.
+func TestRunner_subWorkflow_outputMap(t *testing.T) {
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: normalize
+version: "1.0.0"
+pipeline: []
+output:
+  schema:
+    type: object
+    properties:
+      chat_id: {type: integer}
+      text: {type: string}
+  map:
+    chat_id: "{{ params.message.chat_id }}"
+    text: "{{ params.message.text }}"
+`
+	subPath := filepath.Join(dir, "normalize.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:       "norm",
+		Workflow: subPath,
+		Params: map[string]interface{}{
+			"message": "{{ input.msg }}",
+		},
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	input := map[string]interface{}{
+		"msg": map[string]interface{}{
+			"chat_id": float64(123),
+			"text":    "hello",
+		},
+	}
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, input, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	step, err := store.GetStep(context.Background(), "run1", "norm")
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	if step.Status != types.StepStatusComplete {
+		t.Errorf("expected complete, got %s (error: %s)", step.Status, step.Error)
+	}
+	if step.Output["chat_id"] != float64(123) {
+		t.Errorf("expected chat_id=123, got %v", step.Output["chat_id"])
+	}
+	if step.Output["text"] != "hello" {
+		t.Errorf("expected text=hello, got %v", step.Output["text"])
+	}
+}
+
+// TestRunner_workflowStep_templateParam_passesTypedValue verifies that {{ step.X.field }}
+// in workflow step params resolves to a typed value usable in the sub-workflow.
+func TestRunner_workflowStep_templateParam_passesTypedValue(t *testing.T) {
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: echo
+version: "1.0.0"
+pipeline: []
+output:
+  map:
+    value: "{{ params.val }}"
+`
+	subPath := filepath.Join(dir, "echo.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:      "call",
+		Workflow: subPath,
+		Params:  map[string]interface{}{"val": "{{ input.number }}"},
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, map[string]interface{}{"number": float64(42)}, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	step, err := store.GetStep(context.Background(), "run1", "call")
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	if step.Status != types.StepStatusComplete {
+		t.Errorf("expected complete, got %s (error: %s)", step.Status, step.Error)
+	}
+	if step.Output["value"] != float64(42) {
+		t.Errorf("expected value=42, got %v", step.Output["value"])
+	}
+}
+
+// TestRunner_envVar_rootWorkflowOnly verifies that env.* is available in root workflow params
+// but NOT available when passed into a sub-workflow context.
+func TestRunner_envVar_rootWorkflowOnly(t *testing.T) {
+	t.Setenv("TEST_TOKEN", "secret123")
+
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: inner
+version: "1.0.0"
+pipeline: []
+output:
+  map:
+    token: "{{ params.tok }}"
+`
+	subPath := filepath.Join(dir, "inner.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	rootWF := makeWorkflow(config.PipelineStep{
+		ID:       "call",
+		Workflow: subPath,
+		Params:   map[string]interface{}{"tok": "{{ env.TEST_TOKEN }}"},
+	})
+	rootWF.Name = "root"
+	rootWF.Env = []config.EnvVarDecl{{Name: "TEST_TOKEN"}}
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "root", "run1", rootWF, nil, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	step, err := store.GetStep(context.Background(), "run1", "call")
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	if step.Status != types.StepStatusComplete {
+		t.Errorf("expected complete, got %s (error: %s)", step.Status, step.Error)
+	}
+	if step.Output["token"] != "secret123" {
+		t.Errorf("expected token=secret123, got %v", step.Output["token"])
+	}
+}
+
+// TestRunner_webhookStep_templateURL verifies that {{ params.X }} inline in a webhook URL
+// is substituted correctly.
+func TestRunner_webhookStep_templateURL(t *testing.T) {
+	var capturedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		capturedPath = req.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	subWFYAML := fmt.Sprintf(`kind: workflow
+name: sender
+version: "1.0.0"
+webhooks: execute
+params:
+  schema:
+    type: object
+    required: [token]
+    properties:
+      token: {type: string}
+pipeline:
+  - id: send
+    webhook:
+      url: "%s/bot{{ params.token }}/sendMessage"
+      method: POST
+`, srv.URL)
+	subPath := filepath.Join(dir, "sender.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	rootWF := makeWorkflow(config.PipelineStep{
+		ID:               "call",
+		Workflow:         subPath,
+		Params:           map[string]interface{}{"token": "`mytoken`"},
+		WorkflowWebhooks: "execute",
+	})
+	rootWF.Name = "root"
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "root", "run1", rootWF, nil, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if capturedPath != "/botmytoken/sendMessage" {
+		t.Errorf("expected path /botmytoken/sendMessage, got %s", capturedPath)
+	}
+}
+
+// TestRunner_webhookBody_templateExpr verifies that {{ params.X }} in webhook body fields
+// resolves correctly using the rich params context.
+func TestRunner_webhookBody_templateExpr(t *testing.T) {
+	var body map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_ = json.NewDecoder(req.Body).Decode(&body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	subWFYAML := fmt.Sprintf(`kind: workflow
+name: sender
+version: "1.0.0"
+webhooks: execute
+params:
+  schema:
+    type: object
+    required: [chat_id, text]
+    properties:
+      chat_id: {type: integer}
+      text: {type: string}
+pipeline:
+  - id: send
+    webhook:
+      url: %q
+      method: POST
+      body:
+        chat_id: "{{ params.chat_id }}"
+        text: "{{ params.text }}"
+`, srv.URL)
+	subPath := filepath.Join(dir, "sender.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	parentWF := makeWorkflow(config.PipelineStep{
+		ID:      "call",
+		Workflow: subPath,
+		Params: map[string]interface{}{
+			"chat_id": "{{ input.chat_id }}",
+			"text":    "{{ input.text }}",
+		},
+		WorkflowWebhooks: "execute",
+	})
+	parentWF.Name = "parent"
+
+	store := state.NewMemStore()
+	r := New(store)
+	input := map[string]interface{}{"chat_id": float64(456), "text": "world"}
+	if err := r.Execute(context.Background(), "parent", "run1", parentWF, input, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if body["chat_id"] != float64(456) {
+		t.Errorf("expected chat_id=456, got %v", body["chat_id"])
+	}
+	if body["text"] != "world" {
+		t.Errorf("expected text=world, got %v", body["text"])
 	}
 }
