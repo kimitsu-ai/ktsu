@@ -1,0 +1,11 @@
+providers:
+  - name: anthropic
+    type: anthropic
+    config:
+      api_key: env:ANTHROPIC_API_KEY
+
+model_groups:
+  - name: standard
+    models:
+      - anthropic/claude-haiku-4-5-20251001
+    strategy: round_robin

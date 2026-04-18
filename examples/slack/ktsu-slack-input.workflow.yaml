@@ -7,17 +7,11 @@ webhooks: suppress
 params:
   schema:
     type: object
-    required: [signing_secret]
+    required: [signing_secret, body, headers]
     properties:
       signing_secret:
         type: string
         description: "Slack signing secret for request verification"
-
-input:
-  schema:
-    type: object
-    required: [body, headers]
-    properties:
       body:    { type: object }
       headers: { type: object }
 

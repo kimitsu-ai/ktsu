@@ -7,7 +7,7 @@ webhooks: execute
 params:
   schema:
     type: object
-    required: [webhook_url]
+    required: [webhook_url, channel_id, text]
     properties:
       webhook_url:
         type: string
@@ -15,12 +15,6 @@ params:
       username:
         type: string
         default: "kimitsu"
-
-input:
-  schema:
-    type: object
-    required: [channel_id, text]
-    properties:
       channel_id: { type: string }
       text:        { type: string }
 
@@ -30,9 +24,9 @@ pipeline:
       url: "param:webhook_url"
       method: POST
       body:
-        channel:   "input.channel_id"
-        text:      "input.text"
-        username:  "param:username"
+        channel:   "params.channel_id"
+        text:      "params.text"
+        username:  "params.username"
     output:
       schema:
         type: object
