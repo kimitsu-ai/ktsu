@@ -95,15 +95,45 @@ func (s *SQLiteStore) init() error {
 		}
 	}
 
+	// Migrate: add payload column to runs if it doesn't exist.
+	runInfoRows, err := s.db.Query(`PRAGMA table_info(runs)`)
+	if err != nil {
+		return fmt.Errorf("check runs schema: %w", err)
+	}
+	hasPayload := false
+	for runInfoRows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt interface{}
+		if err := runInfoRows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			runInfoRows.Close()
+			return fmt.Errorf("check runs schema: %w", err)
+		}
+		if name == "payload" {
+			hasPayload = true
+		}
+	}
+	runInfoRows.Close()
+	if err := runInfoRows.Err(); err != nil {
+		return fmt.Errorf("check runs schema: %w", err)
+	}
+	if !hasPayload {
+		if _, err := s.db.Exec(`ALTER TABLE runs ADD COLUMN payload TEXT`); err != nil {
+			return fmt.Errorf("migrate runs.payload: %w", err)
+		}
+	}
+
 	return nil
 }
 
 func (s *SQLiteStore) CreateRun(ctx context.Context, run *types.Run) error {
 	metadata, _ := json.Marshal(run.Metadata)
+	payload, _ := json.Marshal(run.Payload)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO runs (id, workflow_name, status, error, metadata, created_at, updated_at) 
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.WorkflowName, run.Status, run.Error, string(metadata), run.CreatedAt, run.UpdatedAt)
+		`INSERT INTO runs (id, workflow_name, status, error, metadata, payload, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.WorkflowName, run.Status, run.Error,
+		string(metadata), string(payload), run.CreatedAt, run.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}
@@ -126,11 +156,13 @@ func (s *SQLiteStore) UpdateRun(ctx context.Context, run *types.Run) error {
 }
 
 func (s *SQLiteStore) GetRun(ctx context.Context, runID string) (*types.Run, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, workflow_name, status, error, metadata, created_at, updated_at FROM runs WHERE id = ?`, runID)
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, workflow_name, status, error, metadata, payload, created_at, updated_at FROM runs WHERE id = ?`,
+		runID)
 	var run types.Run
-	var metadata string
-	var status string
-	err := row.Scan(&run.ID, &run.WorkflowName, &status, &run.Error, &metadata, &run.CreatedAt, &run.UpdatedAt)
+	var metadata, payload, status string
+	err := row.Scan(&run.ID, &run.WorkflowName, &status, &run.Error,
+		&metadata, &payload, &run.CreatedAt, &run.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errRunNotFound
 	}
@@ -140,6 +172,9 @@ func (s *SQLiteStore) GetRun(ctx context.Context, runID string) (*types.Run, err
 	run.Status = types.RunStatus(status)
 	if metadata != "" {
 		json.Unmarshal([]byte(metadata), &run.Metadata)
+	}
+	if payload != "" {
+		json.Unmarshal([]byte(payload), &run.Payload)
 	}
 	return &run, nil
 }
@@ -305,7 +340,7 @@ func (s *SQLiteStore) GetEnvelope(ctx context.Context, runID string) (*types.Env
 		Workflow: run.WorkflowName,
 		Status:   string(run.Status),
 		Error:    run.Error,
-		// TODO: populate Payload once the runs.payload column is added (Task 4)
+		Payload:  run.Payload,
 	}
 
 	for _, step := range steps {
