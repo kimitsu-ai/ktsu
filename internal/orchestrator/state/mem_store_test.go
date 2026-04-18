@@ -504,3 +504,32 @@ func TestMemStore_ListRuns(t *testing.T) {
 		}
 	})
 }
+
+func TestMemStore_GetEnvelope_includesPayload(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemStore()
+
+	payload := map[string]interface{}{"message": "hello", "count": float64(3)}
+	run := &types.Run{
+		ID:           "run-env-payload",
+		WorkflowName: "test",
+		Status:       types.RunStatusComplete,
+		Payload:      payload,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	env, err := store.GetEnvelope(ctx, "run-env-payload")
+	if err != nil {
+		t.Fatalf("GetEnvelope: %v", err)
+	}
+	if env.Payload == nil {
+		t.Fatal("expected envelope to have payload")
+	}
+	if env.Payload["message"] != "hello" {
+		t.Errorf("expected payload.message=hello, got %v", env.Payload["message"])
+	}
+}

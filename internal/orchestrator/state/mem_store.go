@@ -46,6 +46,12 @@ func copyRun(r *types.Run) *types.Run {
 			cp.Metadata[k] = v
 		}
 	}
+	if r.Payload != nil {
+		cp.Payload = make(map[string]interface{}, len(r.Payload))
+		for k, v := range r.Payload {
+			cp.Payload[k] = v
+		}
+	}
 	return &cp
 }
 
@@ -231,6 +237,7 @@ func (m *MemStore) GetEnvelope(_ context.Context, runID string) (*types.Envelope
 		Workflow: run.WorkflowName,
 		Status:   string(run.Status),
 		Error:    run.Error,
+		Payload:  run.Payload,
 		Steps:    nil,
 	}
 
