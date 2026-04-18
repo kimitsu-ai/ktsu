@@ -305,6 +305,7 @@ func (s *SQLiteStore) GetEnvelope(ctx context.Context, runID string) (*types.Env
 		Workflow: run.WorkflowName,
 		Status:   string(run.Status),
 		Error:    run.Error,
+		// TODO: populate Payload once the runs.payload column is added (Task 4)
 	}
 
 	for _, step := range steps {

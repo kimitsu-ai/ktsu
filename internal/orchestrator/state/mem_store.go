@@ -47,9 +47,11 @@ func copyRun(r *types.Run) *types.Run {
 		}
 	}
 	if r.Payload != nil {
-		cp.Payload = make(map[string]interface{}, len(r.Payload))
-		for k, v := range r.Payload {
-			cp.Payload[k] = v
+		if b, err := json.Marshal(r.Payload); err == nil {
+			var p map[string]interface{}
+			if err := json.Unmarshal(b, &p); err == nil {
+				cp.Payload = p
+			}
 		}
 	}
 	return &cp
