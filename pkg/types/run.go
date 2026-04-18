@@ -35,14 +35,15 @@ const (
 )
 
 type Run struct {
-	ID           string            `json:"id"`
-	WorkflowName string            `json:"workflow_name"`
-	Status       RunStatus         `json:"status"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
-	CompletedAt  *time.Time        `json:"completed_at,omitempty"`
-	Error        string            `json:"error,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	ID           string                 `json:"id"`
+	WorkflowName string                 `json:"workflow_name"`
+	Status       RunStatus              `json:"status"`
+	CreatedAt    time.Time              `json:"created_at"`
+	UpdatedAt    time.Time              `json:"updated_at"`
+	CompletedAt  *time.Time             `json:"completed_at,omitempty"`
+	Error        string                 `json:"error,omitempty"`
+	Metadata     map[string]string      `json:"metadata,omitempty"`
+	Payload      map[string]interface{} `json:"payload,omitempty"`
 }
 
 type Step struct {

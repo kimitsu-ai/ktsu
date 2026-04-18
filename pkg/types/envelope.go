@@ -4,12 +4,13 @@ import "time"
 
 // Envelope is the accumulated state object passed between pipeline steps
 type Envelope struct {
-	RunID    string                `json:"run_id"`
-	Workflow string                `json:"workflow"`
-	Status   string                `json:"status,omitempty"`
-	Error    string                `json:"error,omitempty"`
-	Steps    []StepEntry `json:"steps"`
-	Totals   RunTotals             `json:"totals"`
+	RunID    string                 `json:"run_id"`
+	Workflow string                 `json:"workflow"`
+	Status   string                 `json:"status,omitempty"`
+	Error    string                 `json:"error,omitempty"`
+	Payload  map[string]interface{} `json:"payload,omitempty"`
+	Steps    []StepEntry            `json:"steps"`
+	Totals   RunTotals              `json:"totals"`
 }
 
 // StepEntry is a single step result with its ID, preserving pipeline order.
