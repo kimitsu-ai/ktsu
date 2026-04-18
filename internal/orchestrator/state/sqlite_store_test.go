@@ -270,6 +270,55 @@ func TestSQLiteStore_ListRuns(t *testing.T) {
 	})
 }
 
+func TestSQLiteStore_payload_roundtrip(t *testing.T) {
+	ctx := context.Background()
+	dbFile := "test_payload_rt.db"
+	defer os.Remove(dbFile)
+
+	s, err := NewSQLiteStore(dbFile)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+
+	payload := map[string]interface{}{"name": "world", "count": float64(42)}
+	run := &types.Run{
+		ID:           "run-payload-rt",
+		WorkflowName: "test-wf",
+		Status:       types.RunStatusComplete,
+		Payload:      payload,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	if err := s.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	got, err := s.GetRun(ctx, "run-payload-rt")
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if got.Payload == nil {
+		t.Fatal("expected Payload to be set")
+	}
+	if got.Payload["name"] != "world" {
+		t.Errorf("expected name=world, got %v", got.Payload["name"])
+	}
+	if got.Payload["count"] != float64(42) {
+		t.Errorf("expected count=42, got %v", got.Payload["count"])
+	}
+
+	env, err := s.GetEnvelope(ctx, "run-payload-rt")
+	if err != nil {
+		t.Fatalf("GetEnvelope: %v", err)
+	}
+	if env.Payload == nil {
+		t.Fatal("expected envelope Payload to be set")
+	}
+	if env.Payload["name"] != "world" {
+		t.Errorf("expected envelope name=world, got %v", env.Payload["name"])
+	}
+}
+
 func TestSQLiteStore_reflected_migration(t *testing.T) {
 	// Simulate a pre-existing DB without the reflected column.
 	dbFile := "test_migration.db"

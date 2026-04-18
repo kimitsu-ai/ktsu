@@ -141,6 +141,7 @@ func (s *SQLiteStore) CreateRun(ctx context.Context, run *types.Run) error {
 }
 
 func (s *SQLiteStore) UpdateRun(ctx context.Context, run *types.Run) error {
+	// Note: Payload is write-once (set at run creation) and intentionally excluded from UPDATE.
 	metadata, _ := json.Marshal(run.Metadata)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE runs SET status = ?, error = ?, metadata = ?, updated_at = ? WHERE id = ?`,
@@ -160,9 +161,10 @@ func (s *SQLiteStore) GetRun(ctx context.Context, runID string) (*types.Run, err
 		`SELECT id, workflow_name, status, error, metadata, payload, created_at, updated_at FROM runs WHERE id = ?`,
 		runID)
 	var run types.Run
-	var metadata, payload, status string
+	var metadata, status string
+	var payloadNull sql.NullString
 	err := row.Scan(&run.ID, &run.WorkflowName, &status, &run.Error,
-		&metadata, &payload, &run.CreatedAt, &run.UpdatedAt)
+		&metadata, &payloadNull, &run.CreatedAt, &run.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errRunNotFound
 	}
@@ -173,8 +175,8 @@ func (s *SQLiteStore) GetRun(ctx context.Context, runID string) (*types.Run, err
 	if metadata != "" {
 		json.Unmarshal([]byte(metadata), &run.Metadata)
 	}
-	if payload != "" {
-		json.Unmarshal([]byte(payload), &run.Payload)
+	if payloadNull.Valid && payloadNull.String != "" {
+		json.Unmarshal([]byte(payloadNull.String), &run.Payload)
 	}
 	return &run, nil
 }
