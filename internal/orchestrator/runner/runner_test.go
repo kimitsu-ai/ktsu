@@ -85,7 +85,7 @@ func (f *failingDispatcher) Dispatch(_ context.Context, _, stepID string, _ *con
 	return f.successOutput, types.StepMetrics{TokensIn: 10, TokensOut: 5, CostUSD: 0.001, LLMCalls: 1}, nil
 }
 
-// TestRunner_envelopePayload verifies that the invoke payload is stored on the run record.
+// TestRunner_envelopePayload verifies that the invoke payload is stored on the envelope record.
 func TestRunner_envelopePayload(t *testing.T) {
 	store := state.NewMemStore()
 	r := NewWithDispatcher(store, &mockDispatcher{
@@ -105,15 +105,15 @@ func TestRunner_envelopePayload(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	run, err := store.GetRun(ctx, "run-payload")
+	env, err := store.GetEnvelope(ctx, "run-payload")
 	if err != nil {
-		t.Fatalf("GetRun: %v", err)
+		t.Fatalf("GetEnvelope: %v", err)
 	}
-	if run.Payload == nil {
-		t.Fatal("expected run payload to be set")
+	if env.Payload == nil {
+		t.Fatal("expected envelope payload to be set")
 	}
-	if run.Payload["name"] != "world" {
-		t.Errorf("expected payload.name=world, got %v", run.Payload["name"])
+	if env.Payload["name"] != "world" {
+		t.Errorf("expected payload.name=world, got %v", env.Payload["name"])
 	}
 }
 
