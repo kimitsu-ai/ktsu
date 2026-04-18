@@ -48,7 +48,7 @@ func NewWithDispatcher(store state.Store, dispatcher AgentDispatcher) *Runner {
 }
 
 // Execute runs a workflow pipeline with the provided input.
-// The input is pre-populated as stepOutputs["input"] and available to all steps.
+// The input map is available to pipeline steps as params.* in JMESPath expressions.
 func (r *Runner) Execute(ctx context.Context, workflowName string, runID string, wf *config.WorkflowConfig, input map[string]interface{}, invocationParams map[string]string) error {
 	if wf.ModelPolicy != nil && wf.ModelPolicy.TimeoutS > 0 {
 		var cancel context.CancelFunc
@@ -1089,7 +1089,9 @@ func (r *Runner) executeSubWorkflow(
 			stepRec.Status = types.StepStatusComplete
 			stepRec.Output = cleanOutput
 			stepRec.EndedAt = &t
-			_ = r.store.UpdateStep(ctx, stepRec)
+			if err := r.store.UpdateStep(ctx, stepRec); err != nil {
+				return nil, agg, fmt.Errorf("update step %s: %w", step.ID, err)
+			}
 			stepOutputs[step.ID] = cleanOutput
 			finalOutput = cleanOutput
 		}
