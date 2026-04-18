@@ -45,17 +45,12 @@ type WorkflowConfig struct {
 	Description string           `yaml:"description"`
 	Visibility  string           `yaml:"visibility,omitempty"`  // "root" | "sub-workflow"
 	Webhooks    string           `yaml:"webhooks,omitempty"`    // "execute" | "suppress"
+	Env         []EnvVarDecl     `yaml:"env,omitempty"`
 	Params      ParamsSchemaDecl `yaml:"params,omitempty"`      // JSON Schema params declaration
-	Input       WorkflowInput    `yaml:"input,omitempty"`
 	Pipeline    []PipelineStep   `yaml:"pipeline"`
+	Output      *OutputSpec      `yaml:"output,omitempty"`
 	ModelPolicy *ModelPolicy     `yaml:"model_policy,omitempty"`
 	Invoke      InvokeConfig     `yaml:"invoke,omitempty"`
-}
-
-// WorkflowInput declares the expected input schema for a workflow.
-// The orchestrator validates incoming invoke payloads against this schema.
-type WorkflowInput struct {
-	Schema map[string]interface{} `yaml:"schema,omitempty"`
 }
 
 // PipelineStep is one entry in pipeline[]. Exactly one of Agent/Transform/Webhook/Workflow is set.
@@ -149,6 +144,15 @@ type ModelPolicy struct {
 
 type OutputSpec struct {
 	Schema map[string]interface{} `yaml:"schema"`
+	Map    map[string]string      `yaml:"map,omitempty"`
+	From   string                 `yaml:"from,omitempty"`
+}
+
+// EnvVarDecl declares an environment variable required by a workflow.
+type EnvVarDecl struct {
+	Name        string `yaml:"name"`
+	Secret      bool   `yaml:"secret,omitempty"`
+	Description string `yaml:"description,omitempty"`
 }
 
 // AgentConfig represents an agent config block.

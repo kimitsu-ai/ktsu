@@ -274,7 +274,7 @@ func (s *server) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := airlock.ValidateInput(input, wf.Input.Schema); err != nil {
+	if err := airlock.ValidateInput(input, wf.Params.Schema); err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}

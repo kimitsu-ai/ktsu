@@ -22,7 +22,7 @@ func TestLoadWorkflow_pipeline_format(t *testing.T) {
 kind: workflow
 name: my-workflow
 version: "1.0.0"
-input:
+params:
   schema:
     type: object
     required: [data]
@@ -34,7 +34,7 @@ pipeline:
       url: https://hooks.example.com/notify
       method: POST
       body:
-        text: input.data
+        text: params.data
     depends_on: []
   - id: process
     transform:
@@ -57,8 +57,8 @@ pipeline:
 	if cfg.Version != "1.0.0" {
 		t.Errorf("expected version %q, got %q", "1.0.0", cfg.Version)
 	}
-	if cfg.Input.Schema == nil {
-		t.Fatal("expected input schema to be set")
+	if cfg.Params.Schema == nil {
+		t.Fatal("expected params schema to be set")
 	}
 	if len(cfg.Pipeline) != 2 {
 		t.Fatalf("expected 2 pipeline steps, got %d", len(cfg.Pipeline))
