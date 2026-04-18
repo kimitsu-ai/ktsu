@@ -117,8 +117,8 @@ func TestRunner_envelopePayload(t *testing.T) {
 	}
 }
 
-// TestRunner_workflowInput verifies the workflow input is available to pipeline steps.
-func TestRunner_workflowInput(t *testing.T) {
+// TestRunner_workflowParams verifies the workflow params are available to pipeline steps.
+func TestRunner_workflowParams(t *testing.T) {
 	store := state.NewMemStore()
 	r := NewWithDispatcher(store, &mockDispatcher{
 		outputs: map[string]map[string]interface{}{
