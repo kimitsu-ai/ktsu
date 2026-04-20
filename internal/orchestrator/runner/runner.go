@@ -94,7 +94,18 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 		envVars[decl.Name] = os.Getenv(decl.Name)
 	}
 
+	// Build scrub set from declared secret env vars for envelope redaction.
+	scrubSet := make([]string, 0, len(wf.Env))
+	for _, decl := range wf.Env {
+		if decl.Secret {
+			if val := os.Getenv(decl.Name); val != "" {
+				scrubSet = append(scrubSet, val)
+			}
+		}
+	}
+
 	failRun := func(stepRec *types.Step, errMsg string) error {
+		errMsg = scrubString(errMsg, scrubSet)
 		now := time.Now()
 		stepRec.Status = types.StepStatusFailed
 		stepRec.Error = errMsg
@@ -784,6 +795,16 @@ func applyDeduplicate(currentData interface{}, field string) (interface{}, error
 		}
 	}
 	return result, nil
+}
+
+// scrubString replaces each entry in secrets with [REDACTED] in s.
+func scrubString(s string, secrets []string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			s = strings.ReplaceAll(s, secret, "[REDACTED]")
+		}
+	}
+	return s
 }
 
 // isFalsy returns true if a value is nil, false, empty string, or 0.

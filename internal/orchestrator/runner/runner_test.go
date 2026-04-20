@@ -1992,6 +1992,60 @@ pipeline:
 	}
 }
 
+// TestRunner_secretEnvParamScrubbed_fromStepError verifies that secret env var values
+// are redacted from error messages written to the envelope.
+func TestRunner_secretEnvParamScrubbed_fromStepError(t *testing.T) {
+	t.Setenv("SECRET_KEY", "super-secret-value")
+
+	disp := &failingDispatcher{
+		failStepIDs:   map[string]bool{"sensitive": true},
+		failErr:       fmt.Errorf("auth failed: super-secret-value"),
+		successOutput: map[string]interface{}{},
+	}
+
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, disp)
+
+	wf := &config.WorkflowConfig{
+		Kind:    "workflow",
+		Name:    "secret-wf",
+		Version: "1.0.0",
+		Pipeline: []config.PipelineStep{
+			{
+				ID:    "sensitive",
+				Agent: "agents/sensitive.agent.yaml",
+				Params: map[string]interface{}{
+					"api_key": "env:SECRET_KEY",
+				},
+			},
+		},
+		Env: []config.EnvVarDecl{
+			{Name: "SECRET_KEY", Secret: true},
+		},
+	}
+
+	err := r.Execute(context.Background(), "secret-wf", "run-secret", wf, nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "super-secret-value") {
+		t.Errorf("secret value leaked into error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Errorf("expected [REDACTED] in error, got: %v", err)
+	}
+
+	// Verify the envelope store also has the redacted value, not the raw secret.
+	stepRec, _ := store.GetStep(context.Background(), "run-secret", "sensitive")
+	if stepRec != nil && strings.Contains(stepRec.Error, "super-secret-value") {
+		t.Errorf("secret leaked into store step error: %v", stepRec.Error)
+	}
+	runRec, _ := store.GetRun(context.Background(), "run-secret")
+	if runRec != nil && strings.Contains(runRec.Error, "super-secret-value") {
+		t.Errorf("secret leaked into store run error: %v", runRec.Error)
+	}
+}
+
 // TestRunner_agentParamTemplateResolution verifies that {{ }} JMESPath templates
 // in agent step params (params.agent.*) are pre-resolved against upstream step
 // outputs before being dispatched.
