@@ -131,43 +131,81 @@ func ResolveAgentParams(declared map[string]ParamDecl, stepAgentParams map[strin
 	return result, isSecret, nil
 }
 
-// ResolveServerParams resolves final string values for all declared server params.
-// Resolution order: ParamDecl.Default < agentRefParams < stepServerParams (last wins).
-// Returns an error if any required param (nil Default) has no value anywhere.
-// Resolves env:VAR_NAME at each level.
-func ResolveServerParams(declared map[string]ParamDecl, agentRefParams map[string]string, stepServerParams map[string]any) (map[string]string, error) {
+// ResolveServerParams resolves final values for all declared server params.
+// serverRefParams are the values declared in the agent file's ServerRef.Params —
+// these may be {{ params.KEY }} templates resolved against resolvedAgentParams.
+// Returns resolved values, a map of which are secret, and any error.
+// Secret server params must be fed from secret agent params.
+func ResolveServerParams(
+	declared map[string]ParamDecl,
+	serverRefParams map[string]string,
+	resolvedAgentParams map[string]string,
+	agentIsSecret map[string]bool,
+) (map[string]string, map[string]bool, error) {
 	result := make(map[string]string, len(declared))
+	isSecret := make(map[string]bool, len(declared))
 	for name, decl := range declared {
 		if decl.Default != nil {
 			val, err := lookupEnvValue(*decl.Default)
 			if err != nil {
-				return nil, fmt.Errorf("server param %q default: %w", name, err)
+				return nil, nil, fmt.Errorf("server param %q default: %w", name, err)
 			}
 			result[name] = val
 		}
-		if v, ok := agentRefParams[name]; ok {
-			val, err := lookupEnvValue(v)
+		if refVal, ok := serverRefParams[name]; ok {
+			val, agentKey, err := resolveServerParamValue(name, refVal, resolvedAgentParams)
 			if err != nil {
-				return nil, fmt.Errorf("server param %q agent ref: %w", name, err)
+				return nil, nil, err
+			}
+			if decl.Secret && agentKey != "" && !agentIsSecret[agentKey] {
+				return nil, nil, fmt.Errorf("server param %q is secret but agent param %q is not marked secret", name, agentKey)
 			}
 			result[name] = val
-		}
-		if v, ok := stepServerParams[name]; ok {
-			if s, ok := v.(string); ok {
-				val, err := lookupEnvValue(s)
-				if err != nil {
-					return nil, fmt.Errorf("server param %q: %w", name, err)
-				}
-				result[name] = val
-			} else {
-				return nil, fmt.Errorf("server param %q: value must be a string, got %T", name, v)
-			}
 		}
 		if _, ok := result[name]; !ok {
-			return nil, fmt.Errorf("required server param %q has no value", name)
+			return nil, nil, fmt.Errorf("required server param %q has no value", name)
+		}
+		if decl.Secret {
+			isSecret[name] = true
 		}
 	}
-	return result, nil
+	return result, isSecret, nil
+}
+
+// resolveServerParamValue resolves a single server ref param value.
+// If the value is a {{ params.KEY }} template, it is resolved against agentParams.
+// Returns the resolved value, the agent param key used (if any), and any error.
+func resolveServerParamValue(paramName, refVal string, agentParams map[string]string) (string, string, error) {
+	trimmed := strings.TrimSpace(refVal)
+	if strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}") {
+		inner := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
+		if !strings.HasPrefix(inner, "params.") {
+			return "", "", fmt.Errorf("server param %q: unsupported template %q — only {{ params.KEY }} is supported", paramName, refVal)
+		}
+		agentKey := strings.TrimPrefix(inner, "params.")
+		agentVal, ok := agentParams[agentKey]
+		if !ok {
+			return "", "", fmt.Errorf("server param %q: agent param %q not found", paramName, agentKey)
+		}
+		return agentVal, agentKey, nil
+	}
+	val, err := lookupEnvValue(refVal)
+	if err != nil {
+		return "", "", fmt.Errorf("server param %q: %w", paramName, err)
+	}
+	return val, "", nil
+}
+
+// BuildScrubSet returns the resolved values of all secret params.
+// Use the returned slice to redact secret values from error messages and envelope writes.
+func BuildScrubSet(resolved map[string]string, isSecret map[string]bool) []string {
+	var out []string
+	for k, v := range resolved {
+		if isSecret[k] && v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // ParseParamsSchema converts a JSON Schema params declaration to the internal

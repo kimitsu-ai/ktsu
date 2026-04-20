@@ -952,11 +952,12 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 				return nil, zero, fmt.Errorf("server %q auth: %w", srv.Name, authErr)
 			}
 			authToken := authVal
-			// Resolve server params (step-level server params removed; will be wired in a later task).
-			resolvedServerParams, serverParamErr := config.ResolveServerParams(
+			// Resolve server params (agent params will be wired in Task 6).
+			resolvedServerParams, _, serverParamErr := config.ResolveServerParams(
 				serverCfg.Params,
 				srv.Params,
-				nil,
+				map[string]string{},  // placeholder — Task 6 will pass resolvedAgentParams
+				map[string]bool{},    // placeholder — Task 6 will pass agentIsSecret
 			)
 			if serverParamErr != nil {
 				return nil, zero, fmt.Errorf("server %s param resolution: %w", srv.Name, serverParamErr)

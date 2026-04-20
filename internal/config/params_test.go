@@ -186,56 +186,133 @@ func TestResolveAgentParams_emptyDeclared(t *testing.T) {
 
 // --- ResolveServerParams ---
 
-func TestResolveServerParams_usesServerDefault(t *testing.T) {
+func TestResolveServerParams_staticValue(t *testing.T) {
 	declared := map[string]ParamDecl{
-		"namespace": {Description: "...", Default: strPtr("global")},
+		"namespace": {},
 	}
-	got, err := ResolveServerParams(declared, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got["namespace"] != "global" {
-		t.Errorf("got %q want %q", got["namespace"], "global")
-	}
-}
-
-func TestResolveServerParams_agentRefOverridesDefault(t *testing.T) {
-	declared := map[string]ParamDecl{
-		"namespace": {Description: "...", Default: strPtr("global")},
-	}
-	got, err := ResolveServerParams(declared, map[string]string{"namespace": "team-ns"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got["namespace"] != "team-ns" {
-		t.Errorf("got %q want %q", got["namespace"], "team-ns")
-	}
-}
-
-func TestResolveServerParams_stepOverridesAgentRef(t *testing.T) {
-	declared := map[string]ParamDecl{
-		"namespace": {Description: "...", Default: strPtr("global")},
-	}
-	got, err := ResolveServerParams(
+	resolved, _, err := ResolveServerParams(
 		declared,
-		map[string]string{"namespace": "team-ns"},
-		map[string]any{"namespace": "user-123"},
+		map[string]string{"namespace": "global"},
+		map[string]string{},
+		map[string]bool{},
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got["namespace"] != "user-123" {
-		t.Errorf("got %q want %q", got["namespace"], "user-123")
+	if resolved["namespace"] != "global" {
+		t.Errorf("expected namespace=global, got %q", resolved["namespace"])
 	}
 }
 
-func TestResolveServerParams_missingRequiredReturnsError(t *testing.T) {
+func TestResolveServerParams_templateResolvesFromAgentParams(t *testing.T) {
 	declared := map[string]ParamDecl{
-		"namespace": {Description: "..."},
+		"namespace": {},
 	}
-	_, err := ResolveServerParams(declared, nil, nil)
+	resolved, _, err := ResolveServerParams(
+		declared,
+		map[string]string{"namespace": "{{ params.ns }}"},
+		map[string]string{"ns": "user-123"},
+		map[string]bool{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved["namespace"] != "user-123" {
+		t.Errorf("expected namespace=user-123, got %q", resolved["namespace"])
+	}
+}
+
+func TestResolveServerParams_secretServerParamFromNonSecretAgentParamErrors(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"token": {Secret: true},
+	}
+	_, _, err := ResolveServerParams(
+		declared,
+		map[string]string{"token": "{{ params.token }}"},
+		map[string]string{"token": "some-value"},
+		map[string]bool{"token": false},
+	)
 	if err == nil {
-		t.Fatal("expected error for missing required server param, got nil")
+		t.Error("expected error: secret server param fed from non-secret agent param")
+	}
+}
+
+func TestResolveServerParams_secretServerParamFromSecretAgentParam_ok(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"token": {Secret: true},
+	}
+	resolved, isSecret, err := ResolveServerParams(
+		declared,
+		map[string]string{"token": "{{ params.token }}"},
+		map[string]string{"token": "secret-val"},
+		map[string]bool{"token": true},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved["token"] != "secret-val" {
+		t.Errorf("expected token=secret-val, got %q", resolved["token"])
+	}
+	if !isSecret["token"] {
+		t.Error("expected token to be marked secret")
+	}
+}
+
+func TestResolveServerParams_missingRequiredErrors(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"namespace": {},
+	}
+	_, _, err := ResolveServerParams(
+		declared,
+		map[string]string{},
+		map[string]string{},
+		map[string]bool{},
+	)
+	if err == nil {
+		t.Error("expected error for missing required param")
+	}
+}
+
+func TestResolveServerParams_usesDefault(t *testing.T) {
+	def := "default-ns"
+	declared := map[string]ParamDecl{
+		"namespace": {Default: &def},
+	}
+	resolved, _, err := ResolveServerParams(
+		declared,
+		map[string]string{},
+		map[string]string{},
+		map[string]bool{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved["namespace"] != "default-ns" {
+		t.Errorf("expected default-ns, got %q", resolved["namespace"])
+	}
+}
+
+func TestBuildScrubSet_returnsOnlySecretValues(t *testing.T) {
+	resolved := map[string]string{
+		"token": "secret-val",
+		"name":  "Kyle",
+	}
+	isSecret := map[string]bool{
+		"token": true,
+		"name":  false,
+	}
+	got := BuildScrubSet(resolved, isSecret)
+	if len(got) != 1 || got[0] != "secret-val" {
+		t.Errorf("expected [secret-val], got %v", got)
+	}
+}
+
+func TestBuildScrubSet_emptyWhenNoSecrets(t *testing.T) {
+	resolved := map[string]string{"name": "Kyle"}
+	isSecret := map[string]bool{"name": false}
+	got := BuildScrubSet(resolved, isSecret)
+	if len(got) != 0 {
+		t.Errorf("expected empty scrub set, got %v", got)
 	}
 }
 
@@ -313,7 +390,7 @@ func TestResolveServerParams_unsetEnvVarReturnsError(t *testing.T) {
 	declared := map[string]ParamDecl{
 		"ns": {Description: "...", Default: strPtr("env:DEFINITELY_NOT_SET_SERVER_PARAM")},
 	}
-	_, err := ResolveServerParams(declared, nil, nil)
+	_, _, err := ResolveServerParams(declared, map[string]string{}, map[string]string{}, map[string]bool{})
 	if err == nil {
 		t.Fatal("expected error for unset env var in server param default, got nil")
 	}
