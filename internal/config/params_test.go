@@ -31,35 +31,32 @@ func TestResolveEnvValue_unsetEnvReturnsEmpty(t *testing.T) {
 	}
 }
 
-// --- ValidatePromptRefs ---
+// --- ValidateSystemPromptStatic ---
 
-func TestValidatePromptRefs_allDeclared(t *testing.T) {
-	err := ValidatePromptRefs("Hello {{name}}.", map[string]ParamDecl{
-		"name": {Description: "user name"},
-	})
+func TestValidateSystemPromptStatic_noTemplates_ok(t *testing.T) {
+	err := ValidateSystemPromptStatic("You are a helpful assistant.")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
-func TestValidatePromptRefs_noRefs(t *testing.T) {
-	err := ValidatePromptRefs("Hello world.", map[string]ParamDecl{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestValidateSystemPromptStatic_emptyPrompt_ok(t *testing.T) {
+	if err := ValidateSystemPromptStatic(""); err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
-func TestValidatePromptRefs_undeclaredRef(t *testing.T) {
-	err := ValidatePromptRefs("Hello {{unknown}}.", map[string]ParamDecl{})
+func TestValidateSystemPromptStatic_templateExpression_errors(t *testing.T) {
+	err := ValidateSystemPromptStatic("You are greeting {{ params.name }}.")
 	if err == nil {
-		t.Fatal("expected error for undeclared ref, got nil")
+		t.Error("expected error for {{ }} in system prompt")
 	}
 }
 
-func TestValidatePromptRefs_multipleUndeclared(t *testing.T) {
-	err := ValidatePromptRefs("{{a}} and {{b}}", map[string]ParamDecl{"a": {Description: "x"}})
+func TestValidateSystemPromptStatic_multipleTemplates_errors(t *testing.T) {
+	err := ValidateSystemPromptStatic("Hello {{ params.name }}, your id is {{ params.id }}.")
 	if err == nil {
-		t.Fatal("expected error for undeclared ref 'b', got nil")
+		t.Error("expected error for {{ }} in system prompt")
 	}
 }
 

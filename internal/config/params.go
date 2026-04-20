@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-var placeholderRe = regexp.MustCompile(`\{\{(\w+)\}\}`)
+var placeholderRe = regexp.MustCompile(`\{\{[^}]+\}\}`)
 
 // ResolveEnvValue resolves an "env:VAR_NAME" reference to its environment value.
 // Non-env: values are returned unchanged.
@@ -65,25 +65,22 @@ func ResolveValue(v string, allowEnv bool, invocationParams map[string]string) (
 	}
 }
 
-// ValidatePromptRefs returns an error if prompt.system references any {{key}}
-// not declared in params. Call this at boot to catch misconfigured agents.
-func ValidatePromptRefs(system string, params map[string]ParamDecl) error {
-	matches := placeholderRe.FindAllStringSubmatch(system, -1)
-	for _, m := range matches {
-		key := m[1]
-		if _, ok := params[key]; !ok {
-			return fmt.Errorf("prompt references undeclared param %q", key)
-		}
+// ValidateSystemPromptStatic returns an error if the system prompt contains
+// any {{ }} template expressions. System prompts must be static for prompt caching.
+func ValidateSystemPromptStatic(system string) error {
+	if placeholderRe.MatchString(system) {
+		return fmt.Errorf("prompt.system must be static — remove {{ }} expressions and use prompt.user for dynamic content")
 	}
 	return nil
 }
 
-// InterpolatePrompt replaces {{key}} placeholders in system with values from resolved.
+// InterpolatePrompt replaces {{ params.key }} or {{ key }} placeholders in tmpl with values from resolved.
 // Returns an error if any placeholder key is missing from resolved.
-func InterpolatePrompt(system string, resolved map[string]string) (string, error) {
+func InterpolatePrompt(tmpl string, resolved map[string]string) (string, error) {
 	var replaceErr error
-	result := placeholderRe.ReplaceAllStringFunc(system, func(match string) string {
-		key := placeholderRe.FindStringSubmatch(match)[1]
+	result := placeholderRe.ReplaceAllStringFunc(tmpl, func(match string) string {
+		key := strings.TrimSpace(match[2 : len(match)-2])
+		key = strings.TrimPrefix(key, "params.")
 		v, ok := resolved[key]
 		if !ok && replaceErr == nil {
 			replaceErr = fmt.Errorf("prompt references param %q which has no resolved value", key)

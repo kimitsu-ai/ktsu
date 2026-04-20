@@ -902,23 +902,19 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		if parseErr != nil {
 			return nil, zero, fmt.Errorf("agent %s params schema: %w", agentCfg.Name, parseErr)
 		}
-		// Validate prompt refs against declared params
-		if err := config.ValidatePromptRefs(agentCfg.Prompt.System, declaredParams); err != nil {
+		// Validate system prompt is static (no {{ }} expressions)
+		if err := config.ValidateSystemPromptStatic(agentCfg.Prompt.System); err != nil {
 			return nil, zero, fmt.Errorf("agent %s prompt validation: %w", agentCfg.Name, err)
 		}
 		agentName = agentCfg.Name
 		modelGroup = agentCfg.Model
 
-		// Resolve agent params and interpolate system prompt.
+		// Resolve agent params. System prompt is static (validated above).
 		resolvedAgentParams, resolveErr := config.ResolveAgentParams(declaredParams, step.AgentParams())
 		if resolveErr != nil {
 			return nil, zero, fmt.Errorf("agent %s param resolution: %w", agentCfg.Name, resolveErr)
 		}
-		var interpErr error
-		system, interpErr = config.InterpolatePrompt(agentCfg.Prompt.System, resolvedAgentParams)
-		if interpErr != nil {
-			return nil, zero, fmt.Errorf("agent %s prompt interpolation: %w", agentCfg.Name, interpErr)
-		}
+		system = agentCfg.Prompt.System
 		if agentCfg.Reflect != "" {
 			var reflectErr error
 			reflectPrompt, reflectErr = config.InterpolatePrompt(agentCfg.Reflect, resolvedAgentParams)
