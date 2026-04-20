@@ -112,7 +112,7 @@ func TestResolveAgentParams_usesDefault(t *testing.T) {
 	declared := map[string]ParamDecl{
 		"persona": {Description: "...", Default: strPtr("helpful assistant")},
 	}
-	got, err := ResolveAgentParams(declared, nil)
+	got, _, err := ResolveAgentParams(declared, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestResolveAgentParams_stepOverridesDefault(t *testing.T) {
 	declared := map[string]ParamDecl{
 		"persona": {Description: "...", Default: strPtr("helpful assistant")},
 	}
-	got, err := ResolveAgentParams(declared, map[string]any{"persona": "support rep"})
+	got, _, err := ResolveAgentParams(declared, map[string]any{"persona": "support rep"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestResolveAgentParams_missingRequiredReturnsError(t *testing.T) {
 	declared := map[string]ParamDecl{
 		"domain": {Description: "..."},
 	}
-	_, err := ResolveAgentParams(declared, nil)
+	_, _, err := ResolveAgentParams(declared, nil)
 	if err == nil {
 		t.Fatal("expected error for missing required param, got nil")
 	}
@@ -150,7 +150,7 @@ func TestResolveAgentParams_resolvesEnvDefault(t *testing.T) {
 	declared := map[string]ParamDecl{
 		"persona": {Description: "...", Default: strPtr("env:TEST_PERSONA")},
 	}
-	got, err := ResolveAgentParams(declared, nil)
+	got, _, err := ResolveAgentParams(declared, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestResolveAgentParams_resolvesEnvStepOverride(t *testing.T) {
 	declared := map[string]ParamDecl{
 		"domain": {Description: "..."},
 	}
-	got, err := ResolveAgentParams(declared, map[string]any{"domain": "env:TEST_DOMAIN"})
+	got, _, err := ResolveAgentParams(declared, map[string]any{"domain": "env:TEST_DOMAIN"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestResolveAgentParams_resolvesEnvStepOverride(t *testing.T) {
 }
 
 func TestResolveAgentParams_emptyDeclared(t *testing.T) {
-	got, err := ResolveAgentParams(nil, nil)
+	got, _, err := ResolveAgentParams(nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestResolveAgentParams_unsetEnvVarReturnsError(t *testing.T) {
 	declared := map[string]ParamDecl{
 		"key": {Description: "...", Default: strPtr("env:DEFINITELY_NOT_SET_PARAM")},
 	}
-	_, err := ResolveAgentParams(declared, nil)
+	_, _, err := ResolveAgentParams(declared, nil)
 	if err == nil {
 		t.Fatal("expected error for unset env var in default, got nil")
 	}
@@ -254,9 +254,57 @@ func TestResolveAgentParams_nonStringStepValueReturnsError(t *testing.T) {
 	declared := map[string]ParamDecl{
 		"count": {Description: "..."},
 	}
-	_, err := ResolveAgentParams(declared, map[string]any{"count": 42})
+	_, _, err := ResolveAgentParams(declared, map[string]any{"count": 42})
 	if err == nil {
 		t.Fatal("expected error for non-string step param value, got nil")
+	}
+}
+
+func TestResolveAgentParams_tracksSecretParam(t *testing.T) {
+	t.Setenv("MY_TOKEN", "secret-val")
+	declared := map[string]ParamDecl{
+		"token": {Secret: true},
+		"name":  {},
+	}
+	resolved, isSecret, err := ResolveAgentParams(declared, map[string]any{
+		"token": "env:MY_TOKEN",
+		"name":  "Kyle",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved["token"] != "secret-val" {
+		t.Errorf("expected token=secret-val, got %q", resolved["token"])
+	}
+	if !isSecret["token"] {
+		t.Error("expected token marked as secret")
+	}
+	if isSecret["name"] {
+		t.Error("expected name not marked as secret")
+	}
+}
+
+func TestResolveAgentParams_secretParamLiteralStringErrors(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"token": {Secret: true},
+	}
+	_, _, err := ResolveAgentParams(declared, map[string]any{
+		"token": "literal-value",
+	})
+	if err == nil {
+		t.Error("expected error: secret param must use env: source")
+	}
+}
+
+func TestResolveAgentParams_secretParamTemplateStringErrors(t *testing.T) {
+	declared := map[string]ParamDecl{
+		"token": {Secret: true},
+	}
+	_, _, err := ResolveAgentParams(declared, map[string]any{
+		"token": "already-resolved-value",
+	})
+	if err == nil {
+		t.Error("expected error: resolved non-env: value for secret param")
 	}
 }
 

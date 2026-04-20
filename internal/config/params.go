@@ -94,35 +94,41 @@ func InterpolatePrompt(tmpl string, resolved map[string]string) (string, error) 
 }
 
 // ResolveAgentParams resolves final string values for all declared agent params.
-// Resolution order: ParamDecl.Default < stepAgentParams (last wins).
-// Returns an error if any required param (nil Default) has no value in stepAgentParams.
-// Resolves env:VAR_NAME in both defaults and step-provided values.
-func ResolveAgentParams(declared map[string]ParamDecl, stepAgentParams map[string]any) (map[string]string, error) {
+// Returns the resolved values, a map of which params are secret, and any error.
+// Secret params must use an env: source — literal strings are rejected.
+func ResolveAgentParams(declared map[string]ParamDecl, stepAgentParams map[string]any) (map[string]string, map[string]bool, error) {
 	result := make(map[string]string, len(declared))
+	isSecret := make(map[string]bool, len(declared))
 	for name, decl := range declared {
 		if decl.Default != nil {
 			val, err := lookupEnvValue(*decl.Default)
 			if err != nil {
-				return nil, fmt.Errorf("agent param %q default: %w", name, err)
+				return nil, nil, fmt.Errorf("agent param %q default: %w", name, err)
 			}
 			result[name] = val
 		}
 		if v, ok := stepAgentParams[name]; ok {
-			if s, ok := v.(string); ok {
-				val, err := lookupEnvValue(s)
-				if err != nil {
-					return nil, fmt.Errorf("agent param %q: %w", name, err)
-				}
-				result[name] = val
-			} else {
-				return nil, fmt.Errorf("agent param %q: value must be a string, got %T", name, v)
+			s, ok := v.(string)
+			if !ok {
+				return nil, nil, fmt.Errorf("agent param %q: value must be a string, got %T", name, v)
 			}
+			if decl.Secret && !strings.HasPrefix(s, "env:") {
+				return nil, nil, fmt.Errorf("agent param %q is secret and must use an env: source", name)
+			}
+			val, err := lookupEnvValue(s)
+			if err != nil {
+				return nil, nil, fmt.Errorf("agent param %q: %w", name, err)
+			}
+			result[name] = val
 		}
 		if _, ok := result[name]; !ok {
-			return nil, fmt.Errorf("required agent param %q has no value", name)
+			return nil, nil, fmt.Errorf("required agent param %q has no value", name)
+		}
+		if decl.Secret {
+			isSecret[name] = true
 		}
 	}
-	return result, nil
+	return result, isSecret, nil
 }
 
 // ResolveServerParams resolves final string values for all declared server params.

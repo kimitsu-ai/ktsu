@@ -910,10 +910,11 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		modelGroup = agentCfg.Model
 
 		// Resolve agent params. System prompt is static (validated above).
-		resolvedAgentParams, resolveErr := config.ResolveAgentParams(declaredParams, step.AgentParams())
+		resolvedAgentParams, agentIsSecret, resolveErr := config.ResolveAgentParams(declaredParams, step.AgentParams())
 		if resolveErr != nil {
 			return nil, zero, fmt.Errorf("agent %s param resolution: %w", agentCfg.Name, resolveErr)
 		}
+		_ = agentIsSecret // will be used in Task 6
 		system = agentCfg.Prompt.System
 		if agentCfg.Reflect != "" {
 			var reflectErr error
