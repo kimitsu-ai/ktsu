@@ -10,18 +10,18 @@ type Message struct {
 
 // InvokeRequest is the payload the orchestrator sends to POST /invoke.
 type InvokeRequest struct {
-	RunID        string           `json:"run_id"`
-	StepID       string           `json:"step_id"`
-	AgentName    string           `json:"agent_name"`
+	RunID               string           `json:"run_id"`
+	StepID              string           `json:"step_id"`
+	AgentName           string           `json:"agent_name"`
 	System              string           `json:"system"`
+	UserMessage         string           `json:"user_message"`
 	Reflect             string           `json:"reflect,omitempty"`
 	ConfidenceThreshold float64          `json:"confidence_threshold,omitempty"`
 	MaxTurns            int              `json:"max_turns"`
-	Model        ModelSpec        `json:"model"`
-	Input        map[string]any   `json:"input"`
-	ToolServers  []ToolServerSpec `json:"tool_servers"`
-	CallbackURL  string           `json:"callback_url"`
-	OutputSchema map[string]any   `json:"output_schema,omitempty"`
+	Model               ModelSpec        `json:"model"`
+	ToolServers         []ToolServerSpec `json:"tool_servers"`
+	CallbackURL         string           `json:"callback_url"`
+	OutputSchema        map[string]any   `json:"output_schema,omitempty"`
 	// Resume fields — populated only when re-invoking after an approval decision.
 	Messages          []Message `json:"messages,omitempty"`            // full message context from checkpoint
 	ApprovedToolCalls []string  `json:"approved_tool_calls,omitempty"` // tool_use IDs pre-approved by orchestrator
@@ -48,8 +48,9 @@ type ToolServerSpec struct {
 	Name          string             `json:"name"`
 	URL           string             `json:"url"`
 	Allowlist     []string           `json:"allowlist"`
-	AuthToken     string             `json:"auth_token,omitempty"` // resolved bearer token
-	Params        map[string]any     `json:"params,omitempty"`     // resolved server params for MCP init
+	AuthToken     string             `json:"auth_token,omitempty"`  // resolved bearer token
+	Params        map[string]any     `json:"params,omitempty"`      // resolved server params for MCP init
+	SecretKeys    []string           `json:"secret_keys,omitempty"` // SecretKeys lists param keys whose values are secret; used by the MCP client during server init
 	ApprovalRules []ToolApprovalRule `json:"approval_rules,omitempty"`
 }
 

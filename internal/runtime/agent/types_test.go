@@ -73,6 +73,58 @@ func TestCallbackPayload_JSONRoundTrip_WithPendingApproval(t *testing.T) {
 	}
 }
 
+func TestInvokeRequest_UserMessage_replacesInput(t *testing.T) {
+	req := agent.InvokeRequest{
+		RunID:       "r1",
+		UserMessage: "Name: Kyle",
+	}
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["user_message"]; !ok {
+		t.Error("expected user_message field in JSON")
+	}
+	if _, ok := m["input"]; ok {
+		t.Error("did not expect input field in JSON after removal")
+	}
+}
+
+func TestToolServerSpec_SecretKeys_JSONRoundTrip(t *testing.T) {
+	spec := agent.ToolServerSpec{
+		Name:       "my-server",
+		URL:        "http://localhost:8080",
+		SecretKeys: []string{"API_KEY", "DB_PASSWORD"},
+	}
+	b, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Verify the field is marshaled as "secret_keys"
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["secret_keys"]; !ok {
+		t.Error("expected secret_keys field in JSON")
+	}
+	// Verify round-trip
+	var got agent.ToolServerSpec
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.SecretKeys) != 2 {
+		t.Fatalf("want 2 secret keys, got %d", len(got.SecretKeys))
+	}
+	if got.SecretKeys[0] != "API_KEY" || got.SecretKeys[1] != "DB_PASSWORD" {
+		t.Errorf("SecretKeys not preserved: %v", got.SecretKeys)
+	}
+}
+
 func TestToolApprovalRule_JSONRoundTrip(t *testing.T) {
 	rule := agent.ToolApprovalRule{
 		Pattern:         "delete-*",

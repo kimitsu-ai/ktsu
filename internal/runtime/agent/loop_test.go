@@ -35,13 +35,13 @@ func fakeGateway(t *testing.T, responses []map[string]any) *httptest.Server {
 
 func baseReq() agent.InvokeRequest {
 	return agent.InvokeRequest{
-		RunID:     "run_test",
-		StepID:    "step_test",
-		AgentName: "test-agent",
-		System:    "You are a test agent.",
-		MaxTurns:  5,
-		Model:     agent.ModelSpec{Group: "standard", MaxTokens: 512},
-		Input:     map[string]any{"message": "hello"},
+		RunID:       "run_test",
+		StepID:      "step_test",
+		AgentName:   "test-agent",
+		System:      "You are a test agent.",
+		UserMessage: "test input",
+		MaxTurns:    5,
+		Model:       agent.ModelSpec{Group: "standard", MaxTokens: 512},
 	}
 }
 

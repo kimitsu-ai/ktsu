@@ -1015,12 +1015,12 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		StepID:              stepID,
 		AgentName:           agentName,
 		System:              system,
+		UserMessage:         "", // TODO: populated by orchestrator dispatcher in a later task
 		Reflect:             reflectPrompt,
 		ConfidenceThreshold: confidenceThreshold,
 		MaxTurns:            maxTurns,
 		Model:               agent.ModelSpec{Group: modelGroup, MaxTokens: maxTokens},
 		ToolServers:         toolServers,
-		Input:               input,
 		CallbackURL:         callbackURL,
 		OutputSchema:        outputSchema,
 	}

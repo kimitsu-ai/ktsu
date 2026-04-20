@@ -179,10 +179,6 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 	}
 
 	// --- Initial messages ---
-	inputJSON, err := json.Marshal(req.Input)
-	if err != nil {
-		return nil, "", nil, metrics, fmt.Errorf("marshal input: %w", err)
-	}
 	systemPrompt := req.System
 	if len(req.OutputSchema) > 0 {
 		schemaJSON, err := json.MarshalIndent(req.OutputSchema, "", "  ")
@@ -198,7 +194,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 	} else {
 		messages = []Message{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: string(inputJSON)},
+			{Role: "user", Content: req.UserMessage},
 		}
 	}
 
@@ -356,7 +352,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 				draftJSON, _ := json.Marshal(output)
 				reflectMsgs := []Message{
 					{Role: "system", Content: req.Reflect},
-					{Role: "user", Content: string(inputJSON)},
+					{Role: "user", Content: req.UserMessage},
 					{Role: "user", Content: string(draftJSON)},
 				}
 				gwResp, err := l.callGateway(ctx, req.RunID, req.StepID, req.Model.Group, req.Model.MaxTokens, reflectMsgs, nil)
