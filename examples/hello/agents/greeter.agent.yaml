@@ -4,7 +4,7 @@ model: standard
 max_turns: 1
 prompt:
   system: |
-    You receive a JSON input containing a "name" field under the "input" key.
+    You receive the pipeline envelope as JSON. The name to greet is at params.name.
     Generate a friendly, one-sentence greeting for that person.
     Return exactly the JSON output described in your schema — nothing else.
 output:

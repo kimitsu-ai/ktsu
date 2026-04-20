@@ -11,15 +11,20 @@ params:
       name:
         type: string
 
+env:
+  - name: OUTPUT_WEBHOOK_URL
+    secret: true
+    description: "Webhook URL to send the greeting to"
+
 pipeline:
   - id: greet
-    agent: agents/greeter.agent.yaml
+    agent: ./agents/greeter.agent.yaml
 
   - id: send
     webhook:
-      url: "env:OUTPUT_WEBHOOK_URL"
+      url: "{{ env.OUTPUT_WEBHOOK_URL }}"
       method: POST
       body:
-        greeting: "greet.greeting"
-        name: "params.name"
+        greeting: "{{ step.greet.greeting }}"
+        name: "{{ params.name }}"
     depends_on: [greet]
