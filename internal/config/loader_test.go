@@ -406,32 +406,87 @@ params:
 	}
 }
 
-func TestLoadWorkflow_stepParams(t *testing.T) {
-	path := writeFile(t, t.TempDir(), "workflow.yaml", `
-kind: workflow
-name: w
-version: "1.0.0"
-pipeline:
-  - id: chat
-    agent: agents/chat.agent.yaml
-    params:
-      agent:
-        persona: "support rep"
-        domain: "billing"
-      server:
-        memory:
-          namespace: "user-123"
+func TestAgentParams_returnsTopLevelExcludingServerKey(t *testing.T) {
+	step := PipelineStep{
+		ID:    "greet",
+		Agent: "agents/greeter.agent.yaml",
+		Params: map[string]interface{}{
+			"name":    "Kyle",
+			"message": "Hello",
+			"server": map[string]interface{}{
+				"memory": map[string]interface{}{"namespace": "u123"},
+			},
+		},
+	}
+	got := step.AgentParams()
+	if got["name"] != "Kyle" {
+		t.Errorf("expected name=Kyle, got %v", got["name"])
+	}
+	if got["message"] != "Hello" {
+		t.Errorf("expected message=Hello, got %v", got["message"])
+	}
+	if _, ok := got["server"]; ok {
+		t.Error("server key must not appear in AgentParams()")
+	}
+}
+
+func TestPromptConfig_hasUserField(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "agent.yaml", `
+name: greeter
+model: standard
+max_turns: 1
+prompt:
+  system: "You are a greeter."
+  user: "Name: {{ params.name }}"
+output:
+  schema:
+    type: object
+    properties:
+      greeting: {type: string}
 `)
-	cfg, err := LoadWorkflow(path)
+	cfg, err := LoadAgent(path)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("LoadAgent: %v", err)
 	}
-	step := cfg.Pipeline[0]
-	if step.AgentParams()["persona"] != "support rep" {
-		t.Errorf("unexpected agent param: %v", step.AgentParams()["persona"])
+	if cfg.Prompt.System != "You are a greeter." {
+		t.Errorf("unexpected system: %q", cfg.Prompt.System)
 	}
-	if step.ServerParams()["memory"]["namespace"] != "user-123" {
-		t.Errorf("unexpected server param: %v", step.ServerParams()["memory"]["namespace"])
+	if cfg.Prompt.User != "Name: {{ params.name }}" {
+		t.Errorf("unexpected user: %q", cfg.Prompt.User)
+	}
+}
+
+func TestParamDecl_secretField(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "agent.yaml", `
+name: secure-agent
+model: standard
+max_turns: 1
+prompt:
+  system: "You are secure."
+params:
+  schema:
+    type: object
+    required: [token]
+    properties:
+      token:
+        type: string
+        secret: true
+output:
+  schema:
+    type: object
+    properties:
+      result: {type: string}
+`)
+	cfg, err := LoadAgent(path)
+	if err != nil {
+		t.Fatalf("LoadAgent: %v", err)
+	}
+	declaredParams, err := ParseParamsSchema(cfg.Params.Schema)
+	if err != nil {
+		t.Fatalf("ParseParamsSchema: %v", err)
+	}
+	if !declaredParams["token"].Secret {
+		t.Error("expected token param to be marked secret")
 	}
 }
 

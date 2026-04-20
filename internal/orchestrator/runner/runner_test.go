@@ -70,6 +70,26 @@ func (c *capturingDispatcher) Dispatch(_ context.Context, _, stepID string, _ *c
 	return out, types.StepMetrics{TokensIn: 10, TokensOut: 5}, nil
 }
 
+// stepCapturingDispatcher captures the PipelineStep passed to each Dispatch call.
+type stepCapturingDispatcher struct {
+	outputs  map[string]map[string]interface{}
+	captured map[string]*config.PipelineStep
+	mu       sync.Mutex
+}
+
+func (d *stepCapturingDispatcher) Dispatch(_ context.Context, _, stepID string, step *config.PipelineStep, _ map[string]interface{}) (map[string]interface{}, types.StepMetrics, error) {
+	d.mu.Lock()
+	if d.captured == nil {
+		d.captured = make(map[string]*config.PipelineStep)
+	}
+	d.captured[stepID] = step
+	d.mu.Unlock()
+	if out, ok := d.outputs[stepID]; ok {
+		return out, types.StepMetrics{}, nil
+	}
+	return map[string]interface{}{"stubbed": true}, types.StepMetrics{}, nil
+}
+
 // failingDispatcher fails dispatch calls whose stepID matches any entry in failStepIDs.
 // All other calls return successOutput.
 type failingDispatcher struct {
@@ -1969,5 +1989,54 @@ pipeline:
 	}
 	if body["text"] != "world" {
 		t.Errorf("expected text=world, got %v", body["text"])
+	}
+}
+
+// TestRunner_agentParamTemplateResolution verifies that {{ }} JMESPath templates
+// in agent step params (params.agent.*) are pre-resolved against upstream step
+// outputs before being dispatched.
+func TestRunner_agentParamTemplateResolution(t *testing.T) {
+	disp := &stepCapturingDispatcher{
+		outputs: map[string]map[string]interface{}{
+			"upstream": {
+				"user": map[string]interface{}{"first_name": "Kyle"},
+				"text": "Hello there",
+			},
+		},
+	}
+
+	store := state.NewMemStore()
+	r := NewWithDispatcher(store, disp)
+
+	wf := makeWorkflow(
+		config.PipelineStep{
+			ID:    "upstream",
+			Agent: "agents/upstream.agent.yaml",
+		},
+		config.PipelineStep{
+			ID:    "greet",
+			Agent: "agents/greeter.agent.yaml",
+			Params: map[string]interface{}{
+				"name":    "{{ step.upstream.user.first_name }}",
+				"message": "{{ step.upstream.text }}",
+			},
+			DependsOn: []string{"upstream"},
+		},
+	)
+
+	if err := r.Execute(context.Background(), "test-wf", "run-templ", wf, nil, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	greetStep, ok := disp.captured["greet"]
+	if !ok {
+		t.Fatal("greet step was not dispatched")
+	}
+	agentParams := greetStep.AgentParams()
+	if agentParams["name"] != "Kyle" {
+		t.Errorf("expected name=%q, got %v", "Kyle", agentParams["name"])
+	}
+	if agentParams["message"] != "Hello there" {
+		t.Errorf("expected message=%q, got %v", "Hello there", agentParams["message"])
 	}
 }

@@ -11,6 +11,7 @@ import (
 type ParamDecl struct {
 	Description string  `yaml:"description"`
 	Default     *string `yaml:"default,omitempty"`
+	Secret      bool    `yaml:"secret,omitempty"`
 }
 
 // ParamsSchemaDecl wraps a JSON Schema declaration for workflow or agent params.
@@ -22,6 +23,7 @@ type ParamsSchemaDecl struct {
 // PromptConfig holds the LLM-facing prompt configuration for an agent.
 type PromptConfig struct {
 	System string `yaml:"system"`
+	User   string `yaml:"user,omitempty"`
 }
 
 // InvokeAuthConfig declares how the orchestrator authenticates incoming /invoke requests
@@ -63,7 +65,7 @@ type PipelineStep struct {
 	Workflow            string                 `yaml:"workflow,omitempty"`
 	WorkflowInput       map[string]interface{} `yaml:"input,omitempty"`
 	WorkflowWebhooks    string                 `yaml:"webhooks,omitempty"`
-	// For agent steps: {"agent": {"key": val}, "server": {"name": {"key": val}}}
+	// For agent steps: flat key→value pairs; the reserved key "server" holds server ref params.
 	// For workflow steps: {"param_name": "value_expr"}
 	Params              map[string]interface{} `yaml:"params,omitempty"`
 	ForEach             *ForEachSpec           `yaml:"for_each,omitempty"`
@@ -75,31 +77,21 @@ type PipelineStep struct {
 	Output              *OutputSpec            `yaml:"output,omitempty"`
 }
 
-// AgentParams extracts the agent sub-map from Params (for agent steps).
-// YAML: params: { agent: { key: val } }
+// AgentParams returns all top-level params excluding the "server" key.
+// YAML: params: { name: val, message: val, server: { ... } }
 func (s *PipelineStep) AgentParams() map[string]any {
 	if s.Params == nil {
 		return nil
 	}
-	m, _ := s.Params["agent"].(map[string]interface{})
-	return m
-}
-
-// ServerParams extracts the server sub-map from Params (for agent steps).
-// YAML: params: { server: { servername: { key: val } } }
-func (s *PipelineStep) ServerParams() map[string]map[string]any {
-	if s.Params == nil {
-		return nil
-	}
-	raw, _ := s.Params["server"].(map[string]interface{})
-	if raw == nil {
-		return nil
-	}
-	result := make(map[string]map[string]any, len(raw))
-	for k, v := range raw {
-		if m, ok := v.(map[string]interface{}); ok {
-			result[k] = m
+	result := make(map[string]any, len(s.Params))
+	for k, v := range s.Params {
+		if k == "server" {
+			continue
 		}
+		result[k] = v
+	}
+	if len(result) == 0 {
+		return nil
 	}
 	return result
 }

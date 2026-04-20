@@ -955,11 +955,11 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 				return nil, zero, fmt.Errorf("server %q auth: %w", srv.Name, authErr)
 			}
 			authToken := authVal
-			// Resolve server params (nil map access on step.ServerParams() returns nil safely).
+			// Resolve server params (step-level server params removed; will be wired in a later task).
 			resolvedServerParams, serverParamErr := config.ResolveServerParams(
 				serverCfg.Params,
 				srv.Params,
-				step.ServerParams()[srv.Name],
+				nil,
 			)
 			if serverParamErr != nil {
 				return nil, zero, fmt.Errorf("server %s param resolution: %w", srv.Name, serverParamErr)

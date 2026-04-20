@@ -190,6 +190,9 @@ func ParseParamsSchema(schema map[string]interface{}) (map[string]ParamDecl, err
 		if desc, ok := prop["description"].(string); ok {
 			pd.Description = desc
 		}
+		if secret, ok := prop["secret"].(bool); ok {
+			pd.Secret = secret
+		}
 		if def, ok := prop["default"].(string); ok {
 			pd.Default = &def
 		} else if !required[name] {

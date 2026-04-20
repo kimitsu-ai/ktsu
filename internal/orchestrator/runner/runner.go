@@ -173,7 +173,7 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 				if step.ForEach != nil {
 					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID, input)
 				} else {
-					rawOutput, stepMetrics, execErr = r.executeAgent(ctx, step, stepOutputs, runID)
+					rawOutput, stepMetrics, execErr = r.executeAgent(ctx, step, stepOutputs, runID, input)
 				}
 			}
 
@@ -251,9 +251,36 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 
 // executeAgent dispatches an agent step to the runtime and waits for the result.
 // If no dispatcher is configured, the step is stubbed with {"stubbed": true}.
-func (r *Runner) executeAgent(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, runID string) (map[string]interface{}, types.StepMetrics, error) {
+// richParams carries the caller's typed workflow param values so params.* expressions
+// in agent params resolve correctly alongside step.* expressions.
+func (r *Runner) executeAgent(ctx context.Context, step *config.PipelineStep, stepOutputs map[string]map[string]interface{}, runID string, richParams map[string]interface{}) (map[string]interface{}, types.StepMetrics, error) {
 	if r.dispatcher == nil {
 		return map[string]interface{}{"stubbed": true}, types.StepMetrics{}, nil
+	}
+
+	// Pre-resolve {{ }} JMESPath template expressions in agent params (top-level keys excluding "server").
+	if agentParams := step.AgentParams(); len(agentParams) > 0 {
+		exprCtx := buildExprContext(stepOutputs, richParams, nil)
+		stepCopy := *step
+		paramsCopy := make(map[string]interface{}, len(step.Params))
+		for k, v := range step.Params {
+			paramsCopy[k] = v
+		}
+		for k, rawVal := range agentParams {
+			s, ok := rawVal.(string)
+			if !ok || !strings.HasPrefix(strings.TrimSpace(s), "{{") {
+				continue
+			}
+			val, jerr := jmespath.Search(sanitizeExpr(stripTemplate(s)), exprCtx)
+			if jerr != nil {
+				return nil, types.StepMetrics{}, fmt.Errorf("agent param %q template: %w", k, jerr)
+			}
+			if val != nil {
+				paramsCopy[k] = fmt.Sprintf("%v", val)
+			}
+		}
+		stepCopy.Params = paramsCopy
+		step = &stepCopy
 	}
 
 	// Assemble inputs from upstream step outputs.
@@ -1035,7 +1062,7 @@ func (r *Runner) executeSubWorkflow(
 				if step.ForEach != nil {
 					rawOutput, stepMetrics, execErr = r.executeFanout(ctx, step, stepOutputs, runID, richParams)
 				} else {
-					rawOutput, stepMetrics, execErr = r.executeAgent(ctx, step, stepOutputs, runID)
+					rawOutput, stepMetrics, execErr = r.executeAgent(ctx, step, stepOutputs, runID, richParams)
 				}
 			}
 
