@@ -40,12 +40,21 @@ pipeline:
       callback_query: "{{ params.callback_query }}"
       inline_query:   "{{ params.inline_query }}"
 
+  - id: greet
+    agent: agents/greeter.agent.yaml
+    depends_on: [receive]
+    condition: "step.receive.user != null"
+    params:
+      name: "{{ step.receive.user.first_name }}"
+      message: "{{ step.receive.text }}"
+
   - id: send
     workflow: /Users/kyle/repositories/kimitsu-ai/agent-toolshed/workflows/telegram/telegram-send.workflow.yaml
+    webhooks: execute
     params:
       bot_token:           "{{ env.TELEGRAM_BOT_TOKEN }}"
       chat_id:             "{{ step.receive.chat_id }}"
-      reply_to_message_id: "{{ step.receive.message_id }}"
-      text:                "{{ step.receive.text }}"
-    condition: "step.receive.text != null"
-    depends_on: [receive]
+      # reply_to_message_id: "{{ step.receive.message_id }}"
+      text:                "{{ step.greet.greeting }}"
+    condition: "step.greet.greeting != null"
+    depends_on: [receive, greet]

@@ -4,9 +4,19 @@ model: standard
 max_turns: 1
 prompt:
   system: |
-    You receive a JSON input containing a "name" field under the "input" key.
-    Generate a friendly, one-sentence greeting for that person.
-    Return exactly the JSON output described in your schema — nothing else.
+    You are a friendly greeter. Return exactly the JSON output described in your schema — nothing else.
+  user: "Name: {{ params.name }}\nMessage: {{ params.message }}"
+params:
+  schema:
+    type: object
+    required: [name, message]
+    properties:
+      name:
+        type: string
+        description: "Name of the person to greet"
+      message:
+        type: string
+        description: "Message from the user"
 output:
   schema:
     type: object
