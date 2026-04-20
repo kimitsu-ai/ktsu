@@ -1231,6 +1231,225 @@ func TestHandleGetEnvelope_NewPath(t *testing.T) {
 	}
 }
 
+func TestDispatch_staticSystemPrompt_setsUserMessage(t *testing.T) {
+	dir := t.TempDir()
+	agentYAML := `
+name: greeter
+model: standard
+max_turns: 1
+prompt:
+  system: "You are a friendly greeter."
+  user: "Name: {{ params.name }}"
+params:
+  schema:
+    type: object
+    required: [name]
+    properties:
+      name: {type: string}
+output:
+  schema:
+    type: object
+    required: [greeting]
+    properties:
+      greeting: {type: string}
+`
+	agentPath := filepath.Join(dir, "greeter.agent.yaml")
+	if err := os.WriteFile(agentPath, []byte(agentYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var capturedReq agent.InvokeRequest
+	invokeReceived := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&capturedReq)
+		w.WriteHeader(http.StatusAccepted)
+		close(invokeReceived)
+	}))
+	defer srv.Close()
+
+	pendingCallbacks := make(map[stepCallbackKey]chan agent.CallbackPayload)
+	var mu sync.Mutex
+	d := &runtimeDispatcher{
+		runtimeURL:       srv.URL,
+		ownURL:           "http://orchestrator",
+		projectDir:       dir,
+		pendingMu:        &mu,
+		pendingCallbacks: pendingCallbacks,
+	}
+
+	step := &config.PipelineStep{
+		ID:    "greet",
+		Agent: "greeter.agent.yaml",
+		Params: map[string]interface{}{
+			"name": "Kyle",
+		},
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := d.Dispatch(context.Background(), "run-1", "greet", step, nil)
+		errCh <- err
+	}()
+
+	<-invokeReceived
+	mu.Lock()
+	ch := pendingCallbacks[stepCallbackKey{"run-1", "greet"}]
+	mu.Unlock()
+	ch <- agent.CallbackPayload{
+		RunID: "run-1", StepID: "greet", Status: "ok",
+		Output: map[string]any{"greeting": "Hello Kyle!"},
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if capturedReq.System != "You are a friendly greeter." {
+		t.Errorf("expected static system prompt, got %q", capturedReq.System)
+	}
+	if capturedReq.UserMessage != "Name: Kyle" {
+		t.Errorf("expected UserMessage='Name: Kyle', got %q", capturedReq.UserMessage)
+	}
+}
+
+func TestDispatch_noPromptUser_fallsBackToParamsJSON(t *testing.T) {
+	dir := t.TempDir()
+	agentYAML := `
+name: simple
+model: standard
+max_turns: 1
+prompt:
+  system: "You are simple."
+params:
+  schema:
+    type: object
+    required: [name]
+    properties:
+      name: {type: string}
+output:
+  schema:
+    type: object
+    properties:
+      result: {type: string}
+`
+	agentPath := filepath.Join(dir, "simple.agent.yaml")
+	os.WriteFile(agentPath, []byte(agentYAML), 0644)
+
+	var capturedReq agent.InvokeRequest
+	invokeReceived := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&capturedReq)
+		w.WriteHeader(http.StatusAccepted)
+		close(invokeReceived)
+	}))
+	defer srv.Close()
+
+	pendingCallbacks := make(map[stepCallbackKey]chan agent.CallbackPayload)
+	var mu sync.Mutex
+	d := &runtimeDispatcher{
+		runtimeURL: srv.URL, ownURL: "http://orchestrator",
+		projectDir: dir, pendingMu: &mu, pendingCallbacks: pendingCallbacks,
+	}
+
+	step := &config.PipelineStep{
+		ID: "simple", Agent: "simple.agent.yaml",
+		Params: map[string]interface{}{"name": "Kyle"},
+	}
+	go func() {
+		d.Dispatch(context.Background(), "run-2", "simple", step, nil)
+	}()
+	<-invokeReceived
+	mu.Lock()
+	ch := pendingCallbacks[stepCallbackKey{"run-2", "simple"}]
+	mu.Unlock()
+	ch <- agent.CallbackPayload{RunID: "run-2", StepID: "simple", Status: "ok", Output: map[string]any{"result": "ok"}}
+
+	if capturedReq.UserMessage == "" {
+		t.Error("expected non-empty UserMessage fallback")
+	}
+	// Must be valid JSON containing name=Kyle.
+	var m map[string]any
+	if err := json.Unmarshal([]byte(capturedReq.UserMessage), &m); err != nil {
+		t.Errorf("expected UserMessage to be valid JSON, got %q: %v", capturedReq.UserMessage, err)
+	}
+	if m["name"] != "Kyle" {
+		t.Errorf("expected name=Kyle in fallback JSON, got %v", m["name"])
+	}
+}
+
+func TestDispatch_systemPromptWithTemplate_errors(t *testing.T) {
+	dir := t.TempDir()
+	agentYAML := `
+name: bad-agent
+model: standard
+max_turns: 1
+prompt:
+  system: "Hello {{ params.name }}"
+output:
+  schema:
+    type: object
+    properties:
+      result: {type: string}
+`
+	agentPath := filepath.Join(dir, "bad.agent.yaml")
+	os.WriteFile(agentPath, []byte(agentYAML), 0644)
+
+	d := &runtimeDispatcher{
+		runtimeURL: "http://unused", ownURL: "http://orchestrator",
+		projectDir: dir, pendingMu: &sync.Mutex{},
+		pendingCallbacks: make(map[stepCallbackKey]chan agent.CallbackPayload),
+	}
+	step := &config.PipelineStep{ID: "bad", Agent: "bad.agent.yaml"}
+	_, _, err := d.Dispatch(context.Background(), "run-3", "bad", step, nil)
+	if err == nil {
+		t.Error("expected error for {{ }} in system prompt")
+	}
+}
+
+func TestDispatch_secretParamInPromptUser_errors(t *testing.T) {
+	dir := t.TempDir()
+	agentYAML := `
+name: leaky-agent
+model: standard
+max_turns: 1
+prompt:
+  system: "You are leaky."
+  user: "Token: {{ params.token }}"
+params:
+  schema:
+    type: object
+    required: [token]
+    properties:
+      token:
+        type: string
+        secret: true
+output:
+  schema:
+    type: object
+    properties:
+      result: {type: string}
+`
+	agentPath := filepath.Join(dir, "leaky.agent.yaml")
+	os.WriteFile(agentPath, []byte(agentYAML), 0644)
+
+	d := &runtimeDispatcher{
+		runtimeURL: "http://unused", ownURL: "http://orchestrator",
+		projectDir: dir, pendingMu: &sync.Mutex{},
+		pendingCallbacks: make(map[stepCallbackKey]chan agent.CallbackPayload),
+	}
+	t.Setenv("MY_SECRET", "topsecret")
+	step := &config.PipelineStep{
+		ID:    "leaky",
+		Agent: "leaky.agent.yaml",
+		Params: map[string]interface{}{
+			"token": "env:MY_SECRET",
+		},
+	}
+	_, _, err := d.Dispatch(context.Background(), "run-leak", "leaky", step, nil)
+	if err == nil {
+		t.Error("expected error: secret param in prompt.user")
+	}
+}
+
 func TestHandleListApprovals_ReturnsPendingApprovals(t *testing.T) {
 	s := newHandlerServerWithStore()
 	ctx := context.Background()

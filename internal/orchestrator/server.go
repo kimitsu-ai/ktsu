@@ -882,6 +882,7 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 	var (
 		agentName     string
 		system        string
+		userMessage   string
 		reflectPrompt string
 		maxTurns      = 10
 		modelGroup    string
@@ -914,8 +915,35 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		if resolveErr != nil {
 			return nil, zero, fmt.Errorf("agent %s param resolution: %w", agentCfg.Name, resolveErr)
 		}
-		_ = agentIsSecret // will be used in Task 6
 		system = agentCfg.Prompt.System
+
+		// Build UserMessage from prompt.user template or params JSON fallback.
+		if agentCfg.Prompt.User != "" {
+			// Validate no secret params appear in prompt.user.
+			for name, decl := range declaredParams {
+				if decl.Secret && strings.Contains(agentCfg.Prompt.User, "params."+name) {
+					return nil, zero, fmt.Errorf("agent %s: secret param %q must not appear in prompt.user", agentCfg.Name, name)
+				}
+			}
+			var interpErr error
+			userMessage, interpErr = config.InterpolatePrompt(agentCfg.Prompt.User, resolvedAgentParams)
+			if interpErr != nil {
+				return nil, zero, fmt.Errorf("agent %s prompt.user interpolation: %w", agentCfg.Name, interpErr)
+			}
+		} else {
+			// Fallback: serialize non-secret resolved params as JSON user message.
+			paramsForUser := make(map[string]string, len(resolvedAgentParams))
+			for k, v := range resolvedAgentParams {
+				if !agentIsSecret[k] {
+					paramsForUser[k] = v
+				}
+			}
+			b, marshalErr := json.Marshal(paramsForUser)
+			if marshalErr != nil {
+				return nil, zero, fmt.Errorf("agent %s: marshal params for user message: %w", agentCfg.Name, marshalErr)
+			}
+			userMessage = string(b)
+		}
 		if agentCfg.Reflect != "" {
 			var reflectErr error
 			reflectPrompt, reflectErr = config.InterpolatePrompt(agentCfg.Reflect, resolvedAgentParams)
@@ -952,12 +980,11 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 				return nil, zero, fmt.Errorf("server %q auth: %w", srv.Name, authErr)
 			}
 			authToken := authVal
-			// Resolve server params (agent params will be wired in Task 6).
-			resolvedServerParams, _, serverParamErr := config.ResolveServerParams(
+			resolvedServerParams, serverIsSecret, serverParamErr := config.ResolveServerParams(
 				serverCfg.Params,
 				srv.Params,
-				map[string]string{},  // placeholder — Task 6 will pass resolvedAgentParams
-				map[string]bool{},    // placeholder — Task 6 will pass agentIsSecret
+				resolvedAgentParams,
+				agentIsSecret,
 			)
 			if serverParamErr != nil {
 				return nil, zero, fmt.Errorf("server %s param resolution: %w", srv.Name, serverParamErr)
@@ -967,6 +994,12 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 				serverParamsAny = make(map[string]any, len(resolvedServerParams))
 				for k, v := range resolvedServerParams {
 					serverParamsAny[k] = v
+				}
+			}
+			var secretKeys []string
+			for k, marked := range serverIsSecret {
+				if marked {
+					secretKeys = append(secretKeys, k)
 				}
 			}
 			var allowlist []string
@@ -988,6 +1021,7 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 				Allowlist:     allowlist,
 				AuthToken:     authToken,
 				Params:        serverParamsAny,
+				SecretKeys:    secretKeys,
 				ApprovalRules: approvalRules,
 			})
 		}
@@ -1013,7 +1047,7 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 		StepID:              stepID,
 		AgentName:           agentName,
 		System:              system,
-		UserMessage:         "", // TODO: populated by orchestrator dispatcher in a later task
+		UserMessage:         userMessage,
 		Reflect:             reflectPrompt,
 		ConfidenceThreshold: confidenceThreshold,
 		MaxTurns:            maxTurns,
