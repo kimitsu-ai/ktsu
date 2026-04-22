@@ -48,7 +48,8 @@ type ToolServerSpec struct {
 	Name          string             `json:"name"`
 	URL           string             `json:"url"`
 	Allowlist     []string           `json:"allowlist"`
-	AuthToken     string             `json:"auth_token,omitempty"`  // resolved bearer token
+	AuthHeader    string             `json:"auth_header,omitempty"` // header name; empty means no auth
+	AuthValue     string             `json:"auth_value,omitempty"`  // resolved header value
 	Params        map[string]any     `json:"params,omitempty"`      // resolved server params for MCP init
 	SecretKeys    []string           `json:"secret_keys,omitempty"` // SecretKeys lists param keys whose values are secret; used by the MCP client during server init
 	ApprovalRules []ToolApprovalRule `json:"approval_rules,omitempty"`

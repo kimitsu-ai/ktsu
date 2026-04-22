@@ -150,12 +150,12 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 		go func(i int, srv ToolServerSpec) {
 			defer discWg.Done()
 			if len(srv.Params) > 0 {
-				if err := l.mcpClient.Initialize(ctx, srv.URL, srv.AuthToken, srv.Params); err != nil {
+				if err := l.mcpClient.Initialize(ctx, srv.URL, srv.AuthHeader, srv.AuthValue, srv.Params); err != nil {
 					discResults[i] = discoveryResult{srv: srv, err: fmt.Errorf("initialize server %s: %w", srv.Name, err)}
 					return
 				}
 			}
-			discovered, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.AuthToken, srv.Allowlist)
+			discovered, err := l.mcpClient.DiscoverTools(ctx, srv.URL, srv.AuthHeader, srv.AuthValue, srv.Allowlist)
 			discResults[i] = discoveryResult{srv: srv, tools: discovered, err: err}
 		}(i, srv)
 	}
@@ -233,7 +233,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 				}
 				argsJSON, _ := json.Marshal(input)
 				log.Printf("[agent] run=%s step=%s tool=%s args=%s (pre-approved resume)", req.RunID, req.StepID, name, argsJSON)
-				result, err := l.mcpClient.CallTool(ctx, sref.URL, sref.AuthToken, name, input)
+				result, err := l.mcpClient.CallTool(ctx, sref.URL, sref.AuthHeader, sref.AuthValue, name, input)
 				if err != nil {
 					return nil, "", messages, metrics, fmt.Errorf("tool call %s: %w", name, err)
 				}
@@ -299,7 +299,7 @@ func (l *Loop) run(ctx context.Context, req InvokeRequest) (map[string]any, stri
 
 				argsJSON, _ := json.Marshal(tc.Arguments)
 				log.Printf("[agent] run=%s step=%s tool=%s args=%s", req.RunID, req.StepID, tc.Name, argsJSON)
-				result, err := l.mcpClient.CallTool(ctx, sref.URL, sref.AuthToken, tc.Name, tc.Arguments)
+				result, err := l.mcpClient.CallTool(ctx, sref.URL, sref.AuthHeader, sref.AuthValue, tc.Name, tc.Arguments)
 				if err != nil {
 					return nil, "", messages, metrics, fmt.Errorf("tool call %s: %w", tc.Name, err)
 				}

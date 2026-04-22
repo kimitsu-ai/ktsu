@@ -975,13 +975,22 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			if err != nil {
 				return nil, zero, fmt.Errorf("load server %s: %w", srv.Path, err)
 			}
-			var authToken string
+			var authHeader, authValue string
 			if serverCfg.Auth != nil {
-				authVal, authErr := config.ResolveValue(serverCfg.Auth.Secret, true, resolvedAgentParams)
+				resolved, authErr := config.ResolveValue(serverCfg.Auth.Secret, true, resolvedAgentParams)
 				if authErr != nil {
 					return nil, zero, fmt.Errorf("server %q auth: %w", srv.Name, authErr)
 				}
-				authToken = authVal
+				header := serverCfg.Auth.Header
+				if header == "" {
+					header = "Authorization"
+				}
+				value := resolved
+				if serverCfg.Auth.Scheme == "" || serverCfg.Auth.Scheme == "bearer" {
+					value = "Bearer " + resolved
+				}
+				authHeader = header
+				authValue = value
 			}
 			resolvedServerParams, serverIsSecret, serverParamErr := config.ResolveServerParams(
 				serverCfg.Params,
@@ -1022,7 +1031,8 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 				Name:          serverCfg.Name,
 				URL:           serverCfg.URL,
 				Allowlist:     allowlist,
-				AuthToken:     authToken,
+				AuthHeader:    authHeader,
+				AuthValue:     authValue,
 				Params:        serverParamsAny,
 				SecretKeys:    secretKeys,
 				ApprovalRules: approvalRules,
