@@ -39,7 +39,7 @@ auth:
 | `auth` | object | no | Outbound auth config. Omit entirely for unauthenticated servers. |
 | `auth.header` | string | no | HTTP header name to set. Defaults to `Authorization`. |
 | `auth.scheme` | string | no | `"bearer"` prepends `Bearer ` before the resolved secret; `"raw"` sends the value as-is. Defaults to `"bearer"`. |
-| `auth.secret` | string | yes (if auth set) | Value expression for the credential. Supports `env:VAR`, `param:NAME`, and backtick literals. Resolved at run time from the agent's resolved params. |
+| `auth.secret` | string | yes (if auth set) | Value expression for the credential. Supports `param:NAME` and backtick literals. Resolved at run time from the agent's resolved params. |
 | `params` | map | no | Declared parameters passed as MCP initialization config when the runtime connects. Each entry requires `description`; `default` is optional. Params without a default are required. |
 | `params.<name>.description` | string | yes | Human-readable explanation |
 | `params.<name>.default` | string | no | Default value. Omit to make the param required. |
