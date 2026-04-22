@@ -103,8 +103,14 @@ func ValidateSystemPromptStatic(system string) error {
 func InterpolatePrompt(tmpl string, resolved map[string]string) (string, error) {
 	var replaceErr error
 	result := placeholderRe.ReplaceAllStringFunc(tmpl, func(match string) string {
-		key := strings.TrimSpace(match[2 : len(match)-2])
-		key = strings.TrimPrefix(key, "params.")
+		inner := strings.TrimSpace(match[2 : len(match)-2])
+		if !strings.HasPrefix(inner, "params.") {
+			if replaceErr == nil {
+				replaceErr = fmt.Errorf("unsupported template namespace %q — only {{ params.KEY }} is supported", match)
+			}
+			return match
+		}
+		key := strings.TrimPrefix(inner, "params.")
 		v, ok := resolved[key]
 		if !ok && replaceErr == nil {
 			replaceErr = fmt.Errorf("prompt references param %q which has no resolved value", key)

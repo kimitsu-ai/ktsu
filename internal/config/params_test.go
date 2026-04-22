@@ -63,7 +63,7 @@ func TestValidateSystemPromptStatic_multipleTemplates_errors(t *testing.T) {
 // --- InterpolatePrompt ---
 
 func TestInterpolatePrompt_replacesAll(t *testing.T) {
-	got, err := InterpolatePrompt("Hello {{name}}, domain is {{domain}}.", map[string]string{
+	got, err := InterpolatePrompt("Hello {{params.name}}, domain is {{params.domain}}.", map[string]string{
 		"name":   "Alice",
 		"domain": "billing",
 	})
@@ -143,14 +143,33 @@ func TestResolveParamRef_plainString(t *testing.T) {
 }
 
 func TestInterpolatePrompt_missingValueReturnsError(t *testing.T) {
-	_, err := InterpolatePrompt("Hello {{name}}.", map[string]string{})
+	_, err := InterpolatePrompt("Hello {{params.name}}.", map[string]string{})
 	if err == nil {
 		t.Fatal("expected error for missing value, got nil")
 	}
 }
 
+func TestInterpolatePrompt_unsupportedNamespaceReturnsError(t *testing.T) {
+	tests := []struct {
+		name string
+		tmpl string
+	}{
+		{"shorthand", "Hello {{name}}."},
+		{"step namespace", "Step result: {{step.search.results}}"},
+		{"env namespace", "Secret: {{env.API_KEY}}"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := InterpolatePrompt(tt.tmpl, map[string]string{"name": "Alice"})
+			if err == nil {
+				t.Errorf("expected error for %s, got nil", tt.tmpl)
+			}
+		})
+	}
+}
+
 func TestInterpolatePrompt_repeatedRef(t *testing.T) {
-	got, err := InterpolatePrompt("{{name}} and {{name}} again.", map[string]string{"name": "Bob"})
+	got, err := InterpolatePrompt("{{params.name}} and {{params.name}} again.", map[string]string{"name": "Bob"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

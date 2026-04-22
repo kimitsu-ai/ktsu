@@ -29,7 +29,7 @@ prompt:
   system: |
     You are a triage specialist. Analyze the user message and categorize it.
     Use the provided tools if you need more information about the user's history.
-  # user prompt supports {{ params.NAME }} and {{ step.ID.FIELD }} interpolation
+  # user prompt supports {{ params.NAME }} interpolation
   user: |
     Help me triage this message: {{ params.message }}
     The customer is in team: {{ params.team }}
@@ -80,7 +80,7 @@ output:
 | `max_turns` | number | no | Max reasoning turns before forced conclusion; default: 10 |
 | `params.schema` | object | no | JSON Schema declaring named params (`type: object`). These are passed from workflows. |
 | `prompt.system` | string | yes | **MUST BE STATIC**. No `{{ }}` allowed. Encourages prompt caching. |
-| `prompt.user` | string | yes | Supports `{{ params.NAME }}` and `{{ step.ID.FIELD }}` interpolation. |
+| `prompt.user` | string | yes | Supports `{{ params.NAME }}` interpolation. |
 | `reflect` | string | no | Reflection prompt. Runs one additional LLM turn to review results. Supports `{{ }}`. |
 | `servers` | array | no | List of tool servers the agent can access. |
 | `servers[].params` | map | no | Overrides for server parameters. Supports `{{ params.NAME }}`. |
@@ -89,10 +89,9 @@ output:
 
 ## Variable Substitution
 
-Agents use `{{ params.NAME }}` to reference parameters declared in the `params.schema` block.
+Agents use `{{ params.NAME }}` to reference parameters declared in the `params.schema` block. The `params.` prefix is strictly required; shorthand access (e.g. `{{ message }}`) is not supported to ensure clear scoping.
 
 - **`{{ params.message }}`**: Accesses the value passed into the agent.
-- **`{{ step.ID.FIELD }}`**: Accesses output from an upstream workflow step (if the agent has access to the envelope).
 - **Static System Prompts**: Using `{{ }}` in `prompt.system` is a boot error. All dynamic content must go in `prompt.user`.
 
 ## Reserved Output Fields (`ktsu_` prefix)
