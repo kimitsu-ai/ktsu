@@ -977,6 +977,9 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			}
 			var authHeader, authValue string
 			if serverCfg.Auth != nil {
+				if serverCfg.Auth.Secret == "" {
+					return nil, zero, fmt.Errorf("server %q auth.secret is required", srv.Name)
+				}
 				resolved, authErr := config.ResolveValue(serverCfg.Auth.Secret, true, resolvedAgentParams)
 				if authErr != nil {
 					return nil, zero, fmt.Errorf("server %q auth: %w", srv.Name, authErr)
