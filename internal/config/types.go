@@ -22,8 +22,9 @@ type ParamsSchemaDecl struct {
 
 // PromptConfig holds the LLM-facing prompt configuration for an agent.
 type PromptConfig struct {
-	System string `yaml:"system"`
-	User   string `yaml:"user,omitempty"`
+	System  string `yaml:"system"`
+	User    string `yaml:"user,omitempty"`
+	Reflect string `yaml:"reflect,omitempty"`
 }
 
 // InvokeAuthConfig declares how the orchestrator authenticates incoming /invoke requests
@@ -163,7 +164,6 @@ type AgentConfig struct {
 	Model       string           `yaml:"model"`
 	Params      ParamsSchemaDecl `yaml:"params,omitempty"`
 	Prompt      PromptConfig     `yaml:"prompt"`
-	Reflect     string           `yaml:"reflect,omitempty"`
 	Servers     []ServerRef      `yaml:"servers"`
 	SubAgents   []string         `yaml:"sub_agents"`
 	MaxTurns    int              `yaml:"max_turns"`

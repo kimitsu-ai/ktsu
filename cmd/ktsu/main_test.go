@@ -711,7 +711,7 @@ name: my-agent
 model: standard
 prompt:
   system: "You are helpful."
-reflect: "   "
+  reflect: "   "
 output:
   schema:
     type: object
@@ -753,8 +753,8 @@ name: my-agent
 model: standard
 prompt:
   system: "You are helpful."
-reflect: |
-  Review your answer. Is it correct?
+  reflect: |
+    Review your answer. Is it correct?
 output:
   schema:
     type: object
@@ -793,8 +793,8 @@ model: standard
 max_turns: 1
 prompt:
   system: "You are helpful."
-reflect: |
-  Review your answer.
+  reflect: |
+    Review your answer.
 output:
   schema:
     type: object

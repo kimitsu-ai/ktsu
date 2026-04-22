@@ -944,9 +944,9 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			}
 			userMessage = string(b)
 		}
-		if agentCfg.Reflect != "" {
+		if agentCfg.Prompt.Reflect != "" {
 			var reflectErr error
-			reflectPrompt, reflectErr = config.InterpolatePrompt(agentCfg.Reflect, resolvedAgentParams)
+			reflectPrompt, reflectErr = config.InterpolatePrompt(agentCfg.Prompt.Reflect, resolvedAgentParams)
 			if reflectErr != nil {
 				return nil, zero, fmt.Errorf("agent %s reflect interpolation: %w", agentCfg.Name, reflectErr)
 			}

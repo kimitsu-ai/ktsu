@@ -34,11 +34,11 @@ prompt:
     Help me triage this message: {{ params.message }}
     The customer is in team: {{ params.team }}
 
-reflect: |                       # optional — evaluation turn after reasoning loop
-  Review your classification above.
-  1. Is the category unambiguous given the input?
-  2. Is your confidence score justified?
-  If you would classify differently, return a complete revised output.
+  reflect: |                       # optional — evaluation turn after reasoning loop
+    Review your classification above.
+    1. Is the category unambiguous given the input?
+    2. Is your confidence score justified?
+    If you would classify differently, return a complete revised output.
 
 servers:                         # optional — tool servers this agent may invoke
   - name: wiki-search            # logical name — used in logs
@@ -81,7 +81,7 @@ output:
 | `params.schema` | object | no | JSON Schema declaring named params (`type: object`). These are passed from workflows. |
 | `prompt.system` | string | yes | **MUST BE STATIC**. No `{{ }}` allowed. Encourages prompt caching. |
 | `prompt.user` | string | yes | Supports `{{ params.NAME }}` interpolation. |
-| `reflect` | string | no | Reflection prompt. Runs one additional LLM turn to review results. Supports `{{ }}`. |
+| `prompt.reflect` | string | no | Reflection prompt. Runs one additional LLM turn to review results. Supports `{{ }}`. |
 | `servers` | array | no | List of tool servers the agent can access. |
 | `servers[].params` | map | no | Overrides for server parameters. Supports `{{ params.NAME }}`. |
 | `servers[].access.allowlist` | array | yes | Tools permitted: `name`, `prefix-*`, or `*`. Can be objects with `require_approval`. |
