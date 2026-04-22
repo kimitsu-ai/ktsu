@@ -17,3 +17,4 @@
 name: kv                         # identity — used in logs and error messages
 description: "Key-value memory store backed by SQLite. Persists state across pipeline runs." # optional
 url: "http://localhost:9200"    # base URL of the MCP server (HTTP/SSE)
+# persistent_id: "{{ params.chat_id }}" # maps to server-side session namespace

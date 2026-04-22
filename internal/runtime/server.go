@@ -113,3 +113,11 @@ func (s *server) serve(ctx context.Context) error {
 	}()
 	return srv.Serve(ln)
 }
+
+func (s *server) close() {
+	if s.loop != nil {
+		if err := s.loop.Close(); err != nil {
+			s.logf("server: close loop failed: %v", err)
+		}
+	}
+}

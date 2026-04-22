@@ -6,9 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // ToolDefinition is a single tool exposed by an MCP server.
@@ -31,29 +36,29 @@ type ToolCallResult struct {
 
 // Client makes JSON-RPC 2.0 calls to MCP tool servers over HTTP.
 type Client struct {
-	http    *http.Client
-	bridges sync.Map // map[string]string: baseURL -> bridgeURL
+	http        *http.Client
+	bridges     sync.Map     // map[string]string: baseURL -> bridgeURL
+	connections sync.Map     // map[string]io.Closer: baseURL -> response body
+	waiters     sync.Map     // map[int64]chan json.RawMessage: id -> response chan
+	nextID      atomic.Int64 // counter for JSON-RPC IDs
 }
 
 // New returns a Client backed by the given HTTP client.
 func New(httpClient *http.Client) *Client {
-	return &Client{http: httpClient}
+	return &Client{
+		http: httpClient,
+	}
 }
 
 // DiscoverTools calls tools/list on url and returns only tools whose name
 // appears in allowlist. An empty allowlist returns an empty slice.
 // authHeader and authValue, if non-empty, are sent as a single HTTP header.
-func (c *Client) DiscoverTools(ctx context.Context, url, authHeader, authValue string, allowlist []string) ([]ToolDefinition, error) {
+func (c *Client) DiscoverTools(ctx context.Context, url, persistentID, authHeader, authValue string, allowlist []string) ([]ToolDefinition, error) {
 	if len(allowlist) == 0 {
 		return nil, nil
 	}
 
-	permitted := make(map[string]struct{}, len(allowlist))
-	for _, name := range allowlist {
-		permitted[name] = struct{}{}
-	}
-
-	resp, err := c.rpc(ctx, url, authHeader, authValue, "tools/list", nil)
+	resp, err := c.rpc(ctx, url, persistentID, authHeader, authValue, "tools/list", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -67,8 +72,12 @@ func (c *Client) DiscoverTools(ctx context.Context, url, authHeader, authValue s
 
 	var pruned []ToolDefinition
 	for _, t := range result.Tools {
-		if _, ok := permitted[t.Name]; ok {
-			pruned = append(pruned, t)
+		for _, pattern := range allowlist {
+			matched, _ := path.Match(pattern, t.Name)
+			if matched {
+				pruned = append(pruned, t)
+				break
+			}
 		}
 	}
 	return pruned, nil
@@ -77,12 +86,12 @@ func (c *Client) DiscoverTools(ctx context.Context, url, authHeader, authValue s
 // CallTool invokes the named tool on url with the given arguments.
 // It does not enforce the allowlist — callers must check before calling.
 // authHeader and authValue, if non-empty, are sent as a single HTTP header.
-func (c *Client) CallTool(ctx context.Context, url, authHeader, authValue, name string, arguments map[string]any) (ToolCallResult, error) {
+func (c *Client) CallTool(ctx context.Context, url, persistentID, authHeader, authValue, name string, arguments map[string]any) (ToolCallResult, error) {
 	params := map[string]any{
 		"name":      name,
 		"arguments": arguments,
 	}
-	resp, err := c.rpc(ctx, url, authHeader, authValue, "tools/call", params)
+	resp, err := c.rpc(ctx, url, persistentID, authHeader, authValue, "tools/call", params)
 	if err != nil {
 		return ToolCallResult{}, err
 	}
@@ -98,27 +107,32 @@ func (c *Client) CallTool(ctx context.Context, url, authHeader, authValue, name 
 // Use this before DiscoverTools when the server requires per-connection configuration.
 // config is sent under the "config" key in the initialize params.
 // authHeader and authValue, if non-empty, are sent as a single HTTP header.
-func (c *Client) Initialize(ctx context.Context, url, authHeader, authValue string, config map[string]any) error {
+func (c *Client) Initialize(ctx context.Context, url, persistentID, authHeader, authValue string, config map[string]any) error {
 	params := map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "ktsu", "version": "1.0"},
 		"config":          config,
 	}
-	_, err := c.rpc(ctx, url, authHeader, authValue, "initialize", params)
+	_, err := c.rpc(ctx, url, persistentID, authHeader, authValue, "initialize", params)
 	return err
 }
 
 // rpc sends a JSON-RPC 2.0 request and returns the raw result bytes.
 // authHeader and authValue, if non-empty, are set as a single HTTP header.
-func (c *Client) rpc(ctx context.Context, url, authHeader, authValue, method string, params any) (json.RawMessage, error) {
-	// Resolve the actual target URL (bridge) via SSE handshake if possible.
-	targetURL := c.resolveBridge(ctx, url)
+func (c *Client) rpc(ctx context.Context, url, persistentID, authHeader, authValue, method string, params any) (json.RawMessage, error) {
+	return c.rpcWithRetry(ctx, url, persistentID, authHeader, authValue, method, params, true)
+}
 
+func (c *Client) rpcWithRetry(ctx context.Context, url, persistentID, authHeader, authValue, method string, params any, canRetry bool) (json.RawMessage, error) {
+	// Resolve the actual target URL (bridge) via SSE handshake if possible.
+	targetURL := c.resolveBridge(ctx, url, persistentID)
+
+	id := c.nextID.Add(1)
 	payload := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  method,
-		"id":      1,
+		"id":      id,
 	}
 	if params != nil {
 		payload["params"] = params
@@ -128,6 +142,10 @@ func (c *Client) rpc(ctx context.Context, url, authHeader, authValue, method str
 	if err != nil {
 		return nil, fmt.Errorf("marshal rpc request: %w", err)
 	}
+
+	resChan := make(chan json.RawMessage, 1)
+	c.waiters.Store(id, resChan)
+	defer c.waiters.Delete(id)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -146,33 +164,64 @@ func (c *Client) rpc(ctx context.Context, url, authHeader, authValue, method str
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized {
+		if canRetry {
+			// Session might have expired or connection closed. Clear cache and retry once.
+			c.bridges.Delete(url)
+			if v, ok := c.connections.LoadAndDelete(url); ok {
+				if closer, ok := v.(io.Closer); ok {
+					closer.Close()
+				}
+			}
+			return c.rpcWithRetry(ctx, url, persistentID, authHeader, authValue, method, params, false)
+		}
+	}
+
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("rpc %s: server returned %d", method, resp.StatusCode)
 	}
 
-	// Some MCP servers (e.g. GitHub's) respond with SSE (text/event-stream) even
-	// for simple request/response calls.  Extract the first "data:" line.
 	var rawJSON []byte
-	ct := resp.Header.Get("Content-Type")
-	if strings.Contains(ct, "text/event-stream") {
-		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 512*1024), 4*1024*1024) // up to 4 MiB per line
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "data:") {
-				rawJSON = []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-				break
-			}
-		}
-		if len(rawJSON) == 0 {
-			return nil, fmt.Errorf("rpc %s: no data line in SSE response", method)
+	if resp.StatusCode == http.StatusAccepted {
+		// Wait for the response to arrive via the established SSE stream.
+		select {
+		case rawJSON = <-resChan:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(30 * time.Second):
+			return nil, fmt.Errorf("rpc %s: timeout waiting for async response", method)
 		}
 	} else {
-		var buf bytes.Buffer
-		if _, err := buf.ReadFrom(resp.Body); err != nil {
-			return nil, fmt.Errorf("rpc %s: read response: %w", method, err)
+		// Traditional request/response or SSE-wrapped response in the POST body.
+		ct := resp.Header.Get("Content-Type")
+		if strings.Contains(ct, "text/event-stream") {
+			scanner := bufio.NewScanner(resp.Body)
+			scanner.Buffer(make([]byte, 0, 512*1024), 4*1024*1024)
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.HasPrefix(line, "data:") {
+					rawJSON = []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+					break
+				}
+			}
+		} else {
+			var buf bytes.Buffer
+			if _, err := buf.ReadFrom(resp.Body); err != nil {
+				return nil, fmt.Errorf("rpc %s: read response: %w", method, err)
+			}
+			rawJSON = buf.Bytes()
 		}
-		rawJSON = buf.Bytes()
+
+		// If the body was empty, it might still arrive via SSE even if not 202.
+		if len(bytes.TrimSpace(rawJSON)) == 0 {
+			select {
+			case rawJSON = <-resChan:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(30 * time.Second):
+				return nil, fmt.Errorf("rpc %s: empty body and timeout waiting for async response", method)
+			}
+		}
 	}
 
 	var envelope struct {
@@ -193,17 +242,22 @@ func (c *Client) rpc(ctx context.Context, url, authHeader, authValue, method str
 
 // resolveBridge attempts to discover the session bridge URL by hitting {url}/sse.
 // Returns the bridge URL on success, or the original baseURL as a fallback.
-func (c *Client) resolveBridge(ctx context.Context, baseURL string) string {
+func (c *Client) resolveBridge(ctx context.Context, baseURL, persistentID string) string {
 	if v, ok := c.bridges.Load(baseURL); ok {
 		return v.(string)
 	}
 
-	// Discovery logic — use a per-URL lock to avoid concurrent handshakes for the same server.
-	// For simplicity in this implementation, we allow concurrent handshakes but the last
-	// one to finish will populate the cache. Using sync.Map.LoadOrStore would be cleaner
-	// if we had a dedicated handshake object.
-
 	sseURL := strings.TrimSuffix(baseURL, "/") + "/sse"
+	if persistentID != "" {
+		u, err := url.Parse(sseURL)
+		if err == nil {
+			q := u.Query()
+			q.Set("persistentId", persistentID)
+			u.RawQuery = q.Encode()
+			sseURL = u.String()
+		}
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sseURL, nil)
 	if err != nil {
 		return baseURL
@@ -214,40 +268,109 @@ func (c *Client) resolveBridge(ctx context.Context, baseURL string) string {
 	if err != nil {
 		return baseURL
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
 		return baseURL
 	}
 
-	// Scan SSE stream for the "endpoint" event.
-	// Format:
-	// event: endpoint
-	// data: http://...
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "event: endpoint") {
-			if scanner.Scan() {
-				dataLine := scanner.Text()
-				if strings.HasPrefix(dataLine, "data:") {
-					bridgeURL := strings.TrimSpace(strings.TrimPrefix(dataLine, "data:"))
-					if bridgeURL != "" {
-						c.bridges.Store(baseURL, bridgeURL)
-						return bridgeURL
+	bridgeChan := make(chan string, 1)
+	c.connections.Store(baseURL, resp.Body)
+
+	// Unified dispatcher: handles both bridge discovery and async response dispatching.
+	go func(body io.ReadCloser) {
+		defer body.Close()
+		s := bufio.NewScanner(body)
+		s.Buffer(make([]byte, 0, 512*1024), 4*1024*1024)
+		var bridgeURL string
+		for s.Scan() {
+			line := s.Text()
+
+			// 1. Handle Bridge Discovery (event: endpoint)
+			if strings.HasPrefix(line, "event: endpoint") {
+				if s.Scan() {
+					dataLine := s.Text()
+					if strings.HasPrefix(dataLine, "data:") {
+						bridgeURL = strings.TrimSpace(strings.TrimPrefix(dataLine, "data:"))
+						// Resolve relative bridge URL against baseURL
+						if !strings.HasPrefix(bridgeURL, "http") {
+							base, _ := url.Parse(baseURL)
+							rel, _ := url.Parse(bridgeURL)
+							if base != nil && rel != nil {
+								bridgeURL = base.ResolveReference(rel).String()
+							}
+						}
+						// Propagate persistentID to bridge URL
+						if persistentID != "" {
+							u, err := url.Parse(bridgeURL)
+							if err == nil {
+								q := u.Query()
+								q.Set("persistentId", persistentID)
+								u.RawQuery = q.Encode()
+								bridgeURL = u.String()
+							}
+						}
+						// Signal resolveBridge that we found the endpoint
+						select {
+						case bridgeChan <- bridgeURL:
+						default:
+						}
+					}
+				}
+				continue
+			}
+
+			// 2. Handle Asynchronous Response Dispatching
+			if strings.HasPrefix(line, "data:") {
+				data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				if data == "" {
+					continue
+				}
+				// Also check if this data line is actually the bridge URL (some servers omit event: endpoint)
+				if bridgeURL == "" && strings.HasPrefix(data, "http") {
+					bridgeURL = data
+					select {
+					case bridgeChan <- bridgeURL:
+					default:
+					}
+					continue
+				}
+
+				var msg struct {
+					ID int64 `json:"id"`
+				}
+				if err := json.Unmarshal([]byte(data), &msg); err == nil && msg.ID != 0 {
+					if v, ok := c.waiters.Load(msg.ID); ok {
+						if ch, ok := v.(chan json.RawMessage); ok {
+							select {
+							case ch <- json.RawMessage(data):
+							default:
+							}
+						}
 					}
 				}
 			}
 		}
-		// Some servers might just send data: ... without the event: endpoint line.
-		if strings.HasPrefix(line, "data:") {
-			potentialURL := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if strings.HasPrefix(potentialURL, "http") {
-				c.bridges.Store(baseURL, potentialURL)
-				return potentialURL
-			}
-		}
-	}
+	}(resp.Body)
 
-	return baseURL
+	// Wait for the bridge discovery to complete.
+	select {
+	case bridgeURL := <-bridgeChan:
+		c.bridges.Store(baseURL, bridgeURL)
+		return bridgeURL
+	case <-time.After(10 * time.Second):
+		// Fallback to baseURL if discovery fails
+		return baseURL
+	}
+}
+
+// Close terminates all active SSE connections.
+func (c *Client) Close() error {
+	c.connections.Range(func(key, value any) bool {
+		if closer, ok := value.(io.Closer); ok {
+			closer.Close()
+		}
+		return true
+	})
+	return nil
 }

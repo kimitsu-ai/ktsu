@@ -38,6 +38,7 @@ func New(cfg Config) *Runtime {
 // Start runs the runtime HTTP server and heartbeat, blocking until ctx is cancelled.
 func (r *Runtime) Start(ctx context.Context) error {
 	go r.heartbeatLoop(ctx)
+	defer r.srv.close()
 	return r.srv.serve(ctx)
 }
 
