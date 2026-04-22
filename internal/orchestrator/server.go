@@ -975,11 +975,14 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 			if err != nil {
 				return nil, zero, fmt.Errorf("load server %s: %w", srv.Path, err)
 			}
-			authVal, authErr := config.ResolveValue(serverCfg.Auth, true, resolvedAgentParams)
-			if authErr != nil {
-				return nil, zero, fmt.Errorf("server %q auth: %w", srv.Name, authErr)
+			var authToken string
+			if serverCfg.Auth != nil {
+				authVal, authErr := config.ResolveValue(serverCfg.Auth.Secret, true, resolvedAgentParams)
+				if authErr != nil {
+					return nil, zero, fmt.Errorf("server %q auth: %w", srv.Name, authErr)
+				}
+				authToken = authVal
 			}
-			authToken := authVal
 			resolvedServerParams, serverIsSecret, serverParamErr := config.ResolveServerParams(
 				serverCfg.Params,
 				srv.Params,
