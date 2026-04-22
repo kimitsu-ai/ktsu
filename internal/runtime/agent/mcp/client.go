@@ -40,8 +40,8 @@ func New(httpClient *http.Client) *Client {
 
 // DiscoverTools calls tools/list on url and returns only tools whose name
 // appears in allowlist. An empty allowlist returns an empty slice.
-// authToken, if non-empty, is sent as a Bearer token in the Authorization header.
-func (c *Client) DiscoverTools(ctx context.Context, url, authToken string, allowlist []string) ([]ToolDefinition, error) {
+// authHeader and authValue, if non-empty, are sent as a single HTTP header.
+func (c *Client) DiscoverTools(ctx context.Context, url, authHeader, authValue string, allowlist []string) ([]ToolDefinition, error) {
 	if len(allowlist) == 0 {
 		return nil, nil
 	}
@@ -51,7 +51,7 @@ func (c *Client) DiscoverTools(ctx context.Context, url, authToken string, allow
 		permitted[name] = struct{}{}
 	}
 
-	resp, err := c.rpc(ctx, url, authToken, "tools/list", nil)
+	resp, err := c.rpc(ctx, url, authHeader, authValue, "tools/list", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -74,13 +74,13 @@ func (c *Client) DiscoverTools(ctx context.Context, url, authToken string, allow
 
 // CallTool invokes the named tool on url with the given arguments.
 // It does not enforce the allowlist — callers must check before calling.
-// authToken, if non-empty, is sent as a Bearer token in the Authorization header.
-func (c *Client) CallTool(ctx context.Context, url, authToken, name string, arguments map[string]any) (ToolCallResult, error) {
+// authHeader and authValue, if non-empty, are sent as a single HTTP header.
+func (c *Client) CallTool(ctx context.Context, url, authHeader, authValue, name string, arguments map[string]any) (ToolCallResult, error) {
 	params := map[string]any{
 		"name":      name,
 		"arguments": arguments,
 	}
-	resp, err := c.rpc(ctx, url, authToken, "tools/call", params)
+	resp, err := c.rpc(ctx, url, authHeader, authValue, "tools/call", params)
 	if err != nil {
 		return ToolCallResult{}, err
 	}
@@ -95,21 +95,21 @@ func (c *Client) CallTool(ctx context.Context, url, authToken, name string, argu
 // Initialize sends an MCP initialize request with optional config params.
 // Use this before DiscoverTools when the server requires per-connection configuration.
 // config is sent under the "config" key in the initialize params.
-// authToken, if non-empty, is sent as Authorization: Bearer <token>.
-func (c *Client) Initialize(ctx context.Context, url, authToken string, config map[string]any) error {
+// authHeader and authValue, if non-empty, are sent as a single HTTP header.
+func (c *Client) Initialize(ctx context.Context, url, authHeader, authValue string, config map[string]any) error {
 	params := map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "ktsu", "version": "1.0"},
 		"config":          config,
 	}
-	_, err := c.rpc(ctx, url, authToken, "initialize", params)
+	_, err := c.rpc(ctx, url, authHeader, authValue, "initialize", params)
 	return err
 }
 
 // rpc sends a JSON-RPC 2.0 request and returns the raw result bytes.
-// authToken, if non-empty, is sent as Authorization: Bearer <token>.
-func (c *Client) rpc(ctx context.Context, url, authToken, method string, params any) (json.RawMessage, error) {
+// authHeader and authValue, if non-empty, are set as a single HTTP header.
+func (c *Client) rpc(ctx context.Context, url, authHeader, authValue, method string, params any) (json.RawMessage, error) {
 	payload := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  method,
@@ -130,8 +130,9 @@ func (c *Client) rpc(ctx context.Context, url, authToken, method string, params 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	if authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+authToken)
+	req.Header.Set("MCP-Protocol-Version", "2024-11-05")
+	if authHeader != "" {
+		req.Header.Set(authHeader, authValue)
 	}
 
 	resp, err := c.http.Do(req)

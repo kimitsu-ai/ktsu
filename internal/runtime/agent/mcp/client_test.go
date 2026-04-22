@@ -37,7 +37,7 @@ func TestDiscoverTools_filtersAllowlist(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient()
-	tools, err := c.DiscoverTools(context.Background(), srv.URL, "", []string{"kv-get", "kv-set"})
+	tools, err := c.DiscoverTools(context.Background(), srv.URL, "", "", []string{"kv-get", "kv-set"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestDiscoverTools_filtersAllowlist(t *testing.T) {
 func TestDiscoverTools_emptyAllowlist(t *testing.T) {
 	// No HTTP call should be made; returns empty slice immediately.
 	c := newClient()
-	tools, err := c.DiscoverTools(context.Background(), "http://unreachable", "", []string{})
+	tools, err := c.DiscoverTools(context.Background(), "http://unreachable", "", "", []string{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestDiscoverTools_serverError(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient()
-	_, err := c.DiscoverTools(context.Background(), srv.URL, "", []string{"kv-get"})
+	_, err := c.DiscoverTools(context.Background(), srv.URL, "", "", []string{"kv-get"})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -92,7 +92,7 @@ func TestCallTool_success(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient()
-	result, err := c.CallTool(context.Background(), srv.URL, "", "kv-get", map[string]any{"key": "user:123"})
+	result, err := c.CallTool(context.Background(), srv.URL, "", "", "kv-get", map[string]any{"key": "user:123"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestInitialize_sendsConfigInParams(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient()
-	err := c.Initialize(context.Background(), srv.URL, "", map[string]any{"namespace": "user-123"})
+	err := c.Initialize(context.Background(), srv.URL, "", "", map[string]any{"namespace": "user-123"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestInitialize_sendsConfigInParams(t *testing.T) {
 	}
 }
 
-func TestInitialize_withAuthToken(t *testing.T) {
+func TestInitialize_withBearerAuth(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
@@ -157,12 +157,79 @@ func TestInitialize_withAuthToken(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient()
-	err := c.Initialize(context.Background(), srv.URL, "my-token", map[string]any{"key": "val"})
+	err := c.Initialize(context.Background(), srv.URL, "Authorization", "Bearer my-token", map[string]any{"key": "val"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotAuth != "Bearer my-token" {
-		t.Errorf("got auth %q want %q", gotAuth, "Bearer my-token")
+		t.Errorf("got Authorization %q want %q", gotAuth, "Bearer my-token")
+	}
+}
+
+func TestDiscoverTools_withCustomHeader(t *testing.T) {
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]any{"tools": []map[string]any{
+				{"name": "search", "description": "search", "inputSchema": map[string]any{}},
+			}},
+		})
+	}))
+	defer srv.Close()
+
+	c := newClient()
+	_, err := c.DiscoverTools(context.Background(), srv.URL, "X-Api-Key", "secret-key", []string{"search"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotHeader != "secret-key" {
+		t.Errorf("got X-Api-Key header %q, want %q", gotHeader, "secret-key")
+	}
+}
+
+func TestCallTool_withRawAuth(t *testing.T) {
+	var gotHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Token")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result":  map[string]any{"content": []map[string]any{{"type": "text", "text": "ok"}}},
+		})
+	}))
+	defer srv.Close()
+
+	c := newClient()
+	_, err := c.CallTool(context.Background(), srv.URL, "X-Token", "rawvalue", "kv-get", map[string]any{"key": "k"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotHeader != "rawvalue" {
+		t.Errorf("got X-Token header %q, want %q", gotHeader, "rawvalue")
+	}
+}
+
+func TestRpc_sendsMCPProtocolVersionHeader(t *testing.T) {
+	var gotVersion string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotVersion = r.Header.Get("MCP-Protocol-Version")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{}})
+	}))
+	defer srv.Close()
+
+	c := newClient()
+	err := c.Initialize(context.Background(), srv.URL, "", "", map[string]any{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotVersion != "2024-11-05" {
+		t.Errorf("got MCP-Protocol-Version %q, want %q", gotVersion, "2024-11-05")
 	}
 }
 
@@ -178,7 +245,7 @@ func TestCallTool_rpcError(t *testing.T) {
 	defer srv.Close()
 
 	c := newClient()
-	_, err := c.CallTool(context.Background(), srv.URL, "", "missing-tool", nil)
+	_, err := c.CallTool(context.Background(), srv.URL, "", "", "missing-tool", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
