@@ -47,6 +47,7 @@ pipeline:
     params:
       name: "{{ step.receive.user.first_name }}"
       message: "{{ step.receive.text }}"
+      chat_id: "{{ step.receive.chat_id }}"
 
   - id: send
     workflow: /Users/kyle/repositories/kimitsu-ai/agent-toolshed/workflows/telegram/telegram-send.workflow.yaml

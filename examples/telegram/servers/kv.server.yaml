@@ -1,0 +1,19 @@
+# Drop this file into your ktsu project's servers/ directory
+# and reference it from your agent's servers: block.
+#
+# Example agent wiring:
+#
+#   servers:
+#     - name: kv
+#       path: servers/kv.server.yaml
+#       access:
+#         allowlist:
+#           - kv_get
+#           - kv_set
+#           - kv_delete
+#           - kv_list
+#           - kv_increment
+
+name: kv                         # identity — used in logs and error messages
+description: "Key-value memory store backed by SQLite. Persists state across pipeline runs." # optional
+url: "http://localhost:9200"    # base URL of the MCP server (HTTP/SSE)

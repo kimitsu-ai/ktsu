@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -248,5 +249,55 @@ func TestCallTool_rpcError(t *testing.T) {
 	_, err := c.CallTool(context.Background(), srv.URL, "", "", "missing-tool", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestRpc_withSSEHandshake(t *testing.T) {
+	var sseCalled, messageCalled bool
+	var capturedBody map[string]any
+
+	// The "bridge" server that handles the actual RPC
+	bridgeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		messageCalled = true
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]any{
+				"content": []map[string]any{
+					{"type": "text", "text": "pong"},
+				},
+			},
+		})
+	}))
+	defer bridgeSrv.Close()
+
+	// The base server that handles /sse discovery
+	baseSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/sse" {
+			sseCalled = true
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", bridgeSrv.URL)
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer baseSrv.Close()
+
+	c := newClient()
+	result, err := c.CallTool(context.Background(), baseSrv.URL, "", "", "ping", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !sseCalled {
+		t.Error("expected /sse handshake but it was not called")
+	}
+	if !messageCalled {
+		t.Error("expected bridge URL to be called but it was not")
+	}
+	if len(result.Content) == 0 || result.Content[0].Text != "pong" {
+		t.Errorf("got result %+v, want text 'pong'", result)
 	}
 }

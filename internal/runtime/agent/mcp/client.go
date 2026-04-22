@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 // ToolDefinition is a single tool exposed by an MCP server.
@@ -30,7 +31,8 @@ type ToolCallResult struct {
 
 // Client makes JSON-RPC 2.0 calls to MCP tool servers over HTTP.
 type Client struct {
-	http *http.Client
+	http    *http.Client
+	bridges sync.Map // map[string]string: baseURL -> bridgeURL
 }
 
 // New returns a Client backed by the given HTTP client.
@@ -110,6 +112,9 @@ func (c *Client) Initialize(ctx context.Context, url, authHeader, authValue stri
 // rpc sends a JSON-RPC 2.0 request and returns the raw result bytes.
 // authHeader and authValue, if non-empty, are set as a single HTTP header.
 func (c *Client) rpc(ctx context.Context, url, authHeader, authValue, method string, params any) (json.RawMessage, error) {
+	// Resolve the actual target URL (bridge) via SSE handshake if possible.
+	targetURL := c.resolveBridge(ctx, url)
+
 	payload := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  method,
@@ -124,7 +129,7 @@ func (c *Client) rpc(ctx context.Context, url, authHeader, authValue, method str
 		return nil, fmt.Errorf("marshal rpc request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create rpc request: %w", err)
 	}
@@ -184,4 +189,65 @@ func (c *Client) rpc(ctx context.Context, url, authHeader, authValue, method str
 		return nil, fmt.Errorf("rpc %s error %d: %s", method, envelope.Error.Code, envelope.Error.Message)
 	}
 	return envelope.Result, nil
+}
+
+// resolveBridge attempts to discover the session bridge URL by hitting {url}/sse.
+// Returns the bridge URL on success, or the original baseURL as a fallback.
+func (c *Client) resolveBridge(ctx context.Context, baseURL string) string {
+	if v, ok := c.bridges.Load(baseURL); ok {
+		return v.(string)
+	}
+
+	// Discovery logic — use a per-URL lock to avoid concurrent handshakes for the same server.
+	// For simplicity in this implementation, we allow concurrent handshakes but the last
+	// one to finish will populate the cache. Using sync.Map.LoadOrStore would be cleaner
+	// if we had a dedicated handshake object.
+
+	sseURL := strings.TrimSuffix(baseURL, "/") + "/sse"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sseURL, nil)
+	if err != nil {
+		return baseURL
+	}
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return baseURL
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return baseURL
+	}
+
+	// Scan SSE stream for the "endpoint" event.
+	// Format:
+	// event: endpoint
+	// data: http://...
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "event: endpoint") {
+			if scanner.Scan() {
+				dataLine := scanner.Text()
+				if strings.HasPrefix(dataLine, "data:") {
+					bridgeURL := strings.TrimSpace(strings.TrimPrefix(dataLine, "data:"))
+					if bridgeURL != "" {
+						c.bridges.Store(baseURL, bridgeURL)
+						return bridgeURL
+					}
+				}
+			}
+		}
+		// Some servers might just send data: ... without the event: endpoint line.
+		if strings.HasPrefix(line, "data:") {
+			potentialURL := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if strings.HasPrefix(potentialURL, "http") {
+				c.bridges.Store(baseURL, potentialURL)
+				return potentialURL
+			}
+		}
+	}
+
+	return baseURL
 }

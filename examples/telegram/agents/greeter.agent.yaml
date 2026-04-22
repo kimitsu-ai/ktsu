@@ -1,15 +1,11 @@
 name: greeter
-description: Generates a friendly greeting from a name.
+description: Generates a friendly greeting and remembers conversation context.
 model: standard
-max_turns: 1
-prompt:
-  system: |
-    You are a friendly greeter. Return exactly the JSON output described in your schema — nothing else.
-  user: "Name: {{ params.name }}\nMessage: {{ params.message }}"
+max_turns: 5
 params:
   schema:
     type: object
-    required: [name, message]
+    required: [name, message, chat_id]
     properties:
       name:
         type: string
@@ -17,6 +13,31 @@ params:
       message:
         type: string
         description: "Message from the user"
+      chat_id:
+        type: string
+        description: "The unique ID for this conversation thread"
+
+prompt:
+  system: |
+    You are a friendly greeter with memory. 
+    Use the `kv` server to store and retrieve information about this specific user and conversation.
+    The key for this conversation is `chat_<Chat ID>` provided in the user message.
+    
+    Strategy:
+    1. Check `kv_get` with key `chat_<Chat ID>` to see if you've met them or discussed anything before.
+    2. Respond warmly, incorporating past context if available.
+    3. Use `kv_set` to update the memory with any important new details from this interaction.
+    
+    Return exactly the JSON output described in your schema — nothing else.
+  user: "Chat ID: {{ params.chat_id }}\nName: {{ params.name }}\nMessage: {{ params.message }}"
+
+servers:
+  - name: kv
+    path: ../servers/kv.server.yaml
+    access:
+      allowlist:
+        - kv_*
+
 output:
   schema:
     type: object
