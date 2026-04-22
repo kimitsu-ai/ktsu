@@ -980,9 +980,12 @@ func (d *runtimeDispatcher) Dispatch(ctx context.Context, runID, stepID string, 
 				if serverCfg.Auth.Secret == "" {
 					return nil, zero, fmt.Errorf("server %q auth.secret is required", srv.Name)
 				}
-				resolved, authErr := config.ResolveValue(serverCfg.Auth.Secret, true, resolvedAgentParams)
+				resolved, agentKey, authErr := config.ResolveParamRef(serverCfg.Auth.Secret, resolvedAgentParams)
 				if authErr != nil {
-					return nil, zero, fmt.Errorf("server %q auth: %w", srv.Name, authErr)
+					return nil, zero, fmt.Errorf("server %q auth.secret: %w", srv.Name, authErr)
+				}
+				if agentKey != "" && !agentIsSecret[agentKey] {
+					return nil, zero, fmt.Errorf("server %q auth.secret references agent param %q which is not marked secret", srv.Name, agentKey)
 				}
 				header := serverCfg.Auth.Header
 				if header == "" {

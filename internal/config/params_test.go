@@ -86,6 +86,62 @@ func TestInterpolatePrompt_noRefs(t *testing.T) {
 	}
 }
 
+// --- ResolveParamRef ---
+
+func TestResolveParamRef_templateSyntax(t *testing.T) {
+	params := map[string]string{"api_key": "secret-value"}
+	val, key, err := ResolveParamRef("{{ params.api_key }}", params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "secret-value" {
+		t.Errorf("got %q want %q", val, "secret-value")
+	}
+	if key != "api_key" {
+		t.Errorf("got agentKey %q want %q", key, "api_key")
+	}
+}
+
+func TestResolveParamRef_backtickLiteral(t *testing.T) {
+	val, key, err := ResolveParamRef("`hardcoded-token`", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "hardcoded-token" {
+		t.Errorf("got %q want %q", val, "hardcoded-token")
+	}
+	if key != "" {
+		t.Errorf("expected empty agentKey, got %q", key)
+	}
+}
+
+func TestResolveParamRef_missingParam(t *testing.T) {
+	_, _, err := ResolveParamRef("{{ params.missing }}", map[string]string{})
+	if err == nil {
+		t.Fatal("expected error for missing param")
+	}
+}
+
+func TestResolveParamRef_unsupportedTemplate(t *testing.T) {
+	_, _, err := ResolveParamRef("{{ env.SECRET }}", map[string]string{})
+	if err == nil {
+		t.Fatal("expected error for unsupported template")
+	}
+}
+
+func TestResolveParamRef_plainString(t *testing.T) {
+	val, key, err := ResolveParamRef("plain-literal", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "plain-literal" {
+		t.Errorf("got %q want %q", val, "plain-literal")
+	}
+	if key != "" {
+		t.Errorf("expected empty agentKey, got %q", key)
+	}
+}
+
 func TestInterpolatePrompt_missingValueReturnsError(t *testing.T) {
 	_, err := InterpolatePrompt("Hello {{name}}.", map[string]string{})
 	if err == nil {

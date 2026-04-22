@@ -65,6 +65,30 @@ func ResolveValue(v string, allowEnv bool, invocationParams map[string]string) (
 	}
 }
 
+// ResolveParamRef resolves a param reference expression used in server file fields (e.g. auth.secret).
+// Supports "{{ params.KEY }}" template syntax and backtick literals.
+// Returns the resolved value, the agent param key referenced (empty if not a param ref), and any error.
+// env: references are not permitted — server files must use params exclusively.
+func ResolveParamRef(expr string, agentParams map[string]string) (string, string, error) {
+	trimmed := strings.TrimSpace(expr)
+	if strings.HasPrefix(trimmed, "{{") && strings.HasSuffix(trimmed, "}}") {
+		inner := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
+		if !strings.HasPrefix(inner, "params.") {
+			return "", "", fmt.Errorf("unsupported template %q — only {{ params.KEY }} is supported", expr)
+		}
+		key := strings.TrimPrefix(inner, "params.")
+		val, ok := agentParams[key]
+		if !ok {
+			return "", "", fmt.Errorf("param %q not found in resolved agent params", key)
+		}
+		return val, key, nil
+	}
+	if len(trimmed) >= 2 && trimmed[0] == '`' && trimmed[len(trimmed)-1] == '`' {
+		return trimmed[1 : len(trimmed)-1], "", nil
+	}
+	return expr, "", nil
+}
+
 // ValidateSystemPromptStatic returns an error if the system prompt contains
 // any {{ }} template expressions. System prompts must be static for prompt caching.
 func ValidateSystemPromptStatic(system string) error {

@@ -13,8 +13,11 @@ url: "https://mcp.internal/wiki" # base URL of the MCP server (HTTP/SSE)
 auth:                            # optional — omit if no auth required
   header: X-Api-Key              # optional; defaults to "Authorization"
   scheme: raw                    # optional; "raw" (value as-is) or "bearer" (prepend "Bearer "); defaults to "bearer"
-  secret: "param:api_key"   # required if auth present; value expression
+  secret: "{{ params.api_key }}" # required if auth present; must reference a secret param
 params:                          # optional — omit if server needs no configuration
+  api_key:
+    description: "API key for the wiki search service"
+    secret: true                 # marks this param as a credential — callers must supply a secret source
   region:
     description: "AWS region to query"
     default: "us-east-1"
@@ -26,7 +29,11 @@ Minimal bearer token form:
 name: my-server
 url: "https://mcp.internal/my-server"
 auth:
-  secret: "param:auth_token"
+  secret: "{{ params.auth_token }}"
+params:
+  auth_token:
+    description: "Bearer token for the server"
+    secret: true
 ```
 
 ## Fields
@@ -39,14 +46,31 @@ auth:
 | `auth` | object | no | Outbound auth config. Omit entirely for unauthenticated servers. |
 | `auth.header` | string | no | HTTP header name to set. Defaults to `Authorization`. |
 | `auth.scheme` | string | no | `"bearer"` prepends `Bearer ` before the resolved secret; `"raw"` sends the value as-is. Defaults to `"bearer"`. |
-| `auth.secret` | string | yes (if auth set) | Value expression for the credential. Supports `param:NAME` and backtick literals. Resolved at run time from the agent's resolved params. |
-| `params` | map | no | Declared parameters passed as MCP initialization config when the runtime connects. Each entry requires `description`; `default` is optional. Params without a default are required. |
+| `auth.secret` | string | yes (if auth set) | `{{ params.NAME }}` reference to a declared secret param, or a backtick literal. The referenced agent param must also be marked `secret: true`. |
+| `params` | map | no | Declared parameters passed as MCP initialization config when the runtime connects. Each entry requires `description`; `default` and `secret` are optional. Params without a default are required. |
 | `params.<name>.description` | string | yes | Human-readable explanation |
 | `params.<name>.default` | string | no | Default value. Omit to make the param required. |
+| `params.<name>.secret` | bool | no | `true` marks this param as a credential. The agent param supplying this value must also be `secret: true`, and the workflow env var or param feeding it must be `secret: true`. Omit or `false` for non-sensitive params. |
 
 `auth` operates at the HTTP transport layer and is separate from `params`, which are sent as MCP initialization config during the `initialize` handshake.
 
-Server files may not use `env:VAR_NAME` references directly. Use `param:NAME` references, resolved from the agent's resolved params at invocation time. The preferred pattern is to declare a param (e.g. `api_key`) in the server file, pass its value from the workflow step's `params.<name>` block, which reads it from the parent workflow's `env` block (root workflow) or `params` block (sub-workflow).
+## Secret propagation
+
+Secrets must be marked at every layer of the chain — the runtime enforces this end-to-end:
+
+```
+workflow env (secret: true)
+  → agent param (secret: true)
+    → server param (secret: true)
+      → auth.secret: "{{ params.name }}"
+```
+
+If any link in the chain is not marked secret the run fails at boot with a clear error. This ensures credentials are masked in logs and the run envelope at every layer.
+
+## Notes
+
+- Local server files are referenced in agent files by path: `path: servers/wiki-search.server.yaml`
+- Additional servers can be declared in `servers.yaml` and referenced in agent files by name only
 
 ## Shipped Tool Servers
 
@@ -55,8 +79,3 @@ Kimitsu ships tool servers that run as standard MCP servers on default ports. Th
 | Server | Default Port | Tools | Description |
 |---|---|---|---|
 | `envelope` | 9104 | `envelope_get`, `envelope_set`, `envelope_append` | Read and write run envelope fields |
-
-## Notes
-
-- Local server files are referenced in agent files by path: `path: servers/wiki-search.server.yaml`
-- Additional servers can be declared in `servers.yaml` and referenced in agent files by name only
