@@ -406,6 +406,72 @@ params:
 	}
 }
 
+func TestLoadToolServer_structuredAuth_allFields(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "wiki.server.yaml", `
+name: wiki
+url: "https://mcp.example.com"
+auth:
+  header: X-Api-Key
+  scheme: raw
+  secret: "`+"`"+"my-token`"+`"
+`)
+	cfg, err := LoadToolServer(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth == nil {
+		t.Fatal("expected auth to be set")
+	}
+	if cfg.Auth.Header != "X-Api-Key" {
+		t.Errorf("expected header X-Api-Key, got %q", cfg.Auth.Header)
+	}
+	if cfg.Auth.Scheme != "raw" {
+		t.Errorf("expected scheme raw, got %q", cfg.Auth.Scheme)
+	}
+	if cfg.Auth.Secret != "`my-token`" {
+		t.Errorf("expected secret backtick-my-token, got %q", cfg.Auth.Secret)
+	}
+}
+
+func TestLoadToolServer_structuredAuth_secretOnly(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "example.server.yaml", `
+name: example
+url: "https://mcp.example.com"
+auth:
+  secret: "`+"`token`"+`"
+`)
+	cfg, err := LoadToolServer(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth == nil {
+		t.Fatal("expected auth to be set")
+	}
+	if cfg.Auth.Header != "" {
+		t.Errorf("expected empty header (caller applies default), got %q", cfg.Auth.Header)
+	}
+	if cfg.Auth.Scheme != "" {
+		t.Errorf("expected empty scheme (caller applies default), got %q", cfg.Auth.Scheme)
+	}
+	if cfg.Auth.Secret != "`token`" {
+		t.Errorf("unexpected secret: %q", cfg.Auth.Secret)
+	}
+}
+
+func TestLoadToolServer_noAuth(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "open.server.yaml", `
+name: open
+url: "https://mcp.example.com"
+`)
+	cfg, err := LoadToolServer(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Auth != nil {
+		t.Errorf("expected nil auth, got %+v", cfg.Auth)
+	}
+}
+
 func TestAgentParams_returnsTopLevelExcludingServerKey(t *testing.T) {
 	step := PipelineStep{
 		ID:    "greet",

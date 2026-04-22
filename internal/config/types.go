@@ -39,6 +39,14 @@ type InvokeConfig struct {
 	Auth *InvokeAuthConfig `yaml:"auth,omitempty"`
 }
 
+// ServerAuthConfig declares how the MCP client authenticates outbound requests to a tool server.
+// If absent on ToolServerConfig, no auth header is sent.
+type ServerAuthConfig struct {
+	Header string `yaml:"header"` // HTTP header name; defaults to "Authorization" at resolution time
+	Scheme string `yaml:"scheme"` // "bearer" (prepend "Bearer ") or "raw" (value as-is); defaults to "bearer"
+	Secret string `yaml:"secret"` // value expression: env:VAR, param:NAME, or backtick literal
+}
+
 // WorkflowConfig represents a workflow.yaml file (kind: workflow)
 type WorkflowConfig struct {
 	Kind        string           `yaml:"kind"`
@@ -253,7 +261,7 @@ type ToolServerConfig struct {
 	Name        string               `yaml:"name"`
 	Description string               `yaml:"description"`
 	URL         string               `yaml:"url"`
-	Auth        string               `yaml:"auth,omitempty"`
+	Auth        *ServerAuthConfig    `yaml:"auth,omitempty"`
 	Params      map[string]ParamDecl `yaml:"params,omitempty"`
 }
 
