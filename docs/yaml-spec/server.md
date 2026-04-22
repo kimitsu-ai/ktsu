@@ -1,6 +1,6 @@
 # server.yaml (tool-server)
 
-**What it does:** Points to a local MCP tool server — declares its URL, auth, and trust flags. The server itself is an independent MCP process reachable over HTTP/SSE; Kimitsu does not start or manage it. Kiimitsu does not support the `stdio` transport.
+**What it does:** Points to a local MCP tool server — declares its URL, auth, and trust flags. The server itself is an independent MCP process reachable over HTTP/SSE; Kimitsu does not start or manage it. Kimitsu does not support the `stdio` transport.
 
 **Filename convention:** `servers/*.server.yaml`
 
@@ -10,11 +10,23 @@
 name: wiki-search                # identity — used in logs and error messages
 description: "..."               # optional
 url: "https://mcp.internal/wiki" # base URL of the MCP server (HTTP/SSE)
-auth: "param:auth_token"         # param:name reference — value passed from workflow step's params.server.<name>.*; omit if no auth required
+auth:                            # optional — omit if no auth required
+  header: X-Api-Key              # optional; defaults to "Authorization"
+  scheme: raw                    # optional; "raw" (value as-is) or "bearer" (prepend "Bearer "); defaults to "bearer"
+  secret: "{{ param.api_key }}"  # required if auth present; value expression
 params:                          # optional — omit if server needs no configuration
   region:
     description: "AWS region to query"
     default: "us-east-1"
+```
+
+Minimal bearer token form:
+
+```yaml
+name: my-server
+url: "https://mcp.internal/my-server"
+auth:
+  secret: "{{ param.auth_token }}"
 ```
 
 ## Fields
@@ -24,14 +36,17 @@ params:                          # optional — omit if server needs no configur
 | `name` | string | yes | Identity — used in logs and error messages |
 | `description` | string | no | Human-readable |
 | `url` | string | yes | Base URL of the MCP server (HTTP/SSE) |
-| `auth` | string | no | Bearer token or `param:name` for resolved param values. Server files may not use `env:VAR_NAME` directly — declare env vars in the parent workflow's `env:` array and pass them down through `params.server.<name>.*` in the workflow step. |
-| `params` | map | no | Declared parameters passed as MCP initialization config when the runtime connects. Each entry requires `description`; `default` is optional. Params without a default are required. Server files may not use `env:` references — use `param:name` references instead. |
+| `auth` | object | no | Outbound auth config. Omit entirely for unauthenticated servers. |
+| `auth.header` | string | no | HTTP header name to set. Defaults to `Authorization`. |
+| `auth.scheme` | string | no | `"bearer"` prepends `Bearer ` before the resolved secret; `"raw"` sends the value as-is. Defaults to `"bearer"`. |
+| `auth.secret` | string | yes (if auth set) | Value expression for the credential. Supports `env:VAR`, `param:NAME`, and backtick literals. Resolved at run time from the agent's resolved params. |
+| `params` | map | no | Declared parameters passed as MCP initialization config when the runtime connects. Each entry requires `description`; `default` is optional. Params without a default are required. |
 | `params.<name>.description` | string | yes | Human-readable explanation |
 | `params.<name>.default` | string | no | Default value. Omit to make the param required. |
 
-`auth` operates at the HTTP transport layer (Authorization header) and is separate from `params`, which are sent as MCP initialization config sent during the `initialize` handshake.
+`auth` operates at the HTTP transport layer and is separate from `params`, which are sent as MCP initialization config during the `initialize` handshake.
 
-Server files may not use `env:` references. Use `param:name` references, resolved from the agent's resolved params at invocation time. The preferred pattern is to declare a param (e.g. `auth_token`) in the server file, pass its value from the workflow step's `params.server.<name>` block, which reads it from the parent workflow's `params:` block (sub-workflow) or `env:` declaration (root workflow).
+Server files may not use `env.VAR_NAME` references directly. Use `param.name` references, resolved from the agent's resolved params at invocation time. The preferred pattern is to declare a param (e.g. `api_key`) in the server file, pass its value from the workflow step's `params.<name>` block, which reads it from the parent workflow's `env` block (root workflow) or `params` block (sub-workflow).
 
 ## Shipped Tool Servers
 
