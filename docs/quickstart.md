@@ -112,6 +112,43 @@ This prints the full run envelope as JSON, showing every step's inputs and outpu
 
 ---
 
+## Calling the orchestrator directly
+
+The `ktsu` CLI is a thin wrapper around the orchestrator's HTTP API. You can use `curl` (or any HTTP client) to do the same things.
+
+**Invoke a workflow:**
+
+```bash
+curl -s -X POST http://localhost:5050/invoke/hello \
+  -H "Content-Type: application/json" \
+  -d '{"name": "World"}'
+```
+
+```json
+{ "run_id": "01HXYZ1234ABCDEF" }
+```
+
+**List runs** (supports `?workflow=`, `?status=`, `?limit=` query params):
+
+```bash
+curl -s http://localhost:5050/runs
+curl -s "http://localhost:5050/runs?workflow=hello&status=complete&limit=10"
+```
+
+**Get run status:**
+
+```bash
+curl -s http://localhost:5050/runs/01HXYZ1234ABCDEF
+```
+
+**Get the full run envelope** (all step inputs and outputs):
+
+```bash
+curl -s http://localhost:5050/runs/01HXYZ1234ABCDEF/envelope
+```
+
+---
+
 ## What just happened
 
 1. `ktsu invoke` sent `{"name": "World"}` to the orchestrator and received a `run_id`
