@@ -16,12 +16,12 @@ The install script auto-detects your OS and architecture (macOS and Linux, amd64
 curl -fsSL https://raw.githubusercontent.com/kimitsu-ai/ktsu/main/install.sh | sh
 ```
 
-**Private repo — using `gh` CLI (recommended if authenticated):**
+**Enterprise / self-hosted — using `gh` CLI (if your org mirrors the repo privately):**
 ```bash
 gh release download --repo kimitsu-ai/ktsu -p install.sh -O - | sh
 ```
 
-**Private repo — using a GitHub token:**
+**Enterprise / self-hosted — using a GitHub token:**
 ```bash
 curl -H "Authorization: token $GITHUB_TOKEN" \
   -fsSL https://raw.githubusercontent.com/kimitsu-ai/ktsu/main/install.sh | sh
