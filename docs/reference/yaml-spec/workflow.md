@@ -102,7 +102,7 @@ Workflows use `{{ expr }}` for string interpolation. Use the following namespace
 
 ### JMESPath Context
 
-In `condition:` or transform `expr:`, use bare JMESPath (no `{{ }}`).
+In `condition:` or transform `expr:`, use bare [JMESPath](https://jmespath.org) (no `{{ }}`).
 - Example: `step.parse.category == 'billing'`
 
 ## Notes

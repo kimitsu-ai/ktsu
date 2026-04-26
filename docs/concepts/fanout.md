@@ -133,6 +133,6 @@ The final step `high_confidence` emits `{"result": [...]}` containing only the p
 
 ---
 
-*See also [Pipeline Primitives](./pipeline-primitives.md) for the full list of step types, and [Transforms](../reference/transforms.md) for all available transform ops.*
+*See also [Pipeline Primitives](./pipeline-primitives.md) for the full list of step types, and [Transforms](./transforms.md) for all available transform ops.*
 
 *Revised April 2026*

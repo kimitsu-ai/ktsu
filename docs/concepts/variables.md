@@ -12,7 +12,7 @@ Kimitsu uses a `{{ expr }}` template syntax for runtime value injection across a
 | `{{ params.NAME }}` | Local parameter | Workflows, agents, servers |
 | `{{ step.ID.FIELD }}` | Output of a completed step | Workflow pipeline steps |
 
-In `condition:` fields and transform `expr:` values, use bare JMESPath — no `{{ }}` wrapping. Example: `step.parse.valid == 'true'`.
+In `condition:` fields and transform `expr:` values, use bare [JMESPath](https://jmespath.org) — no `{{ }}` wrapping. Example: `step.parse.valid == 'true'`.
 
 `prompt.system` in agent files is **static-only** — `{{ }}` is a boot error there. All dynamic content must go in `prompt.user`.
 

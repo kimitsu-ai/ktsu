@@ -6,13 +6,13 @@
 
 ## How Transforms Work
 
-A transform step collects its inputs, then applies each op in `ops:` left-to-right. Each op receives the output of the previous op, so the sequence acts as a pipeline.
+A transform step collects its inputs, then applies each op in `ops:` left-to-right. Each op receives the output of the previous op, so the sequence acts as a pipeline. Ops that take an `expr` field use [JMESPath](https://jmespath.org) expressions.
 
 ```yaml
 - id: process
   transform:
     inputs:
-      - from: previous_step      # use one step's output as input
+      - from: "{{ step.fetch.items }}"  # reference a completed step's output
     ops:
       - filter:
           expr: "score > `0.5`"
@@ -152,7 +152,7 @@ pipeline:
     params:
       url: "{{ item }}"
     for_each:
-      from: "fetch.urls"
+      from: "step.fetch.urls"
       concurrency: 10
       max_failures: -1
 

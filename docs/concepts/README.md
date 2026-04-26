@@ -36,6 +36,7 @@ The second agent (`summarize`) receives the filtered list via `{{ step.filter.ou
 | [Variables](./variables.md) | Template syntax for env vars, params, and step outputs |
 | [Reserved Outputs](./reserved-outputs.md) | Special output keys agents use to signal errors and reflection |
 | [Fanout](./fanout.md) | Running an agent step once per array element, in parallel |
+| [Transforms](./transforms.md) | The six deterministic data operations available in transform steps |
 | [Invariants](./invariants.md) | Hard constraints the orchestrator enforces on every pipeline |
 
 ---

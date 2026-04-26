@@ -6,7 +6,7 @@
 
 Every step in a Kimitsu pipeline is exactly one of:
 
-1.  **Transform**: Deterministic data shaping (JMESPath).
+1.  **Transform**: Deterministic data shaping ([JMESPath](https://jmespath.org)).
 2.  **Agent**: Reasoning and synthesis (LLM).
 3.  **Webhook**: Outbound integration (HTTP POST).
 4.  **Workflow**: Sub-pipeline composition.
@@ -40,7 +40,7 @@ Agents are the central intelligence of Kimitsu. They are the only primitive allo
 
 ## Transform Steps
 
-Transforms are deterministic and execute directly in the orchestrator. See [Transform Ops reference](../reference/transforms.md) for all six operations and a complete chained example.
+Transforms are deterministic and execute directly in the orchestrator. See [Transforms](./transforms.md) for all six operations and a complete chained example.
 
 ```yaml
 - id: cleanup
