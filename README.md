@@ -41,6 +41,20 @@ curl -s http://localhost:5051/health   # runtime
 Invoke the hello-world workflow:
 
 ```sh
+curl -s -X POST http://localhost:5050/invoke/hello \
+  -H "Content-Type: application/json" \
+  -d '{"name": "World"}'
+```
+
+This returns a `run_id`. Poll for the result:
+
+```sh
+curl -s http://localhost:5050/runs/<run_id>
+```
+
+If you have the `ktsu` CLI installed, these are just wrappers around the same HTTP calls:
+
+```sh
 ktsu invoke hello --input '{"name": "World"}' --wait
 ```
 

@@ -51,47 +51,64 @@ ktsu start --all --project-dir examples/hello \
 ## Invoke the workflow
 
 ```bash
+curl -s -X POST http://localhost:5050/invoke/hello \
+  -H "Content-Type: application/json" \
+  -d '{"name": "World"}'
+```
+
+```json
+{ "run_id": "01HXYZ1234ABCDEF" }
+```
+
+Poll until the run completes:
+
+```bash
+curl -s http://localhost:5050/runs/01HXYZ1234ABCDEF
+```
+
+```json
+{
+  "run_id": "01HXYZ1234ABCDEF",
+  "workflow": "hello",
+  "status": "complete"
+}
+```
+
+If you have the `ktsu` CLI installed, it wraps the same HTTP calls and adds `--wait` polling:
+
+```bash
 ktsu invoke hello --input '{"name": "World"}' --wait
 ```
-
-Example output:
-
-```
-run_id: 01HXYZ1234ABCDEF
-status: complete
-greeting: Hello, World! It's wonderful to meet you.
-```
-
-The `--wait` flag polls until the run reaches a terminal state and prints the result. Without it, `ktsu invoke` returns the `run_id` immediately so you can inspect the run separately.
 
 ---
 
 ## Inspect your runs
 
-**List recent runs:**
+**List recent runs** (supports `?workflow=`, `?status=`, `?limit=` query params):
+
+```bash
+curl -s http://localhost:5050/runs
+curl -s "http://localhost:5050/runs?workflow=hello&status=complete&limit=10"
+```
+
+Or with the CLI:
 
 ```bash
 ktsu runs
-```
-
-```
-RUN ID                    WORKFLOW  STATUS    STARTED              DURATION
-01HXYZ1234ABCDEF          hello     complete  2026-04-24 10:01:32  2s
-```
-
-Filter by workflow or status:
-
-```bash
 ktsu runs --workflow hello --status complete --limit 10
 ```
 
-**Inspect a specific run:**
+**Get the full run envelope** (all step inputs and outputs):
+
+```bash
+curl -s http://localhost:5050/runs/01HXYZ1234ABCDEF/envelope
+```
+
+Or with the CLI:
 
 ```bash
 ktsu runs get 01HXYZ1234ABCDEF
 ```
-
-This prints the full run envelope as JSON, showing every step's inputs and outputs:
 
 ```json
 {
@@ -114,46 +131,9 @@ This prints the full run envelope as JSON, showing every step's inputs and outpu
 
 ---
 
-## Calling the orchestrator directly
-
-The `ktsu` CLI is a thin wrapper around the orchestrator's HTTP API. You can use `curl` (or any HTTP client) to do the same things.
-
-**Invoke a workflow:**
-
-```bash
-curl -s -X POST http://localhost:5050/invoke/hello \
-  -H "Content-Type: application/json" \
-  -d '{"name": "World"}'
-```
-
-```json
-{ "run_id": "01HXYZ1234ABCDEF" }
-```
-
-**List runs** (supports `?workflow=`, `?status=`, `?limit=` query params):
-
-```bash
-curl -s http://localhost:5050/runs
-curl -s "http://localhost:5050/runs?workflow=hello&status=complete&limit=10"
-```
-
-**Get run status:**
-
-```bash
-curl -s http://localhost:5050/runs/01HXYZ1234ABCDEF
-```
-
-**Get the full run envelope** (all step inputs and outputs):
-
-```bash
-curl -s http://localhost:5050/runs/01HXYZ1234ABCDEF/envelope
-```
-
----
-
 ## What just happened
 
-1. `ktsu invoke` sent `{"name": "World"}` to the orchestrator and received a `run_id`
+1. The invoke call sent `{"name": "World"}` to the orchestrator and received a `run_id`
 2. The orchestrator ran the **greet** step: the runtime sent the envelope to the greeter agent, the LLM returned `{"greeting": "..."}`, and the Air-Lock validator confirmed the output matched the schema
 3. The orchestrator ran the **send** step: it POST'd `{"greeting": "...", "name": "World"}` to the configured webhook URL
 4. The run reached `complete` status and the final envelope was stored
