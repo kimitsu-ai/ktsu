@@ -6,56 +6,9 @@ Run AI agent pipelines from YAML — built for auditability, safety, and simple 
 - **Safety** — secrets never touch agent prompts; tool access is controlled via per-agent allowlists
 - **Easy to operate** — plain YAML config, `ktsu validate` before you run, same setup locally and in production
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/deploy?repo=https://github.com/kimitsu-ai/ktsu)
+## Quick start
 
-## Quick start (Railway)
-
-The easiest way to get started is to deploy the full stack to Railway with a single click. This includes the Orchestrator, Gateway, and Runtime, pre-configured with the `hello-world` example.
-
-> [!NOTE]
-> If this is a **private repository**, ensure the [Railway GitHub App](https://railway.app/dashboard/settings/github) has access to this repo before clicking the button.
-
-1. Click the **Deploy on Railway** button above.
-2. Provide your `ANTHROPIC_API_KEY`.
-3. Railway will generate a secure `KTSU_API_KEY` for you.
-4. Once deployed, you can invoke the demo workflow immediately.
-
-## Quick start (Docker)
-
-```sh
-# Set your Anthropic API key
-echo 'ANTHROPIC_API_KEY=sk-ant-...' >> .env
-
-# Start all services
-make docker-up
-```
-
-Verify all services are healthy (the orchestrator aggregates all service statuses):
-
-```sh
-curl -s http://localhost:5050/health
-# {"status":"ok","services":{"gateway":"ok","orchestrator":"ok","runtime":"ok"}}
-```
-
-Invoke the hello-world workflow:
-
-```sh
-curl -s -X POST http://localhost:5050/invoke/hello \
-  -H "Content-Type: application/json" \
-  -d '{"name": "World"}'
-```
-
-This returns a `run_id`. Poll for the result:
-
-```sh
-curl -s http://localhost:5050/runs/<run_id>
-```
-
-If you have the `ktsu` CLI installed, these are just wrappers around the same HTTP calls:
-
-```sh
-ktsu invoke hello --input '{"name": "World"}' --wait
-```
+See [Deploy with Docker](docs/deployment/docker.md) to run the full stack locally in minutes.
 
 ## Installation
 
@@ -85,3 +38,4 @@ make docker-down     # stop all containers
 
 - [kimitsu.ai/docs](https://kimitsu.ai/docs) — full documentation
 - [./docs](docs/) — local reference: architecture, YAML spec, CLI reference
+- [Deployment](docs/deployment/) — production deployment guide

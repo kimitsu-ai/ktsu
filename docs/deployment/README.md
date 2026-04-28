@@ -2,6 +2,11 @@
 
 This guide covers running ktsu in production: service topology, state persistence, configuration, scaling, health checks, and observability.
 
+## Deployment guides
+
+- [Deploy with Docker](deployment/docker.md)
+- [Deploy on Railway](deployment/railway.md)
+
 ---
 
 ## Service Topology
@@ -150,36 +155,6 @@ curl -s http://localhost:5052/health   # LLM gateway
 A healthy startup sequence: Gateway starts first (it has no dependencies), then the Orchestrator (depends on Gateway being healthy), then the Runtime (registers with both). The Docker Compose setup enforces this order via `depends_on` with `condition: service_healthy`.
 
 The Agent Runtime sends a heartbeat POST to `<KTSU_ORCHESTRATOR_URL>/heartbeat` every 5 seconds while agent steps are active. The Orchestrator uses these heartbeats to detect stuck agents and fail steps that go silent.
-
----
-
-## Docker Compose
-
-The repository ships with a Docker Compose setup under `deploy/`:
-
-- `deploy/docker-compose.yaml` — Standard deployment using the `ghcr.io/kimitsu-ai/ktsu:latest` image with Anthropic as the LLM provider.
-- `deploy/docker-compose.local.yaml` — Local LLM variant using Ollama; no API key required.
-
-Start with Anthropic:
-
-```bash
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
-make docker-up
-```
-
-Start with a local LLM:
-
-```bash
-make docker-up-local
-```
-
-Override the exposed orchestrator port with `KTSU_PORT`:
-
-```bash
-KTSU_PORT=8080 make docker-up
-```
-
-Environment variables are injected from a `.env` file in the repository root. Do not commit this file. Add it to `.gitignore`.
 
 ---
 
