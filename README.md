@@ -30,18 +30,17 @@ echo 'ANTHROPIC_API_KEY=sk-ant-...' >> .env
 make docker-up
 ```
 
-Verify all services are healthy:
+Verify all services are healthy (the orchestrator aggregates all service statuses):
 
 ```sh
-curl -s http://localhost:5052/health   # gateway
-curl -s http://localhost:5050/health   # orchestrator
-curl -s http://localhost:5051/health   # runtime
+curl -s http://localhost:8080/health
+# {"status":"ok","services":{"gateway":"ok","orchestrator":"ok","runtime":"ok"}}
 ```
 
 Invoke the hello-world workflow:
 
 ```sh
-curl -s -X POST http://localhost:5050/invoke/hello \
+curl -s -X POST http://localhost:8080/invoke/hello \
   -H "Content-Type: application/json" \
   -d '{"name": "World"}'
 ```
@@ -49,13 +48,13 @@ curl -s -X POST http://localhost:5050/invoke/hello \
 This returns a `run_id`. Poll for the result:
 
 ```sh
-curl -s http://localhost:5050/runs/<run_id>
+curl -s http://localhost:8080/runs/<run_id>
 ```
 
 If you have the `ktsu` CLI installed, these are just wrappers around the same HTTP calls:
 
 ```sh
-ktsu invoke hello --input '{"name": "World"}' --wait
+KTSU_ORCHESTRATOR_URL=http://localhost:8080 ktsu invoke hello --input '{"name": "World"}' --wait
 ```
 
 ## Installation
@@ -75,7 +74,7 @@ docker pull ghcr.io/kimitsu-ai/ktsu:latest
 ## Build & test
 
 ```sh
-make build           # go build ./...
+make build           # go build -o ktsu ./cmd/ktsu
 make test            # go test ./...
 make lint            # go vet ./...
 make docker-up       # start full stack (API key required)
