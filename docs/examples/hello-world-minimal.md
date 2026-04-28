@@ -1,3 +1,7 @@
+---
+description: "Minimal ktsu project from scratch: three files (gateway, workflow, agent), start services, invoke, and trace exactly what the orchestrator did at each step."
+---
+
 # Hello World (Minimal)
 
 The absolute minimum ktsu project: one workflow, one agent, no tool servers, no webhooks.

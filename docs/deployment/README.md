@@ -1,3 +1,7 @@
+---
+description: "Production deployment guide: service topology, state persistence (memory/SQLite/Postgres), per-service env vars, scaling, health checks, and observability."
+---
+
 # Production Deployment
 
 This guide covers running ktsu in production: service topology, state persistence, configuration, scaling, health checks, and observability.

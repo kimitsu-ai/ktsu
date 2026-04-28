@@ -1,3 +1,7 @@
+---
+description: "Running ktsu with Docker Compose: quick-start for Anthropic and local LLM variants, the deploy/ directory structure, and .env file injection."
+---
+
 # Deploy with Docker
 
 ## Quick start

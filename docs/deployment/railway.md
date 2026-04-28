@@ -1,3 +1,7 @@
+---
+description: "One-click Railway deployment for the full ktsu stack (orchestrator, gateway, runtime) pre-configured with the hello-world example."
+---
+
 # Deploy on Railway
 
 The easiest way to get started is to deploy the full stack to Railway with a single click. This includes the Orchestrator, Gateway, and Runtime, pre-configured with the `hello-world` example.
