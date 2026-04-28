@@ -2,9 +2,9 @@
 
 The absolute minimum ktsu project: one workflow, one agent, no tool servers, no webhooks.
 
-Ready for a more complete example? See [Quickstart](./quickstart.md), which adds a webhook step and shows run inspection.
+Ready for a more complete example? See [Quickstart](../quickstart.md), which adds a webhook step and shows run inspection.
 
-**Prerequisites:** ktsu services must be running. See [Installation](./installation.md).
+**Prerequisites:** ktsu services must be running. See [Installation](../installation.md).
 
 ---
 
@@ -138,4 +138,4 @@ greeting: Hello, World! Great to meet you.
 
 ---
 
-Ready for more? [Quickstart](./quickstart.md) adds a webhook step, shows run inspection, and demonstrates the `ktsu runs` command.
+Ready for more? [Quickstart](../quickstart.md) adds a webhook step, shows run inspection, and demonstrates the `ktsu runs` command.

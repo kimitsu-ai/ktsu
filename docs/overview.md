@@ -44,7 +44,7 @@ When you invoke a workflow, the **Orchestrator** resolves the step dependency gr
 
 **1. [Install ktsu](installation.md)** — binary, Docker, or Docker Compose. Takes about 2 minutes.
 
-**2. [Run the minimal hello-world](hello-world-minimal.md)** — one agent, one workflow, no setup beyond a gateway config. Get something running before reading anything else.
+**2. [Run the minimal hello-world](examples/hello-world-minimal.md)** — one agent, one workflow, no setup beyond a gateway config. Get something running before reading anything else.
 
 **3. [Work through the quickstart](quickstart.md)** — a multi-step pipeline with tool servers, variable passing, and run inspection. This is the full picture of how ktsu works in practice.
 

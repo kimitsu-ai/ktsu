@@ -1,6 +1,6 @@
 # Quickstart
 
-New to ktsu? Start with the [minimal hello-world](./hello-world-minimal.md) first.
+New to ktsu? Start with the [minimal hello-world](./examples/hello-world-minimal.md) first.
 
 This guide walks through the built-in hello-world example to show a workflow running end to end.
 
