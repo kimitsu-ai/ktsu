@@ -53,3 +53,4 @@ install-go.sh
 .agents/
 *.db
 docs/superpowers/
+specs/

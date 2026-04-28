@@ -1,0 +1,131 @@
+# Contributing to Kimitsu
+
+Thanks for your interest in contributing. Kimitsu is early-stage and the architecture is still evolving — please read this before opening a PR.
+
+---
+
+## Project Status
+
+Kimitsu is pre-1.0. Core abstractions are stable but implementation details change frequently. Large contributions that look good in isolation may conflict with roadmap direction. **Open an issue before writing significant code.** This protects your time as much as ours.
+
+---
+
+## Getting Started
+
+**Requirements**
+- Go 1.22+
+- Docker (for running the full stack)
+
+**Build**
+```bash
+git clone https://github.com/kimitsu-ai/ktsu.git
+cd ktsu
+go build ./...
+```
+
+**Run tests**
+```bash
+go test ./...
+```
+
+**Run the full stack locally**
+```bash
+ktsu new project my-test
+cd my-test
+ktsu start --all --env environments/dev.env.yaml
+```
+
+**Validate a project**
+```bash
+ktsu validate
+```
+
+---
+
+## Before You Open a PR
+
+1. **Open an issue first** for anything beyond a bug fix or docs change. Describe what you want to build and why. We'll tell you if it fits the roadmap before you write the code.
+
+2. **Read the invariants.** [`docs/kimitsu-invariants.md`](docs/kimitsu-invariants.md) defines the architectural rules the codebase must never violate. Contributions that break an invariant will be declined regardless of quality.
+
+3. **Keep PRs focused.** One logical change per PR. Don't bundle refactors with feature work.
+
+4. **Tests are required.** Bug fixes should include a test that reproduces the bug. New behavior needs tests. We use standard Go testing — no third-party test frameworks.
+
+---
+
+## What We Welcome
+
+- **Bug fixes** — always welcome, open an issue first if the fix is non-trivial
+- **Documentation improvements** — typos, clarity, missing examples
+- **Test coverage** — especially for edge cases already described in specs
+- **Tooling and CI improvements** — linting, build scripts, GitHub Actions
+
+## What Needs Discussion First
+
+- New commands or CLI flags
+- New YAML config fields
+- Changes to HTTP API contracts (orchestrator, runtime, gateway)
+- New built-in agents or shipped tool servers
+- Anything touching `pkg/types` or `internal/config/types.go`
+
+---
+
+## Code Style
+
+- Run `gofmt` before committing — unformatted code will not be merged
+- Run `go vet ./...` and fix any issues
+- Follow existing patterns in the package you're modifying
+- Prefer explicit over clever
+
+**Commit messages** follow conventional commits:
+```
+feat(orchestrator): add approval timeout handling
+fix(runtime): handle empty allowlist on tool server
+docs: update CLI reference for ktsu start --all
+```
+
+---
+
+## AI-Assisted Code
+
+AI-generated or AI-assisted code is allowed but held to a higher review bar.
+
+**Disclosure is required.** If any part of your PR was written or meaningfully shaped by an AI tool (Copilot, Claude, Cursor, ChatGPT, etc.), say so in the PR description. A single line is fine:
+
+```
+AI assistance: Claude used for initial implementation of X, reviewed and modified by author.
+```
+
+**You are responsible for what you submit.** Disclosing AI use does not reduce your accountability for the code. You must understand every line you submit — we will ask questions during review and expect you to answer them. "The AI wrote it" is not an acceptable response to a review comment.
+
+**What to watch for before submitting AI-generated code:**
+- Hallucinated function signatures or package names that compile but behave incorrectly
+- Logic that looks plausible but violates an invariant in [`docs/kimitsu-invariants.md`](docs/kimitsu-invariants.md)
+- Tests that pass trivially without actually covering the behavior
+- HTTP contract changes that break conforming implementations
+
+PRs where AI-generated code has clearly not been reviewed will be closed without merge.
+
+---
+
+## Developer Certificate of Origin (DCO)
+
+All commits must be signed off with a DCO. This certifies that you wrote the code or have the right to submit it under the Apache 2.0 license.
+
+Sign off by adding `-s` to your commit:
+```bash
+git commit -s -m "feat: my change"
+```
+
+This adds `Signed-off-by: Your Name <your@email.com>` to the commit message. PRs without sign-offs will not be merged.
+
+The full DCO text is at [https://developercertificate.org](https://developercertificate.org).
+
+---
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+
+Kimitsu and the Kimitsu logo are trademarks of Kimitsu AI. Contributing code does not grant any trademark rights.

@@ -11,3 +11,7 @@
 ## Documentation
 - When adding new features or modifying existing features, update documentation in docs/*.md
 - Any changes to schema validation or workflow graphs must update docs/yaml-spec/*.md
+
+## Specs
+- When creating spec files, use the .md format
+- Spec files should be placed in the specs/ directory
