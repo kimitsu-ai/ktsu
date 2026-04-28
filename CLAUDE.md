@@ -15,6 +15,7 @@
 ## Documentation
 - When adding new features or modifying existing features, update documentation in docs/*.md
 - Any changes to schema validation or workflow graphs must update docs/yaml-spec/*.md
+- When updating a doc, also update its frontmatter `description` to reflect any changes in scope or content.
 
 ## Specs
 - When creating spec files, use the .md format
