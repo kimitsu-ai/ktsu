@@ -1,3 +1,7 @@
+---
+description: "Complete workflow.yaml spec: kind, visibility, env declarations, params schema, invoke auth, all four step types with annotated examples, model_policy, and variable substitution namespaces."
+---
+
 # workflow.yaml
 
 **What it does:** Defines a pipeline — input schema, ordered steps, and model cost policy.

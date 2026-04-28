@@ -1,3 +1,7 @@
+---
+description: "servers.yaml spec: shared manifest for marketplace/platform MCP servers — name, URL, auth. No {{ env }} support; all values must be literals."
+---
+
 # servers.yaml
 
 **What it does:** Declares a collection of shared tool server definitions in a single manifest file. This is typically used for marketplace or internal platform servers.

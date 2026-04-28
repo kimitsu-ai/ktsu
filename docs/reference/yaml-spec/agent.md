@@ -1,3 +1,7 @@
+---
+description: "Full agent.yaml spec: model group, params schema, system/user/reflect prompts, tool server references with allowlists and approval policies, sub_agents, output schema, and all ktsu_ reserved fields."
+---
+
 # agent.yaml
 
 **What it does:** Defines an LLM agent — its model group, system and user prompts, tool servers, optional sub-agents, and typed output schema.

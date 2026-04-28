@@ -1,3 +1,7 @@
+---
+description: "env.yaml spec: environment-specific variables, optional provider overrides, and state store backend — used to keep dev/prod differences out of workflow definitions."
+---
+
 # env.yaml
 
 **What it does:** Declares environment-specific configuration, such as global environment variables and the state store backend. Selected at startup using the `--env` flag (e.g., `ktsu start --env environments/dev.env.yaml`).

@@ -1,3 +1,7 @@
+---
+description: "server.yaml spec (tool-server): URL, auth config, declarable params with secret marking, and the four-layer secret propagation chain for credentials."
+---
+
 # server.yaml (tool-server)
 
 **What it does:** Defines a connection to an MCP tool server — declares its URL, authentication, and configurable parameters.

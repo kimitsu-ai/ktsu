@@ -1,3 +1,7 @@
+---
+description: "gateway.yaml spec: env var declarations, provider config (Anthropic/OpenAI), named model groups with routing strategy and pricing, and {{ env.VAR }} substitution."
+---
+
 # gateway.yaml
 
 **What it does:** Defines all LLM providers and named model groups. The gateway centralizes provider selection, routing strategy, and credentials, allowing agents to reference models by logical group names.

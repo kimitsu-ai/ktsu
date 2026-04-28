@@ -1,3 +1,7 @@
+---
+description: "Complete CLI reference: start, validate, invoke, runs, runs get, workflow tree, lock, new project, and hub subcommands with all flags and defaults."
+---
+
 # ktsu CLI Reference
 
 `ktsu` is the command-line interface for the Kimitsu agentic pipeline framework. Use it to start services, invoke workflows, validate configuration, inspect runs, and scaffold new projects.

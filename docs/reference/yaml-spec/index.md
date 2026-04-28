@@ -1,3 +1,7 @@
+---
+description: "Index of all Kimitsu YAML file kinds with filename conventions: workflow, agent, server (tool-server), servers manifest, gateway, and env."
+---
+
 # Kimitsu YAML Spec
 
 Reference for all Kimitsu YAML file kinds. One file per kind — annotated example + field table. No conceptual explanations.
