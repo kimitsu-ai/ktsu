@@ -1,3 +1,7 @@
+---
+description: "The 36 inviolable system contracts: tool isolation, secret propagation, fail-fast semantics, the four-primitive constraint, and all other architectural invariants."
+---
+
 # Core Invariants
 
 ---

@@ -1,3 +1,7 @@
+---
+description: "The four step types every pipeline is built from: agent (LLM), transform (JMESPath), webhook (HTTP), and workflow (sub-pipeline), with YAML examples."
+---
+
 # Pipeline Primitives
 
 ---

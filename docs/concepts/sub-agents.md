@@ -1,3 +1,7 @@
+---
+description: "The sub_agents field: currently validation-only (no runtime dispatch), planned runtime behavior (issue #14), and when to use sub_agents vs. workflow steps."
+---
+
 # Sub-Agents
 
 ---

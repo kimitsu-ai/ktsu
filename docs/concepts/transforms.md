@@ -1,3 +1,7 @@
+---
+description: "Complete reference for the six transform ops (merge, filter, sort, map, flatten, deduplicate) with JMESPath syntax and a chained pipeline example. No LLM calls."
+---
+
 # Transform Ops
 
 **What it does:** A Transform step applies a sequence of deterministic data operations to the outputs of one or more upstream steps. No LLM call is made.

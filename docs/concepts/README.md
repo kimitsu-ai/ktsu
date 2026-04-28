@@ -1,3 +1,7 @@
+---
+description: "Index and reading guide for the Concepts section with recommended reading order and a worked pipeline scenario tying together all core ideas."
+---
+
 # Concepts
 
 This section explains how Kimitsu works at the level you need to write and debug workflows. Each page covers one idea; together they form a complete picture of how data flows through a pipeline.

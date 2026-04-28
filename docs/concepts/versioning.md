@@ -1,3 +1,7 @@
+---
+description: "How versioning works: declaring versions on workflows, @version suffix for hub references, the lockfile concept, and current status — parsed but not enforced at runtime."
+---
+
 # Versioning
 
 ---

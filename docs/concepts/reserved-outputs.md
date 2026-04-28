@@ -1,3 +1,7 @@
+---
+description: "The ktsu_ prefixed output fields agents emit to signal control flow: injection detection, confidence thresholds, quality failures, human review gates, skip signals, and observability fields — with evaluation order."
+---
+
 # Reserved Output Fields
 
 ---

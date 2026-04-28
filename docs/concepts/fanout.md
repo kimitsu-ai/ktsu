@@ -1,3 +1,7 @@
+---
+description: "How for_each fanout works: YAML syntax, concurrency and failure controls, the {results:[...]} output shape, and referencing fanout output in downstream steps."
+---
+
 # Fanout (for_each)
 
 Fanout runs an agent step once for each item in an array — concurrently, up to a configurable limit — and collects all results in a single output object.

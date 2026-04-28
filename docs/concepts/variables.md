@@ -1,3 +1,7 @@
+---
+description: "The {{ expr }} template syntax for env vars, params, and step outputs across all pipeline layers, including the secret propagation chain and common errors."
+---
+
 # Variables
 
 Kimitsu uses a `{{ expr }}` template syntax for runtime value injection across all pipeline YAML files. There are three namespaces, each with distinct scoping rules.
