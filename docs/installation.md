@@ -1,11 +1,12 @@
 ---
-description: "How to install ktsu as a binary or via Docker Compose, with environment variable reference for all three services and verification steps."
+description: "How to install ktsu (macOS/Linux only; WSL2 for Windows) as a binary or via Docker Compose, with environment variable reference for all three services and verification steps."
 ---
 
 # Installation
 
 ## Prerequisites
 
+- **Platform** — macOS or Linux (amd64/arm64). Windows users should use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/).
 - **Docker and Docker Compose** — required for the Docker path
 - **An Anthropic API key** — set as `ANTHROPIC_API_KEY` in your environment, or use the local LLM option below (no API key needed)
 

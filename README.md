@@ -6,6 +6,10 @@ Run AI agent pipelines from YAML — built for auditability, safety, and simple 
 - **Safety** — secrets never touch agent prompts; tool access is controlled via per-agent allowlists
 - **Easy to operate** — plain YAML config, `ktsu validate` before you run, same setup locally and in production
 
+## Platform support
+
+macOS and Linux (amd64/arm64). Windows users can run ktsu via [WSL2](https://learn.microsoft.com/en-us/windows/wsl/).
+
 ## Quick start
 
 See [Deploy with Docker](docs/deployment/docker.md) to run the full stack locally in minutes.
