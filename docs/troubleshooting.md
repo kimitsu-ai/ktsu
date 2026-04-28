@@ -1,3 +1,7 @@
+---
+description: "Debugging guide for common failures: missing env vars, schema validation errors, Air-Lock violations, secret propagation errors, tool access denials, and ktsu_needs_human pauses."
+---
+
 # Troubleshooting
 
 A debugging guide for common problems when running ktsu workflows.

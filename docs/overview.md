@@ -1,3 +1,7 @@
+---
+description: "Introduction to ktsu: what it does, why it exists (auditability, safety, simplicity), the four YAML file types, and the three-service architecture."
+---
+
 # Overview
 
 `ktsu` runs AI agent pipelines from YAML. It's built around knowing what your agents did, controlling what they can access, and keeping operations simple.

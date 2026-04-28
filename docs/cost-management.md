@@ -1,3 +1,7 @@
+---
+description: "How LLM costs accumulate (fanout, reflection, model choice), available cost controls (max_turns, max_items, model groups), and the cost_budget_usd field — parsed but not yet enforced as a circuit breaker."
+---
+
 # Cost Management
 
 Kimitsu gives you several levers for controlling LLM spend. This page explains how costs accumulate, what fields are available, and which controls are enforced today versus planned.

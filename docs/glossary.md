@@ -1,3 +1,7 @@
+---
+description: "Precise definitions for ktsu-specific terms: agent, step, primitive, workflow, orchestrator, runtime, gateway, tool server, pipeline, and param."
+---
+
 # Glossary
 
 A concise reference for terms used throughout the Kimitsu docs. Many of these words carry specific meanings in this system that differ from their common usage.

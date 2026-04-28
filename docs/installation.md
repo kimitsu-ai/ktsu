@@ -1,3 +1,7 @@
+---
+description: "How to install ktsu as a binary or via Docker Compose, with environment variable reference for all three services and verification steps."
+---
+
 # Installation
 
 ## Prerequisites

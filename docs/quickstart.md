@@ -1,3 +1,7 @@
+---
+description: "Step-by-step walkthrough of the hello-world pipeline end-to-end: starting services, invoking a workflow, polling for completion, and inspecting the run envelope."
+---
+
 # Quickstart
 
 New to ktsu? Start with the [minimal hello-world](./examples/hello-world-minimal.md) first.
