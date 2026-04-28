@@ -313,6 +313,13 @@ func envIntOr(envKey string, defaultVal int) int {
 	return defaultVal
 }
 
+func resolveWorkflowDir(workflowDir, projectDir string) string {
+	if workflowDir != "" {
+		return workflowDir
+	}
+	return filepath.Join(projectDir, "workflows")
+}
+
 func doRequest(ctx context.Context, method, url string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
@@ -391,7 +398,7 @@ func startCmd() *cobra.Command {
 			o := orchestrator.New(orchestrator.Config{
 				EnvPath:     envPath,
 				Env:         envCfg,
-				WorkflowDir: workflowDir,
+				WorkflowDir: resolveWorkflowDir(workflowDir, projectDir),
 				Host:        orchHost,
 				Port:        orchPort,
 				RuntimeURL:  rtURL,
@@ -446,7 +453,7 @@ func startCmd() *cobra.Command {
 
 	start.Flags().BoolVar(&all, "all", false, "Start orchestrator, gateway, and runtime in a single process")
 	start.Flags().StringVar(&envPath, "env", "", "path to environment config (e.g. environments/dev.env.yaml)")
-	start.Flags().StringVar(&workflowDir, "workflow-dir", "./workflows", "path to workflow directory")
+	start.Flags().StringVar(&workflowDir, "workflow-dir", "", "path to workflow directory (default: {project-dir}/workflows)")
 	start.Flags().StringVar(&ownURL, "own-url", envOr("KTSU_OWN_URL", ""), "orchestrator's own URL for callbacks (env: KTSU_OWN_URL)")
 	start.Flags().StringVar(&projectDir, "project-dir", envOr("KTSU_PROJECT_DIR", "."), "project root for resolving agent/server paths (env: KTSU_PROJECT_DIR)")
 	start.Flags().StringVar(&orchHost, "orchestrator-host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "orchestrator bind host (env: KTSU_ORCHESTRATOR_HOST)")
@@ -504,7 +511,7 @@ func startOrchestratorCmd() *cobra.Command {
 			o := orchestrator.New(orchestrator.Config{
 				EnvPath:     envPath,
 				Env:         envCfg,
-				WorkflowDir: workflowDir,
+				WorkflowDir: resolveWorkflowDir(workflowDir, projectDir),
 				Host:        host,
 				Port:        port,
 				RuntimeURL:  runtimeURL,
@@ -521,7 +528,7 @@ func startOrchestratorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&envPath, "env", "", "path to environment config (e.g. environments/dev.env.yaml)")
-	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "./workflows", "path to workflow directory")
+	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "", "path to workflow directory (default: {project-dir}/workflows)")
 	cmd.Flags().StringVar(&host, "host", envOr("KTSU_ORCHESTRATOR_HOST", ""), "host interface to bind (env: KTSU_ORCHESTRATOR_HOST)")
 	cmd.Flags().IntVar(&port, "port", envIntOr("KTSU_ORCHESTRATOR_PORT", 5050), "port to listen on (env: KTSU_ORCHESTRATOR_PORT)")
 	cmd.Flags().StringVar(&runtimeURL, "runtime-url",

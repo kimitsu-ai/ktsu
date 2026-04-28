@@ -1,3 +1,7 @@
+## GitHub Issues
+- All changes must reference a GitHub issue. Before starting work, confirm an issue exists; if not, ask the user to provide one or offer to create it.
+- Include the issue number in commit messages (e.g., `fixes #123` or `refs #123`).
+
 ## Approach
 - Think before acting. Read existing files before writing code.
 - Be concise in output but thorough in reasoning.

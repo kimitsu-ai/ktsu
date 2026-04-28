@@ -1184,6 +1184,28 @@ pipeline:
 	}
 }
 
+// TestResolveWorkflowDir verifies that --workflow-dir defaults to {project-dir}/workflows
+// when not explicitly set, matching the behaviour of `ktsu validate`. Refs #18.
+func TestResolveWorkflowDir(t *testing.T) {
+	tests := []struct {
+		workflowDir string
+		projectDir  string
+		want        string
+	}{
+		{"", "/some/project", filepath.Join("/some/project", "workflows")},
+		{"", "examples/hello", filepath.Join("examples/hello", "workflows")},
+		{"/custom/wf", "/some/project", "/custom/wf"},
+		{"./my-workflows", ".", "./my-workflows"},
+	}
+	for _, tt := range tests {
+		got := resolveWorkflowDir(tt.workflowDir, tt.projectDir)
+		if got != tt.want {
+			t.Errorf("resolveWorkflowDir(%q, %q) = %q, want %q",
+				tt.workflowDir, tt.projectDir, got, tt.want)
+		}
+	}
+}
+
 func TestHubCmd_disabledByDefault(t *testing.T) {
 	t.Setenv("KTSU_HUB_ENABLED", "")
 	root := rootCmd()
