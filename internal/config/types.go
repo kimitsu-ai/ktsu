@@ -151,9 +151,10 @@ type OutputSpec struct {
 
 // EnvVarDecl declares an environment variable required by a workflow.
 type EnvVarDecl struct {
-	Name        string `yaml:"name"`
-	Secret      bool   `yaml:"secret,omitempty"`
-	Description string `yaml:"description,omitempty"`
+	Name        string  `yaml:"name"`
+	Secret      bool    `yaml:"secret,omitempty"`
+	Default     *string `yaml:"default,omitempty"`
+	Description string  `yaml:"description,omitempty"`
 }
 
 // AgentConfig represents an agent config block.
@@ -233,6 +234,7 @@ type StateConfig struct {
 
 // GatewayConfig represents gateway.yaml
 type GatewayConfig struct {
+	Env         []EnvVarDecl       `yaml:"env,omitempty"`
 	Providers   []ProviderConfig   `yaml:"providers"`
 	ModelGroups []ModelGroupConfig `yaml:"model_groups"`
 }

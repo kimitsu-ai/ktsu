@@ -247,6 +247,51 @@ model_groups:
 	}
 }
 
+func TestLoadGateway_parsesEnvSection(t *testing.T) {
+	def := "sk-default"
+	path := writeFile(t, t.TempDir(), "gateway.yaml", `
+env:
+  - name: ANTHROPIC_API_KEY
+    secret: true
+    description: "Anthropic API key"
+  - name: OPTIONAL_KEY
+    secret: true
+    default: sk-default
+providers:
+  - name: anthropic
+    type: anthropic
+    config:
+      api_key: "{{ env.ANTHROPIC_API_KEY }}"
+model_groups:
+  - name: standard
+    models:
+      - anthropic/claude-haiku-4-5-20251001
+    strategy: round_robin
+`)
+	cfg, err := LoadGateway(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Env) != 2 {
+		t.Fatalf("expected 2 env decls, got %d", len(cfg.Env))
+	}
+	if cfg.Env[0].Name != "ANTHROPIC_API_KEY" {
+		t.Errorf("expected env[0].Name ANTHROPIC_API_KEY, got %q", cfg.Env[0].Name)
+	}
+	if !cfg.Env[0].Secret {
+		t.Error("expected env[0].Secret to be true")
+	}
+	if cfg.Env[0].Default != nil {
+		t.Error("expected env[0].Default to be nil")
+	}
+	if cfg.Env[1].Default == nil || *cfg.Env[1].Default != def {
+		t.Errorf("expected env[1].Default %q, got %v", def, cfg.Env[1].Default)
+	}
+	if cfg.Providers[0].Config["api_key"] != "{{ env.ANTHROPIC_API_KEY }}" {
+		t.Errorf("expected api_key template literal, got %q", cfg.Providers[0].Config["api_key"])
+	}
+}
+
 func TestLoadGateway_errorsOnMissingFile(t *testing.T) {
 	_, err := LoadGateway("/nonexistent/gateway.yaml")
 	if err == nil {
