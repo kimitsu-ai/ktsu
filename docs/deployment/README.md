@@ -9,7 +9,6 @@ This guide covers running ktsu in production: service topology, state persistenc
 ## Deployment guides
 
 - [Deploy with Docker](deployment/docker.md)
-- [Deploy on Railway](deployment/railway.md)
 
 ---
 
