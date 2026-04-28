@@ -7,25 +7,33 @@
 ## Annotated Example
 
 ```yaml
+env:
+  - name: ANTHROPIC_API_KEY   # env var name to read from process environment
+    secret: true              # true = masked in logs
+    description: "Anthropic API key"
+  - name: OPENAI_API_KEY
+    secret: true
+    default: "sk-unused"      # optional — used when env var is not set
+
 providers:
-  - name: anthropic              # logical name — used as prefix in model references
-    type: anthropic              # anthropic | openai | openai-compat
+  - name: anthropic            # logical name — used as prefix in model references
+    type: anthropic            # anthropic | openai
     config:
-      # API keys should be literals or passed via shell environment
-      api_key: "YOUR_ANTHROPIC_KEY" # required — provider API key
-  
+      api_key: "{{ env.ANTHROPIC_API_KEY }}"  # required — resolved from env: section
+
   - name: openai
     type: openai
     config:
-      api_key: "YOUR_OPENAI_KEY"
+      base_url: "https://api.openai.com/v1"
+      api_key: "{{ env.OPENAI_API_KEY }}"
 
 model_groups:
-  - name: economy                # group name — referenced in agent and workflow model: fields
+  - name: economy              # group name — referenced in agent and workflow model: fields
     models:
-      - anthropic/claude-3-haiku-20240307 # provider-name/model-id
-    strategy: round_robin        # optional — round_robin | cost_optimized; default: round_robin
-    default_temperature: 0.3     # optional — default temperature for this group
-    pricing:                     # optional — used for cost tracking circuit breakers
+      - anthropic/claude-3-haiku-20240307  # provider-name/model-id
+    strategy: round_robin      # optional — round_robin | cost_optimized; default: round_robin
+    default_temperature: 0.3   # optional — default temperature for this group
+    pricing:                   # optional — used for cost tracking circuit breakers
       - model: claude-3-haiku-20240307
         input_per_million: 0.25
         output_per_million: 1.25
@@ -43,13 +51,24 @@ model_groups:
 
 ## Fields
 
+### Env
+
+Declares environment variables available for substitution in provider config values. All `{{ env.VAR }}` references in the file must be declared here. The gateway fails fast at startup if a required var is not set.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes | Environment variable name (read from process environment). |
+| `secret` | bool | no | If `true`, the value is masked in logs. |
+| `default` | string | no | Fallback value used when the env var is not set. |
+| `description` | string | no | Human-readable description. |
+
 ### Providers
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `name` | string | yes | Logical name used as a prefix (e.g., `anthropic/`). |
-| `type` | string | yes | `anthropic`, `openai`, or `openai-compat`. |
-| `config` | map | yes | Provider-specific config. Most require an `api_key`. |
+| `type` | string | yes | `anthropic` or `openai`. |
+| `config` | map | yes | Provider-specific config. Supports `{{ env.VAR }}` substitution. |
 
 ### Model Groups
 
@@ -61,7 +80,28 @@ model_groups:
 | `default_temperature` | number | no | Default temperature override for the group. |
 | `pricing` | array | no | Per-model pricing definitions for cost monitoring. |
 
+## Variable Substitution
+
+Provider config values support `{{ env.VAR_NAME }}` substitution. All referenced variables must be declared in the root `env:` section.
+
+```yaml
+env:
+  - name: MY_API_KEY
+    secret: true
+
+providers:
+  - name: my-provider
+    type: openai
+    config:
+      api_key: "{{ env.MY_API_KEY }}"
+      base_url: "https://api.example.com/v1"
+```
+
+The gateway resolves all env vars at startup:
+1. Reads the value from the process environment (`os.Getenv`).
+2. Falls back to `default` if the env var is not set.
+3. Fails with a clear error if neither is available.
+
 ## Notes
 
-- **Variable Syntax**: `gateway.yaml` does not support `{{ env.NAME }}` or `env:NAME` syntax. All values must be provided as literals.
 - **Provider Normalization**: The Gateway normalizes provider-specific error codes and response formats into a unified Kimitsu contract.

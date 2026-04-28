@@ -103,22 +103,26 @@ Back up `ktsu.db` regularly. Because the Orchestrator is stateless, recovery is 
 |---|---|---|
 | `KTSU_GATEWAY_HOST` | `` (all interfaces) | Bind host |
 | `KTSU_GATEWAY_PORT` | `5052` | Listen port |
-| `ANTHROPIC_API_KEY` | — | Injected into the gateway container; referenced by `env:` in gateway config |
+| `ANTHROPIC_API_KEY` | — | Injected into the gateway container; referenced via `{{ env.ANTHROPIC_API_KEY }}` in gateway config |
 
 ### Provider Credentials
 
-Do not hardcode provider API keys in workflow or gateway YAML files. The gateway config supports `env:` references:
+Do not hardcode provider API keys in workflow or gateway YAML files. Declare them in the `env:` section and reference them with `{{ env.VAR }}` substitution:
 
 ```yaml
 # gateway.yaml
+env:
+  - name: ANTHROPIC_API_KEY
+    secret: true
+
 providers:
   - name: anthropic
     type: anthropic
     config:
-      api_key: "env:ANTHROPIC_API_KEY"
+      api_key: "{{ env.ANTHROPIC_API_KEY }}"
 ```
 
-The `env:ANTHROPIC_API_KEY` value is resolved at runtime from the gateway process's environment. Inject secrets via your orchestration platform's secret management (Docker secrets, Kubernetes secrets, AWS Secrets Manager, etc.) rather than committing them to files.
+The gateway resolves `{{ env.ANTHROPIC_API_KEY }}` at startup from the process environment. Inject secrets via your orchestration platform's secret management (Docker secrets, Kubernetes secrets, AWS Secrets Manager, etc.) rather than committing them to files.
 
 ---
 

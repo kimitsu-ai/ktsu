@@ -28,14 +28,21 @@ That's it. No `servers/`, no `environments/`.
 Tells ktsu which LLM provider to use.
 
 ```yaml
+env:
+  - name: ANTHROPIC_API_KEY
+    secret: true
+
 providers:
   - name: anthropic
-    api_key_env: ANTHROPIC_API_KEY
+    type: anthropic
+    config:
+      api_key: "{{ env.ANTHROPIC_API_KEY }}"
 
 model_groups:
-  standard:
-    provider: anthropic
-    model: claude-sonnet-4-5
+  - name: standard
+    models:
+      - anthropic/claude-sonnet-4-5
+    strategy: round_robin
 ```
 
 ---
