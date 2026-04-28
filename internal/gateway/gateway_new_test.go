@@ -40,7 +40,8 @@ func TestNew_envResolution_substitutesTemplates(t *testing.T) {
 }
 
 func TestNew_envResolution_failsOnMissingVar(t *testing.T) {
-	os.Unsetenv("ANTHROPIC_API_KEY")
+	t.Setenv("ANTHROPIC_API_KEY", "") // registers cleanup to restore original value
+	os.Unsetenv("ANTHROPIC_API_KEY")  // unset within this test
 	cfg := gw.Config{GatewayConfig: gatewayConfigWithEnv()}
 	_, err := gw.New(cfg)
 	if err == nil {
@@ -49,7 +50,8 @@ func TestNew_envResolution_failsOnMissingVar(t *testing.T) {
 }
 
 func TestNew_envResolution_usesDefault(t *testing.T) {
-	os.Unsetenv("ANTHROPIC_API_KEY")
+	t.Setenv("ANTHROPIC_API_KEY", "") // registers cleanup to restore original value
+	os.Unsetenv("ANTHROPIC_API_KEY")  // unset within this test
 	gcfg := &config.GatewayConfig{
 		Env: []config.EnvVarDecl{
 			{Name: "ANTHROPIC_API_KEY", Secret: true, Default: ptr("sk-default")},

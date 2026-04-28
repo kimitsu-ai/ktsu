@@ -110,7 +110,7 @@ func applyEnvSubstitution(configMap map[string]string, envVars map[string]string
 
 // substituteEnvTemplates replaces all {{ env.VAR }} occurrences in s with resolved values.
 func substituteEnvTemplates(s string, envVars map[string]string) (string, error) {
-	var lastErr error
+	var missing []string
 	result := envTemplateRe.ReplaceAllStringFunc(s, func(match string) string {
 		sub := envTemplateRe.FindStringSubmatch(match)
 		if len(sub) < 2 {
@@ -119,12 +119,15 @@ func substituteEnvTemplates(s string, envVars map[string]string) (string, error)
 		name := sub[1]
 		val, ok := envVars[name]
 		if !ok {
-			lastErr = fmt.Errorf("env var %q referenced but not declared in env: section", name)
+			missing = append(missing, name)
 			return ""
 		}
 		return val
 	})
-	return result, lastErr
+	if len(missing) > 0 {
+		return "", fmt.Errorf("env var(s) %v referenced but not declared in env: section", missing)
+	}
+	return result, nil
 }
 
 // buildProviders instantiates providers from the gateway config.
