@@ -9,7 +9,7 @@
 ```yaml
 env:
   - name: ANTHROPIC_API_KEY   # env var name to read from process environment
-    secret: true              # true = masked in logs
+    secret: true              # reserved for future log masking
     description: "Anthropic API key"
   - name: OPENAI_API_KEY
     secret: true
@@ -58,7 +58,7 @@ Declares environment variables available for substitution in provider config val
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `name` | string | yes | Environment variable name (read from process environment). |
-| `secret` | bool | no | If `true`, the value is masked in logs. |
+| `secret` | bool | no | Reserved for future log masking (no current effect). |
 | `default` | string | no | Fallback value used when the env var is not set. |
 | `description` | string | no | Human-readable description. |
 
