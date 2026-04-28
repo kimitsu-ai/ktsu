@@ -6,12 +6,11 @@ This guide covers running ktsu in production: service topology, state persistenc
 
 ## Service Topology
 
-A ktsu deployment has four services:
+A ktsu deployment has three services:
 
 1. **Orchestrator** — The kernel. Manages the workflow DAG, validates step outputs through the Air-Lock, tracks heartbeats, and persists all run state. Exposes the public HTTP API for workflow invocation.
 2. **Agent Runtime** — The worker. Executes stateless agent reasoning loops. Receives invocation payloads from the Orchestrator, connects to tool servers, and calls the Gateway for LLM inference.
 3. **LLM Gateway** — The security boundary. Normalizes LLM providers, holds credentials, enforces cost budgets, and is the only service with outbound internet access to provider APIs.
-4. **Envelope tool server** — A built-in MCP tool server (`ktsu start envelope`) that exposes workflow envelope data to agents during a run. Runs as a long-lived HTTP/SSE process.
 
 All inter-service communication is plain HTTP. There are no message queues or shared memory between services.
 
@@ -26,13 +25,12 @@ The Runtime is registered with the Orchestrator via `KTSU_RUNTIME_URL`. The Gate
 
 ### Minimum Viable Deployment
 
-For single-host or development use, run all four services on one machine:
+For single-host or development use, run all three services on one machine:
 
 ```bash
 ktsu start gateway --config gateway.yaml   # :5052 by default
 ktsu start orchestrator                    # :5050
 ktsu start runtime                         # :5051
-ktsu start envelope                        # :9104
 ```
 
 For a scaled deployment, each service runs on separate hosts or containers. The Orchestrator and Gateway ports are configurable; point services at each other via environment variables.
@@ -102,12 +100,6 @@ Back up `ktsu.db` regularly. Because the Orchestrator is stateless, recovery is 
 | `KTSU_GATEWAY_PORT` | `5052` | Listen port |
 | `ANTHROPIC_API_KEY` | — | Injected into the gateway container; referenced by `env:` in gateway config |
 
-### Envelope Tool Server
-
-| Variable | Default | Description |
-|---|---|---|
-| `KTSU_ORCHESTRATOR_URL` | `http://localhost:5050` | Orchestrator to fetch envelope data from |
-
 ### Provider Credentials
 
 Do not hardcode provider API keys in workflow or gateway YAML files. The gateway config supports `env:` references:
@@ -133,7 +125,7 @@ The `env:ANTHROPIC_API_KEY` value is resolved at runtime from the gateway proces
 
 **LLM Gateway:** Stateless. Can be horizontally scaled behind a load balancer. All instances read credentials from environment variables.
 
-**Tool Servers:** Independent processes. Scale envelope and custom tool servers independently based on observed load. Each tool server is referenced by URL in agent definitions, so multiple instances can sit behind a load balancer without changes to workflow config.
+**Tool Servers:** Independent processes. Scale custom tool servers independently based on observed load. Each tool server is referenced by URL in agent definitions, so multiple instances can sit behind a load balancer without changes to workflow config.
 
 ---
 

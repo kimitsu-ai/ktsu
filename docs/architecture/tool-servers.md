@@ -10,7 +10,6 @@ Tool servers provide the atomic capabilities of Kimitsu. Every tool an agent use
 
 1.  **Marketplace Servers**: Defined in `servers.yaml` manifest. Referenced by name.
 2.  **Local Servers**: Defined in `servers/*.server.yaml`. Referenced by path.
-3.  **Built-in Servers**: Hardcoded in Kimitsu (e.g., `envelope`).
 
 ---
 

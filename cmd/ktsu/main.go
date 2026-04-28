@@ -24,8 +24,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/kimitsu-ai/ktsu/internal/builtins"
-	envelopepkg "github.com/kimitsu-ai/ktsu/internal/builtins/envelope"
 	"github.com/kimitsu-ai/ktsu/internal/config"
 	configbuiltins "github.com/kimitsu-ai/ktsu/internal/config/builtins"
 	"github.com/kimitsu-ai/ktsu/internal/gateway"
@@ -464,7 +462,6 @@ func startCmd() *cobra.Command {
 	start.AddCommand(startOrchestratorCmd())
 	start.AddCommand(startRuntimeCmd())
 	start.AddCommand(startGatewayCmd())
-	start.AddCommand(startBuiltinCmd("envelope", 9104, func() builtins.BuiltinServer { return envelopepkg.New() }, true))
 	return start
 }
 
@@ -612,27 +609,6 @@ func startGatewayCmd() *cobra.Command {
 	return cmd
 }
 
-func startBuiltinCmd(name string, defaultPort int, newFn func() builtins.BuiltinServer, hasOrchestrator bool) *cobra.Command {
-	var host string
-	var port int
-	var orchestratorURL string
-	cmd := &cobra.Command{
-		Use:   name,
-		Short: fmt.Sprintf("Start the ktsu/%s built-in tool server", name),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			b := newFn()
-			return builtins.StartBuiltin(b, host, port, orchestratorURL)
-		},
-	}
-	cmd.Flags().StringVar(&host, "host", "", "host interface to bind")
-	cmd.Flags().IntVar(&port, "port", defaultPort, "port to listen on")
-	if hasOrchestrator {
-		cmd.Flags().StringVar(&orchestratorURL, "orchestrator",
-			envOr("KTSU_ORCHESTRATOR_URL", "http://localhost:5050"),
-			"orchestrator URL for registration (env: KTSU_ORCHESTRATOR_URL)")
-	}
-	return cmd
-}
 
 func invokeCmd() *cobra.Command {
 	var orchestratorURL, inputJSON string

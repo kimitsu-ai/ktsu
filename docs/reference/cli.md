@@ -121,22 +121,6 @@ ktsu start gateway --config gateway.yaml --port 5052
 
 ---
 
-### `ktsu start envelope`
-
-Starts the Envelope built-in tool server.
-
-```bash
-ktsu start envelope --port 9104
-```
-
-| Flag | Default | Description |
-|---|---|---|
-| `--host` | `""` | Bind host |
-| `--port` | `9104` | Listen port |
-| `--orchestrator` | `http://localhost:5050` | Orchestrator URL for registration (env: `KTSU_ORCHESTRATOR_URL`) |
-
----
-
 ## `ktsu validate`
 
 Validates all workflow, agent, server, and gateway YAML files in the project. Checks schema correctness, DAG cycle detection, `depends_on` references, `sub_agents` paths, and environment variable scoping rules.
