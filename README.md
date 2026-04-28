@@ -40,6 +40,5 @@ make docker-down     # stop all containers
 
 ## Docs
 
-- [kimitsu.ai/docs](https://kimitsu.ai/docs) — full documentation
+- [kimitsu.ai/ktsu](https://kimitsu.ai/ktsu) — full documentation
 - [./docs](docs/) — local reference: architecture, YAML spec, CLI reference
-- [Deployment](docs/deployment/) — production deployment guide
