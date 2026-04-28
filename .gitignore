@@ -54,3 +54,8 @@ install-go.sh
 *.db
 docs/superpowers/
 specs/
+
+# AI
+.claude/
+.agents/
+.agent/
