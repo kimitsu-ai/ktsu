@@ -1,8 +1,13 @@
+env:
+  - name: ANTHROPIC_API_KEY
+    secret: true
+    description: "Anthropic API key"
+
 providers:
   - name: anthropic
     type: anthropic
     config:
-      api_key: env:ANTHROPIC_API_KEY
+      api_key: "{{ env.ANTHROPIC_API_KEY }}"
 
 model_groups:
   - name: standard
