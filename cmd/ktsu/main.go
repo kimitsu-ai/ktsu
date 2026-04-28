@@ -1126,19 +1126,7 @@ func validateExternalRef(res *ValidationResult, path, kind string, projectDir st
 					validateExternalRef(res, serverPath, "server", projectDir)
 				}
 			}
-			// Check for sub-agents
-			for _, sub := range agentCfg.SubAgents {
-				subPath := config.StripVersion(sub)
-				if !filepath.IsAbs(subPath) {
-					subPath = filepath.Join(filepath.Dir(path), subPath)
-				} else {
-					if _, err := os.Stat(subPath); os.IsNotExist(err) {
-						subPath = filepath.Join(projectDir, subPath)
-					}
-				}
-				ext.Deps = append(ext.Deps, subPath)
-				validateExternalRef(res, subPath, "agent", projectDir)
-			}
+
 		}
 	case "server":
 		_, err := config.LoadToolServer(path)

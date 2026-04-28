@@ -127,7 +127,7 @@ ktsu start gateway --config gateway.yaml --port 5052
 
 ## `ktsu validate`
 
-Validates all workflow, agent, server, and gateway YAML files in the project. Checks schema correctness, DAG cycle detection, `depends_on` references, `sub_agents` paths, and environment variable scoping rules.
+Validates all workflow, agent, server, and gateway YAML files in the project. Checks schema correctness, DAG cycle detection, `depends_on` references, and environment variable scoping rules.
 
 ```bash
 ktsu validate

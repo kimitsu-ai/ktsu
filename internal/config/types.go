@@ -166,7 +166,6 @@ type AgentConfig struct {
 	Params      ParamsSchemaDecl `yaml:"params,omitempty"`
 	Prompt      PromptConfig     `yaml:"prompt"`
 	Servers     []ServerRef      `yaml:"servers"`
-	SubAgents   []string         `yaml:"sub_agents"`
 	MaxTurns    int              `yaml:"max_turns"`
 	Output      *OutputSpec      `yaml:"output,omitempty"`
 }

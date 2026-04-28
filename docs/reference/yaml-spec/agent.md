@@ -1,10 +1,10 @@
 ---
-description: "Full agent.yaml spec: model group, params schema, system/user/reflect prompts, tool server references with allowlists and approval policies, sub_agents, output schema, and all ktsu_ reserved fields."
+description: "Full agent.yaml spec: model group, params schema, system/user/reflect prompts, tool server references with allowlists and approval policies, output schema, and all ktsu_ reserved fields."
 ---
 
 # agent.yaml
 
-**What it does:** Defines an LLM agent — its model group, system and user prompts, tool servers, optional sub-agents, and typed output schema.
+**What it does:** Defines an LLM agent — its model group, system and user prompts, tool servers, and typed output schema.
 
 **Filename convention:** `agents/*.agent.yaml` — no `kind` field.
 
@@ -59,9 +59,6 @@ servers:                         # optional — tool servers this agent may invo
             on_reject: fail      # "fail" | "recover"
             timeout: 30m         # optional — e.g. "30m", "2h"
             timeout_behavior: reject # "fail" | "reject"
-
-sub_agents:                      # optional — agents this agent may invoke
-  - agents/summarizer.agent.yaml # path relative to project root
 
 output:
   schema:                        # JSON Schema — Air-Lock validated before downstream consumption
