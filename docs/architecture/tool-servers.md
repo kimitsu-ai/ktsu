@@ -1,3 +1,7 @@
+---
+description: "MCP tool server integration: server types, YAML configuration, parameter resolution order, secret propagation rules, tool allowlists, and human-in-the-loop approval flow."
+---
+
 # Tool Servers
 
 ---

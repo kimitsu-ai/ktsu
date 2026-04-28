@@ -1,3 +1,7 @@
+---
+description: "Project directory layout and annotated YAML examples for workflow and agent configs, including variable substitution reference."
+---
+
 # Configuration Reference
 
 ---

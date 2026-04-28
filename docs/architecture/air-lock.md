@@ -1,3 +1,7 @@
+---
+description: "How the Air-Lock validation gate works: validates agent output against the declared schema after every step, halts the run on failure, no unvalidated data reaches downstream steps."
+---
+
 # Air-Lock
 
 ---

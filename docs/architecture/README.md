@@ -1,3 +1,7 @@
+---
+description: "Overview of the four-component architecture (orchestrator, runtime, gateway, tool servers), their responsibilities, and the single-responsibility-over-HTTP design principle."
+---
+
 # Architecture
 
 This section describes the four components that make up a running Kimitsu system and explains how they relate to one another.

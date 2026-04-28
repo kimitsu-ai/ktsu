@@ -1,3 +1,7 @@
+---
+description: "Deep-dive into runtime architecture: four container tiers, orchestrator responsibilities, the agent reasoning loop, and fail-fast/clean-skip/budget-breaker failure semantics."
+---
+
 # Runtime Architecture
 
 ---
