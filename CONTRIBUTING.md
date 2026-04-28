@@ -13,7 +13,7 @@ Kimitsu is pre-1.0. Core abstractions are stable but implementation details chan
 ## Getting Started
 
 **Requirements**
-- Go 1.22+
+- Go 1.25+
 - Docker (for running the full stack)
 
 **Build**
