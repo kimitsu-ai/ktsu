@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -19,7 +17,6 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
-	"text/template"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -55,7 +52,6 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(validateCmd())
 	root.AddCommand(invokeCmd())
 	root.AddCommand(lockCmd())
-	root.AddCommand(newCmd())
 	root.AddCommand(runsGroupCmd())
 	root.AddCommand(workflowGroupCmd())
 	root.AddCommand(versionCmd())
@@ -1377,115 +1373,6 @@ func lockCmd() *cobra.Command {
 	}
 }
 
-func newCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "new",
-		Short: "Scaffold new Kimitsu resources",
-	}
-	cmd.AddCommand(newProjectCmd())
-	return cmd
-}
-
-func newProjectCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "project <name>",
-		Short: "Bootstrap a new Kimitsu project scaffold",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-
-			if _, err := os.Stat(name); err == nil {
-				return fmt.Errorf("project %q already exists", name)
-			} else if !errors.Is(err, fs.ErrNotExist) {
-				return fmt.Errorf("stat %s: %w", name, err)
-			}
-
-			type fileSpec struct {
-				path    string
-				tmplSrc string
-			}
-
-			workflowTmpl := `kind: workflow
-name: {{.Name}}
-version: "1.0.0"
-description: ""
-
-pipeline:
-  - id: step1
-    # Choose one: agent, transform, or webhook
-    agent: agents/placeholder.agent.yaml
-`
-			agentTmpl := `name: placeholder
-description: ""
-model: default
-system: ""
-max_turns: 5
-`
-			envTmpl := `name: dev
-variables: {}
-providers: []
-state:
-  driver: sqlite
-  dsn: ktsu.db
-`
-			gatewayTmpl := `providers: []
-model_groups: []
-`
-			serversTmpl := `servers: []
-`
-			ktsuhubTmpl := `workflows: []
-# Uncomment and fill in to publish this project to ktsuhub:
-# workflows:
-#   - name: {{.Name}}/my-workflow
-#     version: "1.0.0"
-#     description: ""
-#     tags: []
-#     entrypoint: workflows/{{.Name}}.workflow.yaml
-`
-
-			files := []fileSpec{
-				{path: filepath.Join(name, "workflows", name+".workflow.yaml"), tmplSrc: workflowTmpl},
-				{path: filepath.Join(name, "agents", "placeholder.agent.yaml"), tmplSrc: agentTmpl},
-				{path: filepath.Join(name, "environments", "dev.env.yaml"), tmplSrc: envTmpl},
-				{path: filepath.Join(name, "gateway.yaml"), tmplSrc: gatewayTmpl},
-				{path: filepath.Join(name, "servers.yaml"), tmplSrc: serversTmpl},
-				{path: filepath.Join(name, "ktsuhub.yaml"), tmplSrc: ktsuhubTmpl},
-			}
-
-			data := struct{ Name string }{Name: name}
-
-			type parsedFile struct {
-				path string
-				tmpl *template.Template
-			}
-			parsed := make([]parsedFile, 0, len(files))
-			for _, f := range files {
-				tmpl, err := template.New(f.path).Parse(f.tmplSrc)
-				if err != nil {
-					return fmt.Errorf("parse template for %s: %w", f.path, err)
-				}
-				parsed = append(parsed, parsedFile{path: f.path, tmpl: tmpl})
-			}
-
-			for _, f := range parsed {
-				var buf bytes.Buffer
-				if err := f.tmpl.Execute(&buf, data); err != nil {
-					return fmt.Errorf("render template for %s: %w", f.path, err)
-				}
-				if err := os.MkdirAll(filepath.Dir(f.path), 0o755); err != nil {
-					os.RemoveAll(name)
-					return fmt.Errorf("mkdir %s: %w", filepath.Dir(f.path), err)
-				}
-				if err := os.WriteFile(f.path, buf.Bytes(), 0o644); err != nil {
-					os.RemoveAll(name)
-					return fmt.Errorf("write %s: %w", f.path, err)
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "created: %s\n", f.path)
-			}
-			return nil
-		},
-	}
-}
 
 func workflowGroupCmd() *cobra.Command {
 	cmd := &cobra.Command{

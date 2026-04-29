@@ -1,10 +1,10 @@
 ---
-description: "Complete CLI reference: start, validate, invoke, runs, runs get, workflow tree, lock, new project, and hub subcommands with all flags and defaults."
+description: "Complete CLI reference: start, validate, invoke, runs, runs get, workflow tree, lock, and hub subcommands with all flags and defaults."
 ---
 
 # ktsu CLI Reference
 
-`ktsu` is the command-line interface for the Kimitsu agentic pipeline framework. Use it to start services, invoke workflows, validate configuration, inspect runs, and scaffold new projects.
+`ktsu` is the command-line interface for the Kimitsu agentic pipeline framework. Use it to start services, invoke workflows, validate configuration, and inspect runs.
 
 ---
 
@@ -29,7 +29,6 @@ Most commands that contact a running service accept `--orchestrator` (default: `
 - [`ktsu runs get`](#ktsu-runs-get) — Inspect a specific run
 - [`ktsu workflow tree`](#ktsu-workflow-tree) — Visualize workflow dependencies
 - [`ktsu lock`](#ktsu-lock) — Generate a lockfile
-- [`ktsu new project`](#ktsu-new-project) — Scaffold a new project
 - [`ktsu hub`](#ktsu-hub) — Interact with the Kimitsu Hub *(requires `KTSU_HUB_ENABLED=true`)*
 
 ---
@@ -225,27 +224,6 @@ ktsu lock
 ```
 
 > **Note:** This command is not yet implemented and currently prints a placeholder message.
-
----
-
-## `ktsu new project`
-
-Scaffolds a new Kimitsu project with the standard directory structure and starter files.
-
-```bash
-ktsu new project my-project
-```
-
-Creates the following files under `./my-project/`:
-
-| File | Purpose |
-|---|---|
-| `workflows/<name>.workflow.yaml` | Starter workflow |
-| `agents/placeholder.agent.yaml` | Placeholder agent |
-| `environments/dev.env.yaml` | Development environment config |
-| `gateway.yaml` | LLM gateway config |
-| `servers.yaml` | Tool server manifest |
-| `ktsuhub.yaml` | Hub publishing config |
 
 ---
 
