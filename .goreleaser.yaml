@@ -13,6 +13,10 @@ builds:
     binary: ktsu
     env:
       - CGO_ENABLED=0
+    ldflags:
+      - -X github.com/kimitsu-ai/ktsu/internal/version.Version={{ .Version }}
+      - -X github.com/kimitsu-ai/ktsu/internal/version.Commit={{ .Commit }}
+      - -X github.com/kimitsu-ai/ktsu/internal/version.BuildDate={{ .Date }}
     goos:
       - linux
       - darwin
