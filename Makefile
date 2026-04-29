@@ -1,7 +1,11 @@
 .PHONY: build test lint run-orchestrator docker-up docker-up-local docker-down
 
 build:
-	go build -o ktsu ./cmd/ktsu
+	go build \
+	  -ldflags="-X github.com/kimitsu-ai/ktsu/internal/version.Version=dev \
+	            -X github.com/kimitsu-ai/ktsu/internal/version.Commit=$(shell git rev-parse --short HEAD) \
+	            -X github.com/kimitsu-ai/ktsu/internal/version.BuildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
+	  -o ktsu ./cmd/ktsu
 
 test:
 	go test ./...
