@@ -91,7 +91,11 @@ func (r *Runner) Execute(ctx context.Context, workflowName string, runID string,
 	// Build env context from declared env vars (root workflow only).
 	envVars := make(map[string]string, len(wf.Env))
 	for _, decl := range wf.Env {
-		envVars[decl.Name] = os.Getenv(decl.Name)
+		val, ok := os.LookupEnv(decl.Name)
+		if !ok && decl.Default != nil {
+			val = *decl.Default
+		}
+		envVars[decl.Name] = val
 	}
 
 	// Build scrub set from declared secret env vars for envelope redaction.

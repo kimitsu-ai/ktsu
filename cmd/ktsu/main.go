@@ -44,9 +44,12 @@ func hubEnabled() bool {
 
 func rootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:          "ktsu",
-		Short:        "Kimitsu — agentic pipeline framework",
-		SilenceUsage: true,
+		Use:   "ktsu",
+		Short: "Kimitsu — agentic pipeline framework",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cmd.Root().SilenceUsage = true
+			return nil
+		},
 	}
 	root.AddCommand(startCmd())
 	root.AddCommand(validateCmd())

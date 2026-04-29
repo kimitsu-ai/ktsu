@@ -1879,6 +1879,49 @@ output:
 	}
 }
 
+// TestRunner_envVar_usesDefault verifies that when an env var is unset, the declared
+// default value is used during workflow execution.
+func TestRunner_envVar_usesDefault(t *testing.T) {
+	os.Unsetenv("FALLBACK_TOKEN")
+
+	dir := t.TempDir()
+	subWFYAML := `kind: workflow
+name: inner
+version: "1.0.0"
+pipeline: []
+output:
+  map:
+    token: "{{ params.tok }}"
+`
+	subPath := filepath.Join(dir, "inner.workflow.yaml")
+	if err := os.WriteFile(subPath, []byte(subWFYAML), 0644); err != nil {
+		t.Fatalf("write sub-workflow: %v", err)
+	}
+
+	defaultVal := "default-token"
+	rootWF := makeWorkflow(config.PipelineStep{
+		ID:       "call",
+		Workflow: subPath,
+		Params:   map[string]interface{}{"tok": "{{ env.FALLBACK_TOKEN }}"},
+	})
+	rootWF.Name = "root"
+	rootWF.Env = []config.EnvVarDecl{{Name: "FALLBACK_TOKEN", Default: &defaultVal}}
+
+	store := state.NewMemStore()
+	r := New(store)
+	if err := r.Execute(context.Background(), "root", "run-default", rootWF, nil, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	step, err := store.GetStep(context.Background(), "run-default", "call")
+	if err != nil {
+		t.Fatalf("GetStep: %v", err)
+	}
+	if step.Output["token"] != defaultVal {
+		t.Errorf("expected token=%q (default), got %v", defaultVal, step.Output["token"])
+	}
+}
+
 // TestRunner_webhookStep_templateURL verifies that {{ params.X }} inline in a webhook URL
 // is substituted correctly.
 func TestRunner_webhookStep_templateURL(t *testing.T) {

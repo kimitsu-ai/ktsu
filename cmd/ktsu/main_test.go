@@ -1107,6 +1107,37 @@ func TestHubCmd_enabledWithFlag(t *testing.T) {
 	}
 }
 
+func TestRootCmd_argValidationError_showsUsage(t *testing.T) {
+	root := rootCmd()
+	var errBuf bytes.Buffer
+	root.SetErr(&errBuf)
+	var outBuf bytes.Buffer
+	root.SetOut(&outBuf)
+	root.SetArgs([]string{"runs", "get"}) // runs get requires exactly 1 arg
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected arg validation error, got nil")
+	}
+	combined := errBuf.String() + outBuf.String()
+	if !strings.Contains(combined, "Usage:") {
+		t.Errorf("expected Usage: in output for arg validation error, got:\n%s", combined)
+	}
+}
+
+func TestRootCmd_runtimeError_silencesUsage(t *testing.T) {
+	root := rootCmd()
+	var errBuf bytes.Buffer
+	root.SetErr(&errBuf)
+	var outBuf bytes.Buffer
+	root.SetOut(&outBuf)
+	root.SetArgs([]string{"validate", "/nonexistent/path/workflow.yaml"})
+	_ = root.Execute()
+	combined := errBuf.String() + outBuf.String()
+	if strings.Contains(combined, "Usage:") {
+		t.Errorf("expected no Usage: for runtime error, got:\n%s", combined)
+	}
+}
+
 func TestVersionCmd_output(t *testing.T) {
 	cmd := versionCmd()
 	var buf bytes.Buffer

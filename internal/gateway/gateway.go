@@ -45,12 +45,21 @@ func New(cfg Config) (*Gateway, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve env: %w", err)
 	}
-	for i := range cfg.GatewayConfig.Providers {
-		if err := applyEnvSubstitution(cfg.GatewayConfig.Providers[i].Config, envVars); err != nil {
-			return nil, fmt.Errorf("provider %q: %w", cfg.GatewayConfig.Providers[i].Name, err)
+	resolvedProviders := make([]config.ProviderConfig, len(cfg.GatewayConfig.Providers))
+	for i, p := range cfg.GatewayConfig.Providers {
+		configCopy := make(map[string]string, len(p.Config))
+		for k, v := range p.Config {
+			configCopy[k] = v
 		}
+		if err := applyEnvSubstitution(configCopy, envVars); err != nil {
+			return nil, fmt.Errorf("provider %q: %w", p.Name, err)
+		}
+		resolvedProviders[i] = p
+		resolvedProviders[i].Config = configCopy
 	}
-	provs, err := buildProviders(cfg.GatewayConfig)
+	resolvedGWCfg := *cfg.GatewayConfig
+	resolvedGWCfg.Providers = resolvedProviders
+	provs, err := buildProviders(&resolvedGWCfg)
 	if err != nil {
 		return nil, fmt.Errorf("build providers: %w", err)
 	}
@@ -83,11 +92,12 @@ func (g *Gateway) String() string {
 func resolveGatewayEnv(decls []config.EnvVarDecl) (map[string]string, error) {
 	resolved := make(map[string]string, len(decls))
 	for _, d := range decls {
-		val := os.Getenv(d.Name)
-		if val == "" && d.Default != nil {
+		val, ok := os.LookupEnv(d.Name)
+		if !ok && d.Default != nil {
 			val = *d.Default
+			ok = true
 		}
-		if val == "" {
+		if !ok {
 			return nil, fmt.Errorf("env var %q is required but not set", d.Name)
 		}
 		resolved[d.Name] = val
