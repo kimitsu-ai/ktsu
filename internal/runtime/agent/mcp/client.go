@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/kimitsu-ai/ktsu/internal/version"
 )
 
 // ToolDefinition is a single tool exposed by an MCP server.
@@ -111,7 +113,7 @@ func (c *Client) Initialize(ctx context.Context, url, persistentID, authHeader, 
 	params := map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "ktsu", "version": "1.0"},
+		"clientInfo":      map[string]any{"name": "ktsu", "version": version.Version},
 		"config":          config,
 	}
 	_, err := c.rpc(ctx, url, persistentID, authHeader, authValue, "initialize", params)
