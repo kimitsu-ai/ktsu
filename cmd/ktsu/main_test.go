@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1224,5 +1225,22 @@ func TestHubCmd_enabledWithFlag(t *testing.T) {
 	}
 	if cmd.Use != "hub" {
 		t.Fatalf("expected hub command, got %q", cmd.Use)
+	}
+}
+
+func TestVersionCmd_output(t *testing.T) {
+	cmd := versionCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.Run(cmd, nil)
+	out := buf.String()
+	if !strings.Contains(out, "Version:") {
+		t.Errorf("want 'Version:' in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Commit:") {
+		t.Errorf("want 'Commit:' in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Built:") {
+		t.Errorf("want 'Built:' in output, got:\n%s", out)
 	}
 }
