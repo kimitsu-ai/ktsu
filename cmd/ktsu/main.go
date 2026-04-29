@@ -58,6 +58,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(newCmd())
 	root.AddCommand(runsGroupCmd())
 	root.AddCommand(workflowGroupCmd())
+	root.AddCommand(versionCmd())
 	if hubEnabled() {
 		root.AddCommand(hubCmd())
 	}
