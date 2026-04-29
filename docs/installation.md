@@ -4,6 +4,9 @@ description: "How to install ktsu (macOS/Linux only; WSL2 for Windows) as a bina
 
 # Installation
 
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/kimitsu-ai/ktsu)](https://github.com/kimitsu-ai/ktsu/releases)
+
+
 ## Prerequisites
 
 - **Platform** — macOS or Linux (amd64/arm64). Windows users should use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/).
